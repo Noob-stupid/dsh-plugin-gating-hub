@@ -32,6 +32,8 @@ jobs:
           node test-compat-soft-lock.mjs
           node test-preflight-guard.mjs
           node test-quarantine-merge.mjs
+          node test-route-inventory.mjs
+          node test-format-contract.mjs
           node test-skill-toggle.mjs
           node test-harness.mjs
 
