@@ -2,8 +2,8 @@
 
 > **📢 npm 版本顺延到 9 月 15 日发布**
 >
-> npm 上 `@noob-stupid/dsh-plugin-console` 目前仍是 **0.3.33**；**v0.3.45 将于 2026-09-15 发布到 npm**。
-> 这几天想用新版，直接从本仓库 / [v0.3.45 Release](https://github.com/Noob-stupid/dsh-plugin-hub/releases/tag/v0.3.45) 取源码：
+> npm 上 `@noob-stupid/dsh-plugin-console` 目前仍是 **0.3.33**；**最新版（v0.3.46）将于 2026-09-15 发布到 npm**。
+> 这几天想用新版，直接从本仓库 / [v0.3.46 Release](https://github.com/Noob-stupid/dsh-plugin-hub/releases/tag/v0.3.46) 取源码：
 > 把 `lib/` 与 `package.json` 放进 `~/.dsh/profiles/<profile>/node_modules/@noob-stupid/dsh-plugin-console/` 后重启 DSH 即可（内容与 npm 包一致）。
 > 9/15 之后在控制台点「检测更新 → 更新并适配」，或 `dsh plugin add @noob-stupid/dsh-plugin-console`。
 

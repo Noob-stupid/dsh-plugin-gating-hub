@@ -2,6 +2,18 @@
 
 All notable changes to dsh-plugin-hub.
 
+## v0.3.46 — 回补重构中发现的 3 个真 bug：自报名读取 / 不认 DSH_HOME / 死形参（2026-09-13）
+
+> 这两天在做分层重构（工作副本 `dsh-hub-Exp`），通读代码时挖出 3 个**现网代码本来就有的问题**（不是重构引入的）。按既定安排重构期间不动主仓库，现在把产品 bug 单独回补回来。
+
+- **修 `/framework-upgrade` 的自报名读取**：读插件自身 `package.json` 时路径算错 —— `join(dirname(fileURLToPath(import.meta.url)), 'package.json')` 落在**不存在的 `lib/package.json`**，每跑必抛错、又被 `catch {}` 吞掉 → `selfName` 恒为 `null`，生成升级脚本时只能退回 hardcode 兜底。**"自报名一致性校验"实际上从未按真实包名运行过**（换包名/改名场景会静默失效）。改为读真实包根。
+- **修 3 个路径常量不认 `DSH_HOME`**：`COMPONENTS_FILE` / `AI_JOBS_FILE` / `REPO_LAND_CONF` 硬编码 `join(homedir(), '.dsh', 'plugin-console', …)` → 组件注册表、AI 任务、仓库落地配置在**自定义 `DSH_HOME` / 多 profile / 测试隔离**场景下会读写**真实用户目录**（互污染、隔离失效）。改为惰性函数 `componentsFile()` / `aiJobsFile()` / `repoLandConfFile()`，统一走文件里已有的 `dshHome()` —— 与其它路径常量写法一致；**未设 `DSH_HOME` 时行为完全不变**。
+- **`runSkillInstallJob(job, ctx)` 删掉死形参**：`ctx` 在函数体内从未被使用。
+
+**验证（改动前/后对照，证明只修 bug、不影响原有功能）**：改动前的代码 16/16 套件全绿、且验收探针能复现前两个 bug；改动后 16/16 套件仍全绿、验收探针 ALL PASS（三个文件都从 `DSH_HOME` 读写）；`git diff` 仅 18 增 18 删，全部是上述 9 处替换。
+
+**npm 说明**：`0.3.46` 先以 GitHub Release 形式提供；npm 账号恢复后（计划 2026-09-15）再统一发布到 npm。
+
 ## v0.3.45 — 清单与现实对账：启用后不再假挂【待适配】（2026-09-11）
 
 > 用户实测两连问：「点一键启用已适配，它说『该全家桶没有待适配行』，可我卡片里明明有已适配可解锁」＋「我刚才启用的插件，一重启变成待适配了？」—— 两个问题同一个根：**清单记录与开关现实脱节**。
