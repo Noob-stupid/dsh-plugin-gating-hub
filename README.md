@@ -5,6 +5,7 @@
 > `dsh plugin add @noob-stupid/dsh-plugin-console`, or 「检测更新 → 更新并适配」 in the console (includes 3 real bug fixes).
 > You can also take the source straight from this repo / the [v0.3.46 release](https://github.com/Noob-stupid/dsh-plugin-hub/releases/tag/v0.3.46):
 > copy `lib/` and `package.json` into `~/.dsh/profiles/<profile>/node_modules/@noob-stupid/dsh-plugin-console/` and restart DSH (identical to the npm package).
+> ⚗️ **Experimental preview** (layered refactor, **not for production**): [`Noob-stupid/dsh-plugin-hub-refactor`](https://github.com/Noob-stupid/dsh-plugin-hub-refactor) — modular structure (`lib/index.js` 7637 → 142 lines), feature-equivalent to 0.3.46; upgrade/rollback paths not yet exercised.
 
 ---
 
