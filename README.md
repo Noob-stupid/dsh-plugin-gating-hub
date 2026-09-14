@@ -308,12 +308,3 @@ See [CHANGELOG.md](CHANGELOG.md).
 MIT
 
 ---
-
-## Community
-
-<img src="./community-group.png" alt="Scan to join the dsh-plugin-hub community group" width="240">
-
-Scan to join the **dsh-plugin-hub community group** (QQ) — usage questions, bug reports, plugin recommendations, and framework-upgrade war stories are all welcome.
-
-> Field reports about the framework upgrade / rollback module (version spans, whether a rollback was clean, config-migration issues) are especially welcome — in the group or in [Discussions](https://github.com/Noob-stupid/dsh-plugin-hub/discussions). Every incident becomes a regression test.
-

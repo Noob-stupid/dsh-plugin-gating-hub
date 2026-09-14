@@ -275,12 +275,3 @@ git clone https://github.com/Noob-stupid/dsh-plugin-hub /tmp/dsh-plugin-console 
 MIT
 
 ---
-
-## 交流群
-
-<img src="./community-group.png" alt="扫码加入 dsh-plugin-hub 交流群" width="240">
-
-扫码加入 **dsh-plugin-hub 交流群** —— 使用问题、Bug 反馈、插件推荐、框架升级踩坑，都欢迎在群里聊。
-
-> 框架升级/回滚模块的实测反馈（版本跨度、回滚是否干净、配置迁移问题）也欢迎在 [Discussions](https://github.com/Noob-stupid/dsh-plugin-hub/discussions) 或群里说——每一个事故和异常都会变成一条回归测试。
-
