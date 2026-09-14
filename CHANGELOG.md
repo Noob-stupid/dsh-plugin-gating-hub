@@ -2,15 +2,6 @@
 
 All notable changes to dsh-plugin-hub.
 
-## v0.4.0-beta.1 — 分层重构预览版（GitHub 预发布，2026-09-14）
-
-> 分支 [`refactor-preview`](https://github.com/Noob-stupid/dsh-plugin-hub/tree/refactor-preview)（`main` 仍是单体版 0.3.46）。**实验性，请勿用于生产。**
-
-- 单体 `lib/index.js`（7637 行）拆成分层结构：`lib/index.js` **142 行** + `lib/server/**` **36 个模块**（7 infra + 18 domain + 11 routes + state.js）；
-- 47 个路由 handler 改为**表驱动分发**；宿主服务经 `routeDeps()` / `rc.deps` **注入**，domain 层零 `ctx`；依赖方向（`routes → domain → infra`）由 CI 守卫强制；
-- **功能零变化**：与单体版逐条对打 47 条路由，`status` + 响应字段 **47/47 一致**；17/17 套件（含 46 条路由契约与 8 条架构守卫断言）全绿；
-- **尚未实测**：真框架升级/回滚、重启守护链路、真装真卸（pnpm）、组件进程启停、AI 真跑、Gitee OAuth 回调 —— 长尾风险估计 10%~25%，故只发预发布。
-
 ## v0.3.46 — 回补重构中发现的 3 个真 bug：自报名读取 / 不认 DSH_HOME / 死形参（2026-09-13）
 
 > 这两天在做分层重构（工作副本 `dsh-hub-Exp`），通读代码时挖出 3 个**现网代码本来就有的问题**（不是重构引入的）。按既定安排重构期间不动主仓库，现在把产品 bug 单独回补回来。

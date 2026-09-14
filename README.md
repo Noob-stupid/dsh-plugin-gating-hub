@@ -1,9 +1,10 @@
 > **English**: [README.md](README.md) | **中文**: [README.zh.md](README.zh.md)
 
-> **📢 npm updated to `0.3.46`** — `dsh plugin add @noob-stupid/dsh-plugin-console`, or 「检测更新 → 更新并适配」 in the console.
+> **📢 npm updated to `0.3.46`**
 >
-> **⚗️ Experimental preview: layered refactor `v0.4.0-beta.1`** — [Pre-release](https://github.com/Noob-stupid/dsh-plugin-hub/releases/tag/v0.4.0-beta.1) on branch [`refactor-preview`](https://github.com/Noob-stupid/dsh-plugin-hub/tree/refactor-preview).
-> Same features, modular structure (`lib/index.js` 7637 → 142 lines, 36 modules). **Not for production** — see its notes for what is and isn't verified yet.
+> `dsh plugin add @noob-stupid/dsh-plugin-console`, or 「检测更新 → 更新并适配」 in the console (includes 3 real bug fixes).
+> You can also take the source straight from this repo / the [v0.3.46 release](https://github.com/Noob-stupid/dsh-plugin-hub/releases/tag/v0.3.46):
+> copy `lib/` and `package.json` into `~/.dsh/profiles/<profile>/node_modules/@noob-stupid/dsh-plugin-console/` and restart DSH (identical to the npm package).
 
 ---
 
