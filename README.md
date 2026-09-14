@@ -1,12 +1,5 @@
 > **English**: [README.md](README.md) | **中文**: [README.zh.md](README.zh.md)
 
-> **📢 npm updated to `0.3.46`**
->
-> `dsh plugin add @noob-stupid/dsh-plugin-console`, or 「检测更新 → 更新并适配」 in the console (includes 3 real bug fixes).
-> You can also take the source straight from this repo / the [v0.3.46 release](https://github.com/Noob-stupid/dsh-plugin-hub/releases/tag/v0.3.46):
-> copy `lib/` and `package.json` into `~/.dsh/profiles/<profile>/node_modules/@noob-stupid/dsh-plugin-console/` and restart DSH (identical to the npm package).
-> ⚗️ **Experimental preview** (layered refactor, **not for production**): [`Noob-stupid/dsh-plugin-hub-refactor`](https://github.com/Noob-stupid/dsh-plugin-hub-refactor) — modular structure (`lib/index.js` 7637 → 142 lines), feature-equivalent to 0.3.46; upgrade/rollback paths not yet exercised.
-
 ---
 
 <img width="1170" height="609" alt="image" src="https://github.com/user-attachments/assets/b802d606-14ba-4151-9956-ff642ed12b0a" />
@@ -308,3 +301,14 @@ See [CHANGELOG.md](CHANGELOG.md).
 MIT
 
 ---
+
+---
+
+## Preview (experimental · not for production)
+
+The layered-refactor preview lives in its **own repository**: [**`Noob-stupid/dsh-plugin-hub-refactor`**](https://github.com/Noob-stupid/dsh-plugin-hub-refactor)
+
+- **What it is**: the monolithic `lib/index.js` (7637 lines) split into layers — `lib/index.js` **142 lines** + `lib/server/**` **36 modules**; **feature-equivalent to `0.3.46`**, maintainability only;
+- **Verified**: 17 test suites green · 8 architecture-guard assertions · **47/47 routes identical** (`status` + response fields) against the stable build;
+- **Not yet exercised**: real framework upgrade / rollback, restart guardian, real install/uninstall, component start/stop, real AI run, Gitee OAuth (~10–25% long-tail risk, subjective);
+- **For everyday use** stick to npm `@noob-stupid/dsh-plugin-console@0.3.46`, or `main` of this repo.

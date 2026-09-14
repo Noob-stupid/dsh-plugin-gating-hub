@@ -1,12 +1,5 @@
 > **English**: [README.md](README.md) | **中文**: [README.zh.md](README.zh.md)
 
-> **📢 npm 已更新到 `0.3.46`**
->
-> `dsh plugin add @noob-stupid/dsh-plugin-console`，或在控制台点「检测更新 → 更新并适配」即可升级（含 3 个真 bug 修复）。
-> 也可以直接从本仓库 / [v0.3.46 Release](https://github.com/Noob-stupid/dsh-plugin-hub/releases/tag/v0.3.46) 取源码：
-> 把 `lib/` 与 `package.json` 放进 `~/.dsh/profiles/<profile>/node_modules/@noob-stupid/dsh-plugin-console/` 后重启 DSH（内容与 npm 包一致）。
-> ⚗️ **实验性预览**（分层重构，**勿用于生产**）：[`Noob-stupid/dsh-plugin-hub-refactor`](https://github.com/Noob-stupid/dsh-plugin-hub-refactor) —— 结构模块化（`lib/index.js` 7637 → 142 行），功能与 0.3.46 等价；真升级/回滚等链路尚未实测。
-
 ---
 
 <img width="1170" height="609" alt="image" src="https://github.com/user-attachments/assets/b802d606-14ba-4151-9956-ff642ed12b0a" />
@@ -275,3 +268,14 @@ git clone https://github.com/Noob-stupid/dsh-plugin-hub /tmp/dsh-plugin-console 
 MIT
 
 ---
+
+---
+
+## 预览版（实验性 · 请勿用于生产）
+
+分层重构预览线在**独立仓库**：[**`Noob-stupid/dsh-plugin-hub-refactor`**](https://github.com/Noob-stupid/dsh-plugin-hub-refactor)
+
+- **它是什么**：把单体 `lib/index.js`（7637 行）拆成分层结构 —— `lib/index.js` **142 行** + `lib/server/**` **36 个模块**，**功能与 `0.3.46` 等价**，只为可维护性；
+- **已验证**：17 套测试全绿 · 8 条架构守卫断言 · 与稳定版逐条对打 **47 条路由，`status` + 响应字段 47/47 一致**；
+- **尚未实测**：真框架升级 / 真回滚、重启守护链路、真装真卸、组件进程启停、AI 真跑、Gitee OAuth 回调（长尾风险主观估计 **10%~25%**）；
+- **日常使用请继续用**：npm `@noob-stupid/dsh-plugin-console@0.3.46`，或本仓库 `main`。
