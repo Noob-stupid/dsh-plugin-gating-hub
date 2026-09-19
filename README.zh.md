@@ -211,7 +211,7 @@ git clone https://github.com/Noob-stupid/dsh-plugin-hub /tmp/dsh-plugin-console 
 
 ## 帮助 / Help
 
-遇到问题先看这里；仍有疑问请到 [Issues](https://github.com/Noob-stupid/dsh-plugin-hub/issues) 提问。
+遇到问题先看这里；仍有疑问请到 [议题](https://github.com/Noob-stupid/dsh-plugin-hub/issues) 提问。
 
 - **面板没出现**：重启 dsh 服务 → 刷新页面 → 设置 → 插件 → 插件管理。
 - **点开关没反应**：基础设施行带"受保护"标签（禁止开关，这是保护机制）；普通插件开关经
@@ -279,3 +279,4 @@ MIT
 - **已验证**：17 套测试全绿 · 8 条架构守卫断言 · 与稳定版逐条对打 **47 条路由，`status` + 响应字段 47/47 一致**；
 - **尚未实测**：真框架升级 / 真回滚、重启守护链路、真装真卸、组件进程启停、AI 真跑、Gitee OAuth 回调（长尾风险主观估计 **10%~25%**）；
 - **日常使用请继续用**：npm `@noob-stupid/dsh-plugin-console@0.3.46`，或本仓库 `main`。
+- 请多反馈问题
