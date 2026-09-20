@@ -14,7 +14,11 @@
 //   ② .gitmodules 必须内容像 gitmodules（含 [submodule "x"] 段）才算套装（looksLikeGitmodules）
 //   ③ 安装类型决策以内容为准，前端标记/缓存误判不能把普通插件送进套装通道（resolveInstallKind）
 import { createServer } from 'node:http'
-import { looksLikeGitmodules, readBodyOrNull, resolveInstallKind, curlText } from './lib/index.js'
+import { join } from 'node:path'
+import {
+  FETCH_BUDGET_MS, FETCH_NOT_FOUND, FETCH_OK, FETCH_UNREACHABLE, META_BUDGET_MS,
+  curlText, gitBin, looksLikeGitmodules, packageProbeErrorText, raceFetchOutcome, readBodyOrNull, resolveInstallKind, resolvePnpmRunners,
+} from './lib/index.js'
 
 let failed = 0
 const check = (label, cond, extra) => {
@@ -70,6 +74,51 @@ check('★ 200 垃圾页不算套装', looksLikeGitmodules(junkBody) === false
 let notFoundThrew = ''
 try { await curlText(`${origin}/missing`, 5000) } catch (error) { notFoundThrew = error.message }
 check('★ 404 抛 HTTP 404（被 rawTextWithFallback 归一为 null）', /HTTP 404/u.test(notFoundThrew), notFoundThrew || '（没有抛错）')
+
+// ── ⑤ 抓取预算 与「超时 ≠ 404」────────────────────────────────────────────────
+// 另一位用户的 issue（2026-09-20）：Android + proot Ubuntu 容器里域名解析出 IPv6 但无 IPv6 路由，
+// 4 条通道最快也要 5.4s（node:https 5435ms / jsDelivr 5564ms / curl 被 -m 6 掐死），
+// 旧的 5000ms 外层预算**必然先超时** → 抓取失败被当成"文件不存在" → 报「仓库没有 package.json」，
+// 而且 3s 的默认分支探测同样必输 → branch 恒为 main（默认分支 dev 的仓库取错分支）。
+check('raw 抓取预算 ≥ 8s（旧值 5s 必输）', FETCH_BUDGET_MS >= 8000, `FETCH_BUDGET_MS=${FETCH_BUDGET_MS}`)
+check('默认分支探测预算 ≥ 8s（旧值 3s 必输）', META_BUDGET_MS >= 8000, `META_BUDGET_MS=${META_BUDGET_MS}`)
+
+const notFoundOutcome = await raceFetchOutcome(Promise.resolve(null), 1000)
+check('通道报 404（resolve null）→ not-found', notFoundOutcome.state === FETCH_NOT_FOUND && notFoundOutcome.body === null, notFoundOutcome.state)
+const okOutcome = await raceFetchOutcome(Promise.resolve('{"name":"x"}'), 1000)
+check('通道拿到内容 → ok', okOutcome.state === FETCH_OK && okOutcome.body === '{"name":"x"}', okOutcome.state)
+const deadOutcome = await raceFetchOutcome(Promise.reject(new Error('网络不可达')), 1000)
+check('★ 通道全灭 → unreachable（不再混同"文件不存在"）', deadOutcome.state === FETCH_UNREACHABLE, deadOutcome.state)
+const slowStarted = Date.now()
+const slowOutcome = await raceFetchOutcome(new Promise(() => {}), 60)
+check('★ 超出预算 → unreachable（按预算返回，不悬挂）',
+  slowOutcome.state === FETCH_UNREACHABLE && Date.now() - slowStarted < 1500, `${Date.now() - slowStarted}ms`)
+
+const timeoutText = packageProbeErrorText('owner/repo', 'main', FETCH_UNREACHABLE)
+const missingText = packageProbeErrorText('owner/repo', 'main', FETCH_NOT_FOUND)
+check('★ 超时文案与「没有 package.json」文案必须不同', timeoutText !== missingText)
+check('超时文案点明超时/网络，并给出重试 + 仓库落地两条出路',
+  /超时|网络/u.test(timeoutText) && timeoutText.includes('重试') && timeoutText.includes('仓库落地'), timeoutText.slice(0, 60))
+check('404 文案保持原文案（含"没有 package.json"）', missingText.includes('没有 package.json'))
+
+// ── ⑥ 跨平台：git 可执行名 与 pnpm/corepack 定位 ──────────────────────────────
+// 另一位用户同一批截图里的另外两个报错：
+//   · 「仓库落地」克隆 `spawn git.exe ENOENT`（Linux 上根本没有 git.exe）
+//   · AI 赋能 install-npm `Cannot find module '/usr/local/bin/node_modules/corepack/dist/corepack.js'`
+check('git 可执行名跨平台（Linux 不能是 git.exe）', gitBin() === (process.platform === 'win32' ? 'git.exe' : 'git'), gitBin())
+const linuxGlobalCorepack = join('/usr/local/bin', '..', 'lib', 'node_modules', 'corepack', 'dist', 'corepack.js')
+const linuxNoCorepack = resolvePnpmRunners({ platform: 'linux', execPath: '/usr/local/bin/node', exists: () => false })
+check('Linux 找不到 corepack.js 时兜底 corepack → pnpm（不再生成 MODULE_NOT_FOUND 命令）',
+  linuxNoCorepack.map((r) => r.kind).join(',') === 'corepack,pnpm',
+  linuxNoCorepack.map((r) => r.note).join(' → '))
+const linuxGlobal = resolvePnpmRunners({ platform: 'linux', execPath: '/usr/local/bin/node', exists: (p) => p === linuxGlobalCorepack })
+check('★ 能认出 Linux npm 全局布局（<prefix>/lib/node_modules/corepack）',
+  linuxGlobal[0]?.kind === 'node-corepack' && linuxGlobal[0].run(['add', 'x']).argv[0] === linuxGlobalCorepack,
+  linuxGlobal[0]?.note)
+const winNoCorepack = resolvePnpmRunners({ platform: 'win32', execPath: 'C:\\Program Files\\nodejs\\node.exe', comspec: 'C:\\Windows\\System32\\cmd.exe', exists: () => false })
+check('Windows 找不到 corepack.js 时经 cmd /c 调用（execFile 不能直接跑 .cmd）',
+  winNoCorepack[0]?.kind === 'cmd-corepack' && winNoCorepack[0].run(['add', 'x']).bin.endsWith('cmd.exe'),
+  winNoCorepack[0]?.note)
 
 server.close()
 console.log(failed === 0 ? '\nALL PASS' : `\n${failed} FAILED`)
