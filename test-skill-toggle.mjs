@@ -103,6 +103,17 @@ check('remove system rejected 403', r.status === 403, `status=${r.status}`)
 r = await call('POST', '/plugin-console/skill-toggle', { name: 'no-such-skill', enabled: false })
 check('toggle unknown 404', r.status === 404, `status=${r.status}`)
 
+// 7. 删除技能必须**真的删掉**（2026-09-20 演练：rmSync 在本机某些环境会静默落空，
+//    旧代码删完直接 {ok:true} → 用户以为删了、技能还在；现改为删除后核实再回成功）
+r = await call('POST', '/plugin-console/skill-remove', { name: 'test-skill' })
+const skillGone = await readFile(`${home}/skills/test-skill/SKILL.md`, 'utf8').then(() => false, () => true)
+check('★ skill-remove：回 ok 且目录真的不在了', r.status === 200 && r.json?.ok === true && skillGone,
+  `status=${r.status} gone=${skillGone} ${JSON.stringify(r.json)}`)
+r = await call('GET', '/plugin-console/skills-installed')
+check('删除后清单里没有它', r.json.skills.every((s) => s.name !== 'test-skill'), JSON.stringify(r.json.skills))
+r = await call('POST', '/plugin-console/skill-remove', { name: 'test-skill' })
+check('重复删除 → 404（不再谎报成功）', r.status === 404, `status=${r.status}`)
+
 console.log(failed === 0 ? '\nALL PASS' : `\n${failed} FAILED`)
 await rm(home, { recursive: true, force: true })
 process.exit(failed === 0 ? 0 : 1)
