@@ -2,6 +2,21 @@
 
 All notable changes to dsh-plugin-hub.
 
+## v0.3.51 — 市场索引源全挂时 65.7s → 16.7s；CI actions 升 v5（2026-09-20）
+
+- **市场打开更快（网络差时尤其明显）**：`market-index` 逐个拉取索引源时原来用 `fetchJsonUrl`
+  （内部 = curl 一次 + node:https 兜底，兜底默认 **20s** 超时）→ 单源最坏 ~28s；5 个源全部不可达时
+  实测 **65.7s** 才回退到落盘缓存/报错，用户看到的就是"市场一直转圈"。
+  现在改为**每源单次 curl**（8s 硬超时）+ 整体预算 12s：真实网络（当时索引源确实全挂）实测同一路径 **16.7s**，
+  错误文案仍是可读的「网络不可达（N 个索引源全部失败）：…」。
+- **CI**：`actions/checkout` / `actions/setup-node` 升到 **v5**（`registry.yml` 早已是 v5），消除 Node 20 弃用 annotation。
+
+**已知行为提醒**：默认索引源在 0.3.49 扩容到 5 个，但**对已有 `~/.dsh/plugin-console-sources.json`
+的实例不生效**（自定义配置优先于默认值）。想要多入口的用户可在「软件源 → 索引源」里补
+`https://gcore.jsdelivr.net/gh/Noob-stupid/dsh-plugin-hub@main/marketplace/index.json` 等备用入口。
+
+**安装**：`dsh plugin add @noob-stupid/dsh-plugin-console`，或控制台「检测更新 → 更新并适配」。
+
 ## v0.3.50 — CI 增加「真装真卸」冒烟：把"非 Windows 硬编码 + 兜底路径从不执行"挡在 Linux 宿主上（2026-09-20）
 
 > 复盘（今天连撞两次低级错误后）：环境相关测试"没有 profile 就整体 SKIP"，

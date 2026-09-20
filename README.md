@@ -308,7 +308,7 @@ MIT
 
 The layered-refactor preview lives in its **own repository**: [**`Noob-stupid/dsh-plugin-hub-refactor`**](https://github.com/Noob-stupid/dsh-plugin-hub-refactor)
 
-- **What it is**: the monolithic `lib/index.js` (7637 lines) split into layers — `lib/index.js` **142 lines** + `lib/server/**` **36 modules**; **feature-equivalent to `0.3.50`**, maintainability only;
+- **What it is**: the monolithic `lib/index.js` (7637 lines) split into layers — `lib/index.js` **142 lines** + `lib/server/**` **36 modules**; **feature-equivalent to `0.3.51`**, maintainability only;
 - **Verified**: 18 test suites green · 8 architecture-guard assertions · **47/47 routes identical** (`status` + response fields) against the stable build;
 - **Not yet exercised**: real framework upgrade / rollback, restart guardian, real install/uninstall, component start/stop, real AI run, Gitee OAuth (~10–25% long-tail risk, subjective);
-- **For everyday use** stick to npm `@noob-stupid/dsh-plugin-console@0.3.50`, or `main` of this repo.
+- **For everyday use** stick to npm `@noob-stupid/dsh-plugin-console@0.3.51`, or `main` of this repo.
