@@ -14,11 +14,13 @@
 //   ② .gitmodules 必须内容像 gitmodules（含 [submodule "x"] 段）才算套装（looksLikeGitmodules）
 //   ③ 安装类型决策以内容为准，前端标记/缓存误判不能把普通插件送进套装通道（resolveInstallKind）
 import { createServer } from 'node:http'
-import { join } from 'node:path'
+import { existsSync, mkdirSync, writeFileSync } from 'node:fs'
+import { dirname, join } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import {
   DEFAULT_SOURCES, FETCH_BUDGET_MS, FETCH_NOT_FOUND, FETCH_OK, FETCH_UNREACHABLE, META_BUDGET_MS,
   curlText, gitBin, hasDirectNameHit, looksLikeGitmodules, packageProbeErrorText, parseRepoFromUrl,
-  raceFetchOutcome, readBodyOrNull, resolveInstallKind, resolvePnpmRunners, summarizeCloneErrors,
+  raceFetchOutcome, readBodyOrNull, removeDirVerified, resolveInstallKind, resolvePnpmRunners, summarizeCloneErrors,
 } from './lib/index.js'
 
 let failed = 0
@@ -156,6 +158,35 @@ check('★ 克隆失败报「首个错误」（真实原因）而不是次生错
 check('克隆失败列出尝试过的源，并把"目录非空"那条标出来',
   cloneMsg.includes('已尝试 2 个源') && cloneMsg.includes('（目录非空）'))
 check('单源失败也能正常汇总', summarizeCloneErrors([{ url: 'a', b: 1, message: 'boom' }]).includes('boom'))
+// 2026-09-20 演练：套装子模块失败只看到 `Command failed: git clone …`，git 自己说的原因全丢。
+check('★ 汇总里带上 git 自己的话（stderr），而不是只有 Command failed',
+  summarizeCloneErrors([{
+    url: 'https://ghproxy.net/https://github.com/o/r.git',
+    message: 'Command failed: git clone --depth 1 --quiet u d\n',
+    stderr: 'fatal: unable to access \'u\': The requested URL returned error: 502\n',
+  }]).includes('git 说：') === true)
+// 半成品目录清不掉时（本机 %TEMP% 下删除被静默忽略）：要么说清"清不掉"，要么别再多试一个源
+// 换来一条毫无信息量的"目录非空"。
+const uncleanMsg = summarizeCloneErrors([
+  { url: 'https://ghproxy.net/https://github.com/o/r.git', message: 'Command failed: git clone u d' },
+  { url: 'https://github.com/o/r.git', message: '克隆目标目录无法清理（环境禁止删除）：C:/t/x', unclean: true },
+])
+check('★ 清理失败时明确说"目录清不掉、多源重试无效"，而不是让用户看到"目录非空"',
+  uncleanMsg.includes('清不掉') && uncleanMsg.includes('无法清理'))
+
+// ── 删除必须核实：rmSync 在本机某些环境下会「静默落空」（不抛错、目录仍在） ──────────
+// 演练实测（2026-09-20）：同一个 rmSync 在 D:\dsh\repos 删得掉，在 C:\Users\<user>\.dsh\… 下
+// 返回成功但目录原封不动；旧代码删完直接 {ok:true} → 对用户撒谎（技能删不掉、残留清理假装清干净）。
+{
+  const probe = join(dirname(fileURLToPath(import.meta.url)), '.testdir', 'rm-verify-probe')
+  mkdirSync(probe, { recursive: true })
+  writeFileSync(join(probe, 'a.txt'), 'x', 'utf8')
+  const okResult = removeDirVerified(probe)
+  check('★ removeDirVerified：存在目录删掉后回 ok:true 且目录真的没了',
+    okResult.ok === true && existsSync(probe) === false, JSON.stringify(okResult))
+  check('removeDirVerified：目标本来就不存在也算成功（幂等）',
+    removeDirVerified(probe).ok === true)
+}
 
 server.close()
 console.log(failed === 0 ? '\nALL PASS' : `\n${failed} FAILED`)
