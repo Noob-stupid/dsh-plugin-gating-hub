@@ -2,6 +2,20 @@
 
 All notable changes to dsh-plugin-hub.
 
+## v0.3.53 — 外观回退为一颗 pill；GitHub 登录改走设备码（dsh-github-login 窗口），Token 作兜底（2026-09-20）
+
+- **外观回退**：市场页恢复成原来**一颗** pill（显示「已登录 GitHub：<login>」/「未登录 GitHub」+ 点开搜索源菜单），
+  不再单独一颗登录徽章；登录相关入口收进那颗菜单里。
+- **登录优先走设备码**：新增 `POST /plugin-console/github-open-login` —— 代理调用已安装插件
+  `dsh-github-login` 的 `POST /github-auth/open`（它用 GitHub Device Flow，在 **GitHub 官方页面输账号密码/验证码**），
+  并顺带透传 `/github-auth/status`；客户端点「GitHub 登录」后**每 2s 轮询** `/state`，最多 60s，
+  登录成功即提示「已登录 GitHub：<login>」。
+  为什么必须轮询：授权在另一个进程/窗口里完成，本插件收不到回调。
+  该通道**永不 500**：插件没装 / 路由不可达 / 平台不支持 → 回 200 + `started:false` + 可读 `reason`，
+  客户端据此**自动回退到 Token 粘贴**（上一版的 `POST /plugin-console/github-login` 保留）。
+- 为什么不能"输账号密码"：GitHub 自 2020 起禁止第三方应用用密码换 token，正规方式只有 Device Flow /
+  OAuth 跳转授权（都需要注册过的 client_id）与 PAT；`dsh-github-login` 复用的是 GitHub CLI 的公开 client_id。
+- 路由数 47 → 48（测试清单与弱断言同步）。
 ## v0.3.52 — 子包列表「读不到」不再说成「不存在」；「未登录 GitHub」可点、支持 Token 登录（2026-09-20）
 
 - **子包列表：读不到 ≠ 不存在**（用户实测）：装 `zhu1090093659/dsh-web`（根包 `private: true`）时报「未发现子包」，
