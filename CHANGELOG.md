@@ -2,6 +2,50 @@
 
 All notable changes to dsh-plugin-hub.
 
+## v0.3.49 — 搜索可搜「npm 包名 / README / 仓库文件里的名字」+ 克隆失败不再掩盖真实原因（2026-09-20）
+
+> 用户反馈：搜 `web-all` 搜不到全家桶 `zhu1090093659/dsh-web`（★7800）；另一位用户点**安装**报
+> `git clone 失败：… fatal: destination path '…dsh-suite-job-1-…' already exists and is not an empty directory.`
+
+**一、搜索可达性**——先回答"为什么搜不到"：
+
+- `web-all` 是 **npm 包名** `@linxin666/dsh-web-all`，而那个 GitHub 仓库**名字是 `dsh-web`**，
+  名字/描述/topics 里都没有 `web-all` → GitHub **仓库搜索**（检索面只有这三处）对它无解：
+  实测 `web-all` 32 条不含它、`dsh-web-all` 21 条也不含、`web-all in:name` 7449 条同样没有；
+  唯一能命中的是 `dsh-web-all in:readme`（README 里的词）；
+- 控制台本来有条能搜到它的**代码搜索**（monorepo 子包）通道，但 GitHub **代码搜索 API 强制登录**：
+  未登录实测 `401 Requires authentication`（对照：仓库搜索未登录 200 可用）；
+- 那位用户**索引也加载失败**（2 个默认索引源同时不可达）→ 本地索引模糊匹配同样失效 → 三条路全断。
+
+修复（新增三条互不依赖的通路）：
+
+- **npm 包名反查**：registry 搜索接口 → 候选包 → packument 的 `repository.url` → 仓库（并补真实星数/
+  描述/默认分支），命中**置顶**并带 `packageName` + `npmPackage` 标记，点安装即按包名安装；
+- **in:readme 重查**：首屏没有"名字逐词命中"的条目时，自动用 `in:name,description,readme` 再查一次
+  （未登录也能用）；
+- **索引源 2 → 5**（jsDelivr cdn/gcore/fastly + ghproxy + raw）、单源超时 15s → 8s、循环加 20s 总预算；
+  全部失败时的文案说清后果（此刻只剩 GitHub 实时结果）；
+- **增量检索通道 `extras`**：浏览器直连 GitHub 搜索成功时不会走服务端路由，而未登录用户恰恰只能走直连 →
+  前端现在**并行**再调一次 `/search {extras:true}`（只跑 npm 反查 + in:readme + 子包），合并时 npm 置顶、
+  按 fullName 去重，并改为**就地打补丁**应用 enrich 结果（避免把增量条目整表冲掉）；
+- **界面**：索引彻底没加载成功时给出"只剩 GitHub 实时结果"的说明 + **重试按钮**；未登录时提示
+  "登录后可按子包名搜索"；
+- **按包名安装**：`addLocal` 支持 `npmPackage` 标记（不改这行，npm 命中会退化成"按仓库装"，
+  装到的不是用户输入的那个包）。
+
+**二、克隆重试不再掩盖真实原因**
+
+`gitCloneRepo` 多源重试（ghproxy 镜像 → GitHub 直连）**不清理目标目录**：第一次失败会留下半成品目录，
+第二次立刻以 `destination path … already exists and is not an empty directory` 失败，旧代码把**最后一条**
+错误抛出去 → 用户只看到"目录非空"，真实原因（镜像/网络不可达）被完全掩盖、排查方向被带偏。
+现在每次尝试前清理目标目录，失败时抛**首个错误**（真实原因）+ 尝试清单，并把"目录非空"那条标出来。
+
+**安装**：`dsh plugin add @noob-stupid/dsh-plugin-console`，或控制台「检测更新 → 更新并适配」。
+
+**测试**：16 套测试全绿 + 全功能路由冒烟 24 项全过；端到端 `q=web-all` 首位 = `zhu1090093659/dsh-web`
+（★7812、`@linxin666/dsh-web-all@0.3.23`、默认分支 dev、可按包名安装）；三个**真套装**仓库对照仍正确判为套装
+（内容校验没修过头）。
+
 ## v0.3.48 — 三类「环境相关」缺陷：套装误判 / 抓取超时被误报成「没有 package.json」/ 非 Windows 必炸（2026-09-20）
 
 > 两位用户实测反馈：
