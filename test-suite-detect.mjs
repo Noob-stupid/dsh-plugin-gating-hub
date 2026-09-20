@@ -14,12 +14,12 @@
 //   ② .gitmodules 必须内容像 gitmodules（含 [submodule "x"] 段）才算套装（looksLikeGitmodules）
 //   ③ 安装类型决策以内容为准，前端标记/缓存误判不能把普通插件送进套装通道（resolveInstallKind）
 import { createServer } from 'node:http'
-import { existsSync, mkdirSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import {
   DEFAULT_SOURCES, FETCH_BUDGET_MS, FETCH_NOT_FOUND, FETCH_OK, FETCH_UNREACHABLE, META_BUDGET_MS,
-  curlText, gitBin, hasDirectNameHit, looksLikeGitmodules, packageProbeErrorText, parseRepoFromUrl,
+  cleanupAttemptedCandidates, curlText, gitBin, hasDirectNameHit, looksLikeGitmodules, packageProbeErrorText, parseRepoFromUrl,
   raceFetchOutcome, readBodyOrNull, removeDirVerified, resolveInstallKind, resolvePnpmRunners, summarizeCloneErrors,
 } from './lib/index.js'
 
@@ -186,6 +186,38 @@ check('★ 清理失败时明确说"目录清不掉、多源重试无效"，而�
     okResult.ok === true && existsSync(probe) === false, JSON.stringify(okResult))
   check('removeDirVerified：目标本来就不存在也算成功（幂等）',
     removeDirVerified(probe).ok === true)
+}
+
+// ── ⑩ 安装失败必须清场并如实汇报 ────────────────────────────────────────────────
+// 真装演练（2026-09-20）：11 个子包的聚合仓库跑 19 分钟后失败，node_modules 里留着
+// `@captain1275/dsh-full-stats_tmp_56272_2` 这类 pnpm 半成品和一个真包，面板只报"安装失败"。
+{
+  const fakeProfile = join(dirname(fileURLToPath(import.meta.url)), '.testdir', 'fake-profile')
+  const pkgDir = join(fakeProfile, 'node_modules', '@drill', 'pkg-a')
+  const tmpDir = join(fakeProfile, 'node_modules', '@drill', 'pkg-a_tmp_123_1')
+  mkdirSync(pkgDir, { recursive: true })
+  mkdirSync(tmpDir, { recursive: true })
+  writeFileSync(join(pkgDir, 'package.json'), '{"name":"@drill/pkg-a"}', 'utf8')
+  const res = cleanupAttemptedCandidates(fakeProfile, ['@drill/pkg-a', '@drill/never-installed'])
+  check('★ 失败清场：包目录与 pnpm `_tmp_` 半成品都被清掉',
+    existsSync(pkgDir) === false && existsSync(tmpDir) === false, JSON.stringify(res))
+  check('失败清场：只汇报真正清过的包（没装过的候选不算）',
+    res.cleaned.includes('@drill/pkg-a') && res.failed.length === 0, JSON.stringify(res))
+}
+
+// ── ⑪ 聚合包判据：`@scope/all` 这种 scope 根形式也要认 ──────────────────────────
+// 真装演练（2026-09-20）：whyihaveyou/dsh-suite 的聚合包叫 `@dsh-suite/all`，而旧判据
+// `(^|-)all$ || -all-` 命中不了它 —— 那次它排第一纯属仓库目录顺序，换仓库就会先试错包。
+{
+  check('旧判据确实漏掉 @scope/all（这就是这次要修的那条）',
+    /(^|-)all$/u.test('@dsh-suite/all') === false && /-all-/u.test('@dsh-suite/all') === false
+    && /\/all$/u.test('@dsh-suite/all') === true)
+  // 为什么是源码级断言：subpackageCandidates() 要联网读仓库子包列表且未导出，判据本身是内联正则。
+  // 期望 3 处：subpackageCandidates 的 isAll 1 处 + 懒惰展开的排序里 a/b 各 1 处 —— 少一处就会出现
+  // "列表页排序对了、懒惰展开又先试错包"。
+  const src = readFileSync(join(dirname(fileURLToPath(import.meta.url)), 'lib', 'index.js'), 'utf8')
+  const hits = src.split('/\\/all$/u').length - 1
+  check('★ 两处聚合包判据都补上了 /\\/all$/（源码级，共 3 处）', hits >= 3, `命中 ${hits} 处`)
 }
 
 server.close()

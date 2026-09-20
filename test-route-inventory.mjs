@@ -79,7 +79,7 @@ check('没有未登记的新路由（新增必须同步更新本清单）', extr
 
 // ── ② 只读接口：status + 顶层响应字段逐字段固化 ───────────────────────────────
 const SCHEMAS = [
-  ['GET', '/plugin-console/state', undefined, 200, ['compat', 'compatGate', 'compatPending', 'components', 'entries', 'framework', 'github', 'installJobs', 'ok', 'patch', 'patchHeal', 'patchPath', 'recentFailures', 'rollback', 'selfVersion']],
+  ['GET', '/plugin-console/state', undefined, 200, ['compat', 'compatGate', 'compatPending', 'components', 'entries', 'framework', 'github', 'installJobs', 'ok', 'patch', 'patchHeal', 'patchPath', 'pendingRestart', 'recentFailures', 'rollback', 'selfVersion']],
   ['GET', '/plugin-console/sources', undefined, 200, ['giteeStatus', 'ok', 'sources']],
   ['GET', '/plugin-console/skills-installed', undefined, 200, ['ok', 'pluginSkills', 'skills']],
   ['GET', '/plugin-console/framework-upgrade-status', undefined, 200, ['message', 'ok', 'status']],
@@ -140,6 +140,179 @@ for (const [method, path, body, wantStatus, wantKeys] of SCHEMAS) {
   check('响应契约 github-open-login：started:false 时 reason 是非空字符串',
     body !== null && (body.started === true || (typeof body.reason === 'string' && body.reason !== '')),
     `started=${body?.started} reason=${body?.reason}`)
+}
+
+// ── ②c /uninstall 接受 jobId：撤销「已安装但尚未生效」的安装 ─────────────────────
+// 2026-09-20 真装真卸演练实测的产品缺口：装完一个 bundle 型插件后 /install 返回 entryId: null、
+// /state 里新增 loader 条目 = 0（要重启才被加载），而旧 /uninstall 只按**运行中** loader 条目
+// 查找 → 恒 404「没有名为 X 的插件条目」，于是刚装错的插件在重启前无法从面板卸载。
+// 这里钉死三件事：① /uninstall 接受 { jobId } 这种入参形态；② /state 输出含 pendingRestart；
+// ③ 撤销真的把补丁行 / bundles 清单清干净，并回报 verified（回读核实，不是"删完就报成功"）。
+{
+  const { installJobs } = mod
+  const manifestPath = join(profileDir, 'package.json')
+  const readPatchText = () => readFileSync(join(profileDir, 'cordis.patch.yml'), 'utf8')
+  const readBundles = () => JSON.parse(readFileSync(manifestPath, 'utf8')).dsh.profile.bundles
+  const PKG = '@fake/pending-widget'
+  const JOB = 'job-pending-1'
+  // 夹具 = 一次「已安装但尚未生效」的 bundle 型安装留下的现场：
+  //   patch 里的 insert 行（appendInsert 写的）+ bundles 清单（addBundleToManifest 写的）+ 任务记录
+  writeFileSync(manifestPath, JSON.stringify({
+    name: 'dsh-profile-web', private: true,
+    dsh: { profile: { bundles: ['@deepseek-ai/dsh-base', PKG, '@linxin666/dsh-web-all'] } },
+  }, null, 2) + '\n', 'utf8')
+  writeFileSync(join(profileDir, 'cordis.patch.yml'),
+    `${readPatchText()}- insert:\n    - id: pending-widget\n      name: '${PKG}'\n- id: pending-widget\n  disabled: true\n`, 'utf8')
+  installJobs.set(JOB, {
+    id: JOB, repo: 'fake/pending-widget', source: 'github', packageName: PKG, status: 'done',
+    stage: 'configuring', error: null, startedAt: 1, finishedAt: 2, entryId: null, bundle: true,
+    ai: false, aiNote: null, subpackages: null, lastError: null, update: false, kind: 'plugin',
+  })
+
+  // ① /state 必须能表达「装了但还没生效」（前端据此显示徽标 + 删除按钮）
+  const stateBefore = await call('GET', '/plugin-console/state')
+  const pending = stateBefore.json?.pendingRestart
+  const row = Array.isArray(pending) ? pending.find((j) => j.jobId === JOB) : null
+  check('★ /state 输出 pendingRestart（已安装·重启后生效）',
+    Array.isArray(pending) && row !== null && row.packageName === PKG && row.bundle === true,
+    `pendingRestart=${JSON.stringify(pending)}`)
+  check('pendingRestart 行字段固定（jobId/repo/packageName/bundle/finishedAt）',
+    row !== null && JSON.stringify(Object.keys(row).sort()) === JSON.stringify(['bundle', 'finishedAt', 'jobId', 'packageName', 'repo']),
+    row === null ? '（没有该任务）' : Object.keys(row).join(','))
+
+  // ② /uninstall 接受 { jobId }（旧代码在这里返回 400「entryId 无效」）
+  const undo = await call('POST', '/plugin-console/uninstall', { jobId: JOB })
+  check('★ /uninstall 接受 { jobId } 入参形态（不再要求 entryId）',
+    undo.status === 200 && undo.json?.ok === true && undo.json?.removed === 'pending-install',
+    `status=${undo.status} body=${JSON.stringify(undo.json)?.slice(0, 200)}`)
+  check('撤销响应：packageName / restart:false / verified 三项齐全',
+    undo.json?.packageName === PKG && undo.json?.restart === false
+    && undo.json?.verified?.patchClean === true && undo.json?.verified?.bundlesClean === true && undo.json?.verified?.packageGone === true
+    && undo.json?.warn === null && undo.json?.uninstallError === null,
+    `verified=${JSON.stringify(undo.json?.verified)} warn=${undo.json?.warn} uninstallError=${undo.json?.uninstallError}`)
+  check('撤销后补丁里不再出现该包（insert 行与 disabled 覆盖块都清掉）',
+    !readPatchText().includes(PKG) && !/- id: pending-widget/u.test(readPatchText()), JSON.stringify(readPatchText()))
+  check('撤销后 bundles 只少这一项（保留顺序与其余项）',
+    JSON.stringify(readBundles()) === JSON.stringify(['@deepseek-ai/dsh-base', '@linxin666/dsh-web-all']), JSON.stringify(readBundles()))
+  check('撤销的行 id 如实回报（rowIds）',
+    Array.isArray(undo.json?.rowIds) && undo.json.rowIds.includes('pending-widget'), JSON.stringify(undo.json?.rowIds))
+
+  // ③ 撤销过的任务不再出现在 pendingRestart 里（否则前端会一直显示一个删不掉的幽灵行）
+  const stateAfter = await call('GET', '/plugin-console/state')
+  check('撤销后 /state 的 pendingRestart 不再含该任务',
+    Array.isArray(stateAfter.json?.pendingRestart) && !stateAfter.json.pendingRestart.some((j) => j.jobId === JOB),
+    JSON.stringify(stateAfter.json?.pendingRestart))
+
+  // ④ 入参校验与安全护栏（与 entry 分支同规格：@deepseek-ai/* · 受保护模块 · 控制台自身）
+  const bad = async (label, body, wantStatus, wantWord) => {
+    const r = await call('POST', '/plugin-console/uninstall', body)
+    check(label, r.status === wantStatus && String(r.json?.error ?? '').includes(wantWord),
+      `status=${r.status} error=${r.json?.error}`)
+  }
+  await bad('无 entryId 也无 jobId → 400', {}, 400, 'entryId 无效')
+  await bad('jobId 不存在 → 404（说明任务不存在，不是 entryId 无效）', { jobId: 'job-nope' }, 404, '没有这个安装任务')
+  await bad('entryId 找不到 + jobId 不存在 → 404 也是"没有这个安装任务"',
+    { entryId: 'include:nope', jobId: 'job-nope' }, 404, '没有这个安装任务')
+  installJobs.set('job-installing-1', { id: 'job-installing-1', repo: 'a/b', packageName: '@fake/installing', status: 'installing', stage: 'installing', entryId: null, bundle: false })
+  await bad('任务未完成（installing）→ 400 如实说明还在进行中', { jobId: 'job-installing-1' }, 400, '还在进行中')
+  installJobs.set('job-noname-1', { id: 'job-noname-1', repo: 'a/b', packageName: '', status: 'done', entryId: null, bundle: false })
+  await bad('任务没有包名 → 400 如实说明', { jobId: 'job-noname-1' }, 400, '没有记录包名')
+  installJobs.set('job-official-1', { id: 'job-official-1', repo: 'deepseek-ai/x', packageName: '@deepseek-ai/dsh-web-app', status: 'done', entryId: null, bundle: true })
+  await bad('@deepseek-ai/* 官方包 → 403（与 entry 分支同护栏）', { jobId: 'job-official-1' }, 403, '框架官方包')
+  installJobs.set('job-self-1', { id: 'job-self-1', repo: 'noob-stupid/x', packageName: '@noob-stupid/dsh-plugin-console', status: 'done', entryId: 'plugin-console', bundle: true })
+  await bad('控制台自身 → 400 禁止自删', { jobId: 'job-self-1' }, 400, '控制台自身')
+  installJobs.set('job-live-1', { id: 'job-live-1', repo: 'fake/demo', packageName: '@fake/demo', status: 'done', entryId: null, bundle: false })
+  await bad('包已在运行中的 loader 里（重启已完成）→ 400 指路按条目删除', { jobId: 'job-live-1' }, 400, '已经在运行中的插件列表里')
+  // entryId 优先：两者都传且 entry 存在时仍走原来的 entry 分支（demo 行不是用户安装的行 → 400 不可删除）
+  await bad('同时传 entryId 与 jobId 时 entry 分支优先（行为不变）',
+    { entryId: 'include:demo', jobId: 'job-live-1' }, 400, '不是用户安装的额外插件')
+  for (const id of ['job-installing-1', 'job-noname-1', 'job-official-1', 'job-self-1', 'job-live-1']) installJobs.delete(id)
+
+  // ⑤ 反向保险：普通「条目删除」成功后，同包名的 pendingRestart 记录必须一并作废 ——
+  //    否则重启后从列表里删掉的插件会在面板上留一行删不掉的「已安装·重启后生效」幽灵行。
+  const baseEntries = ctx.loader.entries
+  ctx.loader.entries = () => [...baseEntries(), { id: 'include:ghost', options: { name: '@fake/ghost-pkg' }, disabled: false, fiber: { state: 2 } }]
+  writeFileSync(join(profileDir, 'cordis.patch.yml'), `${readPatchText()}- insert:\n    - id: ghost\n      name: '@fake/ghost-pkg'\n`, 'utf8')
+  installJobs.set('job-ghost-1', {
+    id: 'job-ghost-1', repo: 'fake/ghost-pkg', source: 'github', packageName: '@fake/ghost-pkg', status: 'done',
+    stage: 'configuring', error: null, startedAt: 1, finishedAt: 2, entryId: 'ghost', bundle: false,
+    ai: false, aiNote: null, subpackages: null, lastError: null, update: false, kind: 'plugin',
+  })
+  const ghost = await call('POST', '/plugin-console/uninstall', { entryId: 'include:ghost' })
+  check('entry 分支：删掉用户安装的行并成功卸载包（uninstallError 为空）',
+    ghost.status === 200 && ghost.json?.removed === 'entry' && ghost.json?.uninstallError === null,
+    `status=${ghost.status} body=${JSON.stringify(ghost.json)}`)
+  ctx.loader.entries = baseEntries // 补丁行已删 → HMR 重组后 loader 里不再有这个条目
+  const stateGhost = await call('GET', '/plugin-console/state')
+  check('★ entry 分支删除后 pendingRestart 不作假（同包名任务一并作废，不留幽灵行）',
+    Array.isArray(stateGhost.json?.pendingRestart) && !stateGhost.json.pendingRestart.some((j) => j.jobId === 'job-ghost-1'),
+    JSON.stringify(stateGhost.json?.pendingRestart))
+  installJobs.delete('job-ghost-1')
+}
+
+// ── ②d 撤销的"如实汇报"：删不干净必须带 warn + 路径（不许 500、不许假成功）─────────
+// 本机实测过 rmSync/pnpm 在受限环境里会静默落空甚至抛错（见 removeDirVerified 注释），
+// 所以 revokePendingInstall 的三个子项都回读核实。这里用注入的 pnpmRemove 桩钉死各条路径。
+{
+  const { revokePendingInstall } = mod
+  const manifestPath = join(profileDir, 'package.json')
+  const patchPath = join(profileDir, 'cordis.patch.yml')
+  const STUCK = '@fake/stuck-pkg'
+  const stuckDir = join(profileDir, 'node_modules', '@fake', 'stuck-pkg')
+  mkdirSync(stuckDir, { recursive: true })
+  writeFileSync(join(stuckDir, 'package.json'), JSON.stringify({ name: STUCK, version: '1.0.0' }), 'utf8')
+  writeFileSync(manifestPath, JSON.stringify({
+    name: 'dsh-profile-web', private: true,
+    dsh: { profile: { bundles: ['@deepseek-ai/dsh-base', STUCK] } },
+  }, null, 2) + '\n', 'utf8')
+  writeFileSync(patchPath, `${readFileSync(patchPath, 'utf8')}- insert:\n    - id: stuck-pkg\n      name: '${STUCK}'\n`, 'utf8')
+  const job = { id: 'job-stuck-1', packageName: STUCK, entryId: 'stuck-pkg', bundle: true, status: 'done' }
+
+  const failed = await revokePendingInstall(job, { profileDir, patchPath, pnpmRemove: async () => { throw new Error('模拟 pnpm 失败：EPERM') } })
+  const warnText = String(failed.warn).replace(/\\/gu, '/') // Windows 路径分隔符归一后再断言
+  check('★ 包删不掉时：ok 仍可判成功，但 verified.packageGone=false + warn 说清哪项没干净与目录路径',
+    failed.verified.patchClean === true && failed.verified.bundlesClean === true && failed.verified.packageGone === false
+    && warnText.includes('包目录仍在') && warnText.includes(STUCK) && warnText.includes(String(stuckDir).replace(/\\/gu, '/'))
+    && String(failed.uninstallError).includes('模拟 pnpm 失败'),
+    `verified=${JSON.stringify(failed.verified)} warn=${failed.warn}`)
+
+  const okUndo = await revokePendingInstall(job, {
+    profileDir, patchPath,
+    pnpmRemove: async (dir, name) => rmSync(join(dir, 'node_modules', ...name.split('/')), { recursive: true, force: true }),
+  })
+  check('★ 包真删掉后：verified 三项为 true 且不带 warn',
+    okUndo.verified.patchClean === true && okUndo.verified.bundlesClean === true && okUndo.verified.packageGone === true && okUndo.warn === null,
+    `verified=${JSON.stringify(okUndo.verified)} warn=${okUndo.warn}`)
+  // 反面对照：目录已不在、但 manifest 还引用它（pnpm add 会写 dependencies）→ 仍需 pnpm remove 清依赖
+  let calls = 0
+  writeFileSync(manifestPath, JSON.stringify({ name: 'dsh-profile-web', private: true, dependencies: { [STUCK]: '^1.0.0' } }, null, 2) + '\n', 'utf8')
+  const depOnly = await revokePendingInstall({ id: 'job-dep-1', packageName: STUCK, entryId: null, bundle: false },
+    { profileDir, patchPath, pnpmRemove: async () => { calls += 1 } })
+  check('目录已不在但 manifest 仍引用 → 仍调 pnpm remove（否则 package.json 留下幽灵依赖）',
+    calls === 1 && depOnly.verified.packageGone === true, `calls=${calls} verified=${JSON.stringify(depOnly.verified)}`)
+
+  // bundle 型的行由**包内** cordis.patch.yml 提供，profile 补丁里没有 insert 块、只可能有
+  // `- id: X` + disabled 覆盖块 —— 归属只能从包内补丁反查（bundleOwnRowIds），
+  // 且必须只清自己家的行（聚合包补丁常引用别人家的包）。
+  const BUNDLE = '@fake/bundle-pkg'
+  const bundleDir = join(profileDir, 'node_modules', '@fake', 'bundle-pkg')
+  mkdirSync(bundleDir, { recursive: true })
+  writeFileSync(join(bundleDir, 'package.json'), JSON.stringify({ name: BUNDLE, version: '1.0.0' }), 'utf8')
+  writeFileSync(join(bundleDir, 'cordis.patch.yml'),
+    `- insert:\n    - id: whale\n      name: '${BUNDLE}'\n    - id: other\n      name: '@linxin666/dsh-web-all'\n`, 'utf8')
+  writeFileSync(patchPath, `${readFileSync(patchPath, 'utf8')}- id: whale\n  disabled: true\n- id: other\n  disabled: true\n`, 'utf8')
+  const bundleUndo = await revokePendingInstall(
+    { id: 'job-bundle-1', packageName: BUNDLE, entryId: null, bundle: true },
+    {
+      profileDir, patchPath,
+      pnpmRemove: async (dir, name) => rmSync(join(dir, 'node_modules', ...name.split('/')), { recursive: true, force: true }),
+    },
+  )
+  const patchAfterBundle = readFileSync(patchPath, 'utf8')
+  check('★ bundle 型：清掉自带 patch 归属行的 disabled 覆盖块，且不碰别人家的行',
+    bundleUndo.verified.patchClean === true && bundleUndo.verified.packageGone === true
+    && !/- id: whale/u.test(patchAfterBundle) && /- id: other\r?\n {2}disabled: true/u.test(patchAfterBundle),
+    JSON.stringify(patchAfterBundle))
 }
 
 // ── ③ 安全中间件：环回 / Host / 同源写保护 / 方法门禁 ─────────────────────────
