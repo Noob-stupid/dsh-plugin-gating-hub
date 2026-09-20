@@ -100,6 +100,31 @@ const CRITICAL_LS = ['pc-toolbar-open', 'pc-toolbar-pos', 'pc-market-mode', 'pc-
 const missingLs = CRITICAL_LS.filter((k) => !lsKeys.has(k))
 check('客户端 localStorage 关键键仍在', missingLs.length === 0, missingLs.length === 0 ? `共 ${lsKeys.size} 个键` : `丢失: ${missingLs.join(', ')}`)
 
+// ── ⑥ 安装进度 / AI 授权卡的前端接线（服务端下发了没人读 = 白做）─────────────────
+// 2026-09-20 真装实测的两个缺口都在"前端没把服务端状态显示出来"这一侧：进度只显示 stage、
+// 授权只有一行小字（连顶部消息都没有）。服务端字段已有 test-route-inventory.mjs 钉死；这里静态
+// 钉死前端**确实在渲染它们**（浏览器里的像素仍是人工验证项，但"悄悄删掉授权卡"这类退化会被拦下）。
+{
+  const I18N_KEYS = ['progressSubpackage', 'progressSuiteClone', 'progressSuiteAssemble', 'progressDone', 'aiConsentCardTitle', 'aiConsentCountdown', 'aiConsentTimeoutNote', 'aiConsentLastError', 'aiConsentTopHint']
+  const countOf = (k) => [...clientSrc.matchAll(new RegExp(`\\b${k}\\s*:`, 'gu'))].length
+  const notBoth = I18N_KEYS.filter((k) => countOf(k) !== 2) // 中文 + English 各一处
+  check(`进度/授权 i18n 键中英两套都在（${I18N_KEYS.length} 个）`, notBoth.length === 0,
+    notBoth.length === 0 ? '全部命中两次（zh+en）' : notBoth.map((k) => `${k}:${countOf(k)}`).join(', '))
+  check('子包/套装进度渲染成"第 i/n 个"（progressText 读 channel/phase/index/total/name，并接进安装进度列表）',
+    /const progressText = \(progress\) =>/u.test(clientSrc) && clientSrc.includes('progressText(job.progress)')
+    && /progressSubpackage/u.test(clientSrc) && /progressSuiteClone/u.test(clientSrc)
+    && /styles\.progress\b/u.test(clientSrc))
+  check('★ 授权卡：进度区一块显眼的警告色卡片（倒计时 + 同意/取消 + 最后错误），不再只有一行小字',
+    clientSrc.includes('.pc_consentCard{') && clientSrc.includes('styles.consentCard')
+    && /const remain = consentRemaining\(job\)/u.test(clientSrc) && clientSrc.includes('styles.consentCountdown')
+    && clientSrc.includes('aiConsent(job.jobId, true)') && clientSrc.includes('aiConsent(job.jobId, false)')
+    && /aiConsentLastError/u.test(clientSrc))
+  check('顶部消息也提示一句（aiConsentTopHint 接进 /install-status 轮询）',
+    /setMessage\(t\("aiConsentTopHint"\)\)/u.test(clientSrc) && clientSrc.includes('data.aiConsent?.pending === true'))
+  check('模态框同样给出倒计时与最后错误（失焦/切页也看得到关键信息）',
+    /const remain = consentRemaining\(consentJob\)/u.test(clientSrc) && clientSrc.includes('consentTimeoutMinutes(consentJob)'))
+}
+
 rmSync(HOME, { recursive: true, force: true })
 console.log(failed === 0 ? '\nALL PASS' : `\n${failed} FAILED`)
 process.exit(failed === 0 ? 0 : 1)

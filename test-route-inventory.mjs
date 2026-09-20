@@ -106,6 +106,108 @@ for (const [method, path, body, wantStatus, wantKeys] of SCHEMAS) {
   check(`响应契约 ${method} ${path.replace('/plugin-console', '')}`, same, `status=${r.status} keys=${keys.join(',')}`)
 }
 
+// ── ②a-2 子包级进度 + AI 授权请求必须能被面板看到（2026-09-20 真装实测缺口）──────────
+// 真实事故：装聚合仓库 CAPTAIN1275/dsh-ui-web（11 个子包）从点下到失败整整 19 分钟，job.stage 一直
+// 停在 installing —— 面板只有一个不动的进度，用户不知道在装第几个、还剩几个；确定性通道全失败后
+// 服务端挂起等授权（stage=ai-consent），前端却没有醒目提示，用户干等 10 分钟被「等待授权超时」取消。
+// 这一节把「服务端必须下发什么」钉死：progress{index,total,name,done} 与
+// aiConsent{pending,since,timeoutMs,lastError}，以及同意/取消两条决策路径真的送达等待中的任务。
+{
+  const { installJobs } = mod
+  const base = (id, extra) => ({
+    id, repo: 'CAPTAIN1275/dsh-ui-web', source: 'github', packageName: null, status: 'installing', stage: 'installing',
+    error: null, startedAt: 1, finishedAt: null, entryId: null, bundle: false, ai: false, aiNote: null,
+    subpackages: ['@captain1275/dsh-full-stats'], lastError: null, update: false, kind: 'plugin', ...extra,
+  })
+
+  // ① 聚合安装进行中：第 3/11 个，正在试 @captain1275/dsh-full-stats
+  installJobs.set('job-progress-1', base('job-progress-1', {
+    candidateTotal: 11, candidateIndex: 3, candidateName: '@captain1275/dsh-full-stats', candidateDone: false,
+  }))
+  const r = await call('POST', '/plugin-console/install-status', { jobId: 'job-progress-1' })
+  check('★ /install-status 下发子包级 progress（第 i/n 个 + 当前候选名）',
+    JSON.stringify(r.json?.progress) === JSON.stringify({ channel: 'subpackage', phase: 'install', index: 3, total: 11, name: '@captain1275/dsh-full-stats', done: false }),
+    `status=${r.status} progress=${JSON.stringify(r.json?.progress)}`)
+  check('新增字段不破坏既有响应契约（kind/stage/suiteNote/curlNote 仍在）',
+    r.status === 200 && r.json?.ok === true && r.json?.kind === 'plugin' && 'suiteNote' in r.json && 'curlNote' in r.json,
+    `keys=${Object.keys(r.json ?? {}).length}`)
+  // ② 还没进候选循环 → progress 为 null（不许编造"第 0/0 个"）
+  installJobs.set('job-progress-0', base('job-progress-0', { stage: 'preparing' }))
+  const before = await call('POST', '/plugin-console/install-status', { jobId: 'job-progress-0' })
+  check('未开始候选循环时 progress 为 null（不编造 0/0）', before.json?.progress === null, JSON.stringify(before.json?.progress))
+  // ③ 套装通道：clone / 装配两阶段共用同一个 progress 字段（channel=suite）
+  installJobs.set('job-suite-1', base('job-suite-1', { kind: 'suite', stage: 'detecting', suiteProgress: { phase: 'clone', index: 2, total: 4, name: 'injector', done: false } }))
+  const suite = await call('POST', '/plugin-console/install-status', { jobId: 'job-suite-1' })
+  check('★ 套装进度也走 progress 字段（channel=suite · clone 阶段 · 第 i/n 个子模块）',
+    JSON.stringify(suite.json?.progress) === JSON.stringify({ channel: 'suite', phase: 'clone', index: 2, total: 4, name: 'injector', done: false }),
+    JSON.stringify(suite.json?.progress))
+  // ④ 装成功后必须标记完成（否则面板会一直显示"正在装第 i 个"）
+  installJobs.set('job-progress-2', base('job-progress-2', { status: 'done', candidateTotal: 11, candidateIndex: 5, candidateName: '@a/five', candidateDone: true }))
+  const doneJob = await call('POST', '/plugin-console/install-status', { jobId: 'job-progress-2' })
+  check('装上后 progress.done = true（index 停在真正成功的那一轮）',
+    doneJob.json?.progress?.done === true && doneJob.json?.progress?.index === 5 && doneJob.json?.progress?.total === 11,
+    JSON.stringify(doneJob.json?.progress))
+  // ⑤ aiConsent 形状固定（前端直接读 job.aiConsent.pending / since / timeoutMs / lastError）
+  check('aiConsent 字段形状固定（pending/since/timeoutMs/lastError 恒在）',
+    JSON.stringify(Object.keys(r.json?.aiConsent ?? {}).sort()) === JSON.stringify(['lastError', 'pending', 'since', 'timeoutMs'])
+    && r.json?.aiConsent?.pending === false && r.json?.aiConsent?.since === null && r.json?.aiConsent?.lastError === null,
+    JSON.stringify(r.json?.aiConsent))
+  check('未等待时 timeoutMs 仍是真实上限（10 分钟），不是 undefined',
+    r.json?.aiConsent?.timeoutMs === 600000, String(r.json?.aiConsent?.timeoutMs))
+
+  // ⑥ 真造一个「等授权」现场，走真路由：/install-status 必须能给出 pending + 卡在第几个子包
+  let resolver = null
+  const waited = new Promise((resolve) => { resolver = resolve })
+  const since = Date.now()
+  installJobs.set('job-consent-1', base('job-consent-1', {
+    stage: 'ai-consent', candidateTotal: 11, candidateIndex: 11, candidateName: '@captain1275/dsh-last',
+    lastError: 'pnpm 通道：EPERM', aiPending: { lastError: 'pnpm 通道：EPERM', resolver }, aiPendingSince: since, aiConsentTimeoutMs: 600000, aiWait: waited,
+  }))
+  const status = await call('POST', '/plugin-console/install-status', { jobId: 'job-consent-1' })
+  const consent = status.json?.aiConsent
+  check('★ 等授权期间 /install-status 下发 aiConsent.pending === true（带 since / timeoutMs / lastError）',
+    status.status === 200 && consent?.pending === true && consent?.since === since
+    && consent?.timeoutMs === 600000 && consent?.lastError === 'pnpm 通道：EPERM',
+    `status=${status.status} aiConsent=${JSON.stringify(consent)}`)
+  check('★ 等授权期间进度仍在（面板能显示卡在第 11/11 个子包）',
+    status.json?.progress?.index === 11 && status.json?.progress?.total === 11 && status.json?.progress?.name === '@captain1275/dsh-last',
+    JSON.stringify(status.json?.progress))
+  const approve = await call('POST', '/plugin-console/ai-consent', { jobId: 'job-consent-1', approved: true })
+  const decision = await waited
+  check('★ 同意 → 200 且等待中的任务收到 approved:true（随后继续走 aiRepair）',
+    approve.status === 200 && approve.json?.approved === true && decision.approved === true,
+    `status=${approve.status} body=${JSON.stringify(approve.json)} decision=${JSON.stringify(decision)}`)
+  check('同意后任务离开等待态（aiWait/aiPending 清空，视图 pending=false）',
+    installJobs.get('job-consent-1').aiWait === null && installJobs.get('job-consent-1').aiPending === null
+    && (await call('POST', '/plugin-console/install-status', { jobId: 'job-consent-1' })).json?.aiConsent?.pending === false)
+
+  // ⑦ 取消路径：approved:false → 任务收到"不授权"，runInstallJob 据此走失败清场分支
+  let resolver2 = null
+  const waited2 = new Promise((resolve) => { resolver2 = resolve })
+  installJobs.set('job-consent-2', base('job-consent-2', {
+    stage: 'ai-consent', aiPending: { lastError: 'curl 通道：404', resolver: resolver2 }, aiPendingSince: Date.now(), aiConsentTimeoutMs: 600000, aiWait: waited2,
+  }))
+  const deny = await call('POST', '/plugin-console/ai-consent', { jobId: 'job-consent-2', approved: false })
+  const decision2 = await waited2
+  check('★ 取消 → 200 且任务收到 approved:false（runInstallJob 走失败清场分支）',
+    deny.status === 200 && decision2.approved === false, `status=${deny.status} decision=${JSON.stringify(decision2)}`)
+  // 不在等待态的任务不许被"授权"（否则一个 jobId 就能触发模型调用）
+  const bogus = await call('POST', '/plugin-console/ai-consent', { jobId: 'job-progress-1', approved: true })
+  check('非等待态的任务 → 400 拒绝授权（不能凭 jobId 触发模型调用）',
+    bogus.status === 400 && String(bogus.json?.error).includes('AI 授权'), `status=${bogus.status} error=${bogus.json?.error}`)
+
+  // ⑧ 失败文案（纯函数）：超时 / 取消两条路径的措辞 + 清场汇报都必须如实
+  const timeoutText = mod.aiConsentFailureText({ approved: false, timeout: true }, { cleaned: ['@a/one'], failed: [] })
+  check('★ 超时失败文案：说清 10 分钟超时 + 清掉了什么',
+    timeoutText.includes('等待授权超时（10 分钟）') && timeoutText.includes('已清理本次落盘残留：@a/one'),
+    timeoutText)
+  const cancelText = mod.aiConsentFailureText({ approved: false }, { cleaned: [], failed: [{ name: '@a/two', path: 'D:/p/node_modules/@a/two', error: 'EPERM' }] })
+  check('★ 取消失败文案：说清用户取消 + 没清掉的那项与路径',
+    cancelText.startsWith('用户取消本地 AI 兜底') && cancelText.includes('有 1 项没能清理') && cancelText.includes('D:/p/node_modules/@a/two'),
+    cancelText)
+  for (const id of ['job-progress-0', 'job-progress-1', 'job-progress-2', 'job-suite-1', 'job-consent-1', 'job-consent-2']) installJobs.delete(id)
+}
+
 // ── ②b /github-open-login：弱断言（只钉 200 与字段名，不追究完整字段集合）─────────────
 // 这条路由是"唤起 dsh-github-login 的登录窗口"，成败取决于外挂插件在不在、有没有 exe、
 // 平台支不支持，所以响应有两种形状：成功 {ok,started,status} / 不可用 {ok,started,reason}。
