@@ -38,6 +38,14 @@ jobs:
           node test-skill-toggle.mjs
           node test-harness.mjs
 
+      # 真装真卸冒烟：在 CI 的 Linux 宿主上跑（临时 DSH_HOME，不碰真实目录）。
+      # 为什么单独一步且**不带** DSH_TEST_SKIP_NETWORK：环境相关测试"没 profile 就整体 SKIP"，
+      # 正是这个缺口让 `git.exe`、corepack Windows 路径这类硬编码在 Linux CI 上一直活着（2026-09-20 复盘）。
+      - name: Real install/uninstall smoke (temp DSH_HOME)
+        env:
+          DSH_TEST_SKIP_NETWORK: ''
+        run: node test-install-smoke.mjs
+
       - name: Environment-dependent tests (auto-SKIP without local profile)
         run: |
           node test-framework-upgrade.mjs

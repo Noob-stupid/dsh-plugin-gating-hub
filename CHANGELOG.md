@@ -2,6 +2,29 @@
 
 All notable changes to dsh-plugin-hub.
 
+## v0.3.50 — CI 增加「真装真卸」冒烟：把"非 Windows 硬编码 + 兜底路径从不执行"挡在 Linux 宿主上（2026-09-20）
+
+> 复盘（今天连撞两次低级错误后）：环境相关测试"没有 profile 就整体 SKIP"，
+> 于是 `git.exe`、corepack 的 Windows 路径假设、以及"多通道兜底路径（pnpm → curl → Release → git）"
+> 在 CI 的 Linux 宿主上**从未被执行**——直到真实用户在 Android/proot Ubuntu 上撞出来。
+> 本次**不改产品行为**，只补一层"能在 Linux 上真跑"的验证。
+
+- 新增 `test-install-smoke.mjs`，作为 CI 独立步骤（**不带** `DSH_TEST_SKIP_NETWORK`，
+  因为该变量会让其它环境相关测试整体跳过）：在临时 `DSH_HOME` 里
+  ① 校验 `gitBin()` 在本平台可用（真的跑 `git --version`）；
+  ② 校验 `resolvePnpmRunners()` 的首选执行方式与本平台匹配（win32 不得选裸 `corepack`，反之亦然）；
+  ③ **真装**一个零依赖小包 `left-pad`（npmjs → npmmirror 依次尝试，走的就是出过 MODULE_NOT_FOUND 的那条通道）；
+  ④ 校验落盘 + **真卸载** + 校验目录已移除；
+  ⑤ `gitCloneRepo` **真克隆**一个小仓库（顺带验证 git 通道与"重试前清理目标目录"）；
+  只有显式 `DSH_TEST_SKIP_NETWORK=1` 时才跳过；
+- 为便于测试，导出三个内部函数：`pnpmInstall` / `pnpmRemove` / `gitCloneRepo`（无行为变化）；
+- **反向对照**：把 PATH 打断后该测试**响亮失败**（`spawnSync git.exe ENOENT`；克隆报「首个错误」+ 尝试清单），
+  证明它对"工具链不可用 / 平台假设错误"这类故障有牙齿，而不是静默跳过。
+
+**安装**：`dsh plugin add @noob-stupid/dsh-plugin-console`，或控制台「检测更新 → 更新并适配」。
+
+**测试**：16 套测试全绿 + 新增的真装真卸冒烟 9 项全过（Windows 本机与 CI 的 Linux 宿主同一份代码）。
+
 ## v0.3.49 — 搜索可搜「npm 包名 / README / 仓库文件里的名字」+ 克隆失败不再掩盖真实原因（2026-09-20）
 
 > 用户反馈：搜 `web-all` 搜不到全家桶 `zhu1090093659/dsh-web`（★7800）；另一位用户点**安装**报
