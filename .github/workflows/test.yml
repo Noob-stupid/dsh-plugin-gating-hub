@@ -14,9 +14,9 @@ jobs:
       # CI 妯″紡锛氳烦杩囬渶瑕佺湡瀹炵綉缁?鏈満 profile 鐨勬柇瑷€锛岄伩鍏嶇幆澧冨洜绱犺绾?
       DSH_TEST_SKIP_NETWORK: '1'
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v5
         with:
           node-version: '22'
 
