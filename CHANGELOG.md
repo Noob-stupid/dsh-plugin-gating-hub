@@ -2,6 +2,19 @@
 
 All notable changes to dsh-plugin-hub.
 
+## v0.3.52 — 子包列表「读不到」不再说成「不存在」；「未登录 GitHub」可点、支持 Token 登录（2026-09-20）
+
+- **子包列表：读不到 ≠ 不存在**（用户实测）：装 `zhu1090093659/dsh-web`（根包 `private: true`）时报「未发现子包」，
+  而该仓库 main/dev **各有 22 个子包**（含 `@linxin666/dsh-web-all`）——真实原因是当时网络受限、列表没读到。
+  现在：① 空列表时**自动换分支重试一次**（main ↔ dev）；② 仍为空则明确说「**本次没能读到**它的子包列表
+  （多为网络受限/超时，**不代表没有子包**）」并给出可复制的安装命令；③ 记 `job.probeReason` 便于排查。
+- **GitHub 登录（新）**：市场页「未登录 GitHub」徽章改为**可点按钮**，展开面板粘贴 fine-grained token 即可登录。
+  服务端新增 `POST /plugin-console/github-login`：校验令牌形状 → 用**该 token 自身**向 GitHub 校验并取登录名
+  → 写 `~/.dsh/github-auth.json`（与 `dsh-github-login` 同格式）；**响应与日志从不回显 token**，失败不落盘。
+  登录后按子包名搜索（代码搜索）可用，API 限额也更高。
+  ⚠️ 校验通道刻意**不与 `gh` CLI 的 keyring 凭据竞速**：否则一个无效 token 会被本机 gh 登录态"验成有效"
+  并写进 `github-auth.json`，把用户真实登录顶掉（实现过程中实测到的坑）。
+- 路由数 46 → 47（`test-route-inventory.mjs` 清单与契约同步）。
 ## v0.3.51 — 市场索引源全挂时 65.7s → 16.7s；CI actions 升 v5（2026-09-20）
 
 - **市场打开更快（网络差时尤其明显）**：`market-index` 逐个拉取索引源时原来用 `fetchJsonUrl`

@@ -2,7 +2,7 @@
 //
 // 为什么要有它：历史上 `market-index` 的 405 就这样藏了两周——路由悄悄失效没人发现。
 // 拆分（L0-L3 分层、45 条 if 分支改成表驱动）最容易犯的错就是"漏搬一条路由"或"顺手改了响应字段"。
-// 本测试把当前 46 条路由、12 条只读接口的响应字段、4 类安全校验全部固化为断言：
+// 本测试把当前 47 条路由、13 条只读接口的响应字段、4 类安全校验全部固化为断言：
 //   · 路由清单必须与源码完全一致（新增/删除都要同步改这里）
 //   · 只读接口的 status 与顶层字段必须逐字段一致（改名即失败）
 //   · 环回 / Host / 同源写保护 / 405 方法门禁行为不变
@@ -56,7 +56,7 @@ const check = (label, cond, extra) => {
   if (!cond) failed += 1
 }
 
-// ── ① 路由清单：与源码逐条对齐（46 条）────────────────────────────────────────
+// ── ① 路由清单：与源码逐条对齐（47 条）────────────────────────────────────────
 const ROUTES = [
   '/state', '/sources', '/gitee-oauth-url', '/gitee-oauth-callback', '/framework-upgrade-status',
   '/framework-relaunch', '/skills-installed', '/details', '/toggle', '/uninstall', '/search', '/enrich',
@@ -66,6 +66,7 @@ const ROUTES = [
   '/ai-consent', '/ai-empower/plan', '/ai-empower/status', '/ai-empower/list', '/ai-empower/run',
   '/ai-empower/cancel', '/components', '/repo-clone', '/repo-list', '/repo-land-config', '/repo-remove',
   '/repo-open', '/component/autostart', '/component/start', '/component/stop', '/component/status', '/restart',
+  '/github-login',
 ]
 const src = readFileSync(join(ROOT, 'lib', 'index.js'), 'utf8')
 const found = new Set()
@@ -89,6 +90,8 @@ const SCHEMAS = [
   ['POST', '/plugin-console/install-status', {}, 404, ['error', 'ok']],
   ['POST', '/plugin-console/repo-list', {}, 200, ['dir', 'ok', 'repos']],
   ['POST', '/plugin-console/components', {}, 200, ['components', 'ok']],
+  // github-login 只测"形状不合法"这条不触网的路径：合法 token 会真的打 GitHub，测试不能依赖网络
+  ['POST', '/plugin-console/github-login', { token: '' }, 400, ['error', 'ok']],
 ]
 for (const [method, path, body, wantStatus, wantKeys] of SCHEMAS) {
   const r = await call(method, path, body)
