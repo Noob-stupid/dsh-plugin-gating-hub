@@ -2,6 +2,51 @@
 
 All notable changes to dsh-plugin-hub.
 
+## v0.3.48 — 三类「环境相关」缺陷：套装误判 / 抓取超时被误报成「没有 package.json」/ 非 Windows 必炸（2026-09-20）
+
+> 两位用户实测反馈：
+> ① 装 `MeteorNOX/DeepSeek-Balance-Whale-Widget`（标准 bundle 插件，四个分支根目录都没有 `.gitmodules`）
+> 报「未找到 .gitmodules（不是 submodule 套装仓库）」；
+> ② Android + proot Ubuntu 容器里 GitHub 仓库直装恒定失败报「仓库没有 package.json」，
+> 「仓库落地」报 `spawn git.exe ENOENT`，AI 赋能报 `Cannot find module '.../corepack/dist/corepack.js'`。
+
+**一、套装判定改「内容校验」——不再被代理/CDN 的假响应骗到**
+
+- **根因**：旧逻辑只看 `.gitmodules` 探测结果是否非 null，**空字符串也算"文件存在"**；四通道
+  （node:https / gh / curl / jsDelivr）竞速时，任何一个通道对**不存在的文件**回 2xx
+  （代理空 body / 拦截页 / 失效镜像的停放页）就足以把普通插件判成"submodule 套装置仓库"，
+  clone 后必然报「未找到 .gitmodules」。
+- 新增 `readBodyOrNull`（空串/纯空白不算读到文件）与 `looksLikeGitmodules`（必须含 `[submodule "x"]` 段），
+  四通道统一口径；`/enrich` 标记、`/repo` 详情、安装兜底**全部改用内容校验**。
+- **套装通道兜底**：clone 后若确实没有 `.gitmodules`，不再直接失败，而是**自动回落普通插件安装**
+  （npm → GitHub Release → git 规格）并在任务里说明——即便将来再误判，插件照样装得上。
+- 移除失效镜像前缀 `mirror.ghproxy.com`（实测连接超时；失效域名被停放页接管时会回 2xx HTML）。
+
+**二、抓取超时 ≠ 文件不存在（预算与出口都分开）**
+
+- `rawTextFetch()` 返回 `{ state, body }`：`ok` / `not-found`（真 404）/ `unreachable`（超时或通道全灭）；
+  竞速语义抽成纯函数 `raceFetchOutcome()`。旧代码把两者放在同一个 `null` 出口，
+  于是"网络太慢"被写成"仓库没有 package.json"，日志里永远不出现"超时"，误导排查方向。
+- **预算放宽**：raw 抓取 5s → **10s**，默认分支探测 3s → **8s**，curl 通道 6s → 9s；
+  GitHub 域名的 curl 通道加 **`-4`**——「解析出 IPv6 但没有 IPv6 路由」的环境里，
+  默认要先空等 ~5.2s 才回退 IPv4（实测 5473ms vs `-4` 的 461ms）。
+- **文案分开**：超时写「抓取超时/网络不可达…请重试，或先用『仓库落地』克隆到本地目录」，
+  只有真 404 才说「没有 package.json」；原因记入 `job.probeReason`。
+
+**三、去掉两处非 Windows 必炸的硬编码**
+
+- 「仓库落地」的 `git.exe` → `gitBin()`（win32 = `git.exe`，其余 = `git`）；
+- AI 赋能 install-npm 把 corepack 路径写死为 `<node bin>/node_modules/...`（Windows 布局）→
+  改为 `resolvePnpmRunners()`（Windows 官方布局 / Linux `<prefix>/lib/node_modules` / brew libexec，
+  外加 Windows `cmd /c` 与 Linux `corepack`/`pnpm` 兜底）与 `runPnpmWithFallback()`
+  （只有"执行方式本身不可用"才换下一个，真正的安装失败立即抛出并附已尝试清单）；
+  `pnpmInstall` / `pnpmRemove` / install-npm 三处统一走它。
+
+**安装**：`dsh plugin add @noob-stupid/dsh-plugin-console`，或控制台「检测更新 → 更新并适配」。
+
+**测试**：新增 `test-suite-detect.mjs`（离线确定性：空 body/垃圾页不算套装、四种竞速结局、
+超时与 404 文案必须不同、git 与 corepack 跨平台定位），套件 16 → **17 套**，全部通过。
+
 ## v0.3.47 — 「一键启用已适配」只启用一部分：目标漏掉「已记已适配却从未扫描」的行（2026-09-14）
 
 > 用户实测：全家桶卡片点「一键启用已适配」后只有个别行被启用，其余仍停在【补丁停用】。
