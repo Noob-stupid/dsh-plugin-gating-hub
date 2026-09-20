@@ -16,8 +16,9 @@
 import { createServer } from 'node:http'
 import { join } from 'node:path'
 import {
-  FETCH_BUDGET_MS, FETCH_NOT_FOUND, FETCH_OK, FETCH_UNREACHABLE, META_BUDGET_MS,
-  curlText, gitBin, looksLikeGitmodules, packageProbeErrorText, raceFetchOutcome, readBodyOrNull, resolveInstallKind, resolvePnpmRunners,
+  DEFAULT_SOURCES, FETCH_BUDGET_MS, FETCH_NOT_FOUND, FETCH_OK, FETCH_UNREACHABLE, META_BUDGET_MS,
+  curlText, gitBin, hasDirectNameHit, looksLikeGitmodules, packageProbeErrorText, parseRepoFromUrl,
+  raceFetchOutcome, readBodyOrNull, resolveInstallKind, resolvePnpmRunners, summarizeCloneErrors,
 } from './lib/index.js'
 
 let failed = 0
@@ -119,6 +120,42 @@ const winNoCorepack = resolvePnpmRunners({ platform: 'win32', execPath: 'C:\\Pro
 check('Windows 找不到 corepack.js 时经 cmd /c 调用（execFile 不能直接跑 .cmd）',
   winNoCorepack[0]?.kind === 'cmd-corepack' && winNoCorepack[0].run(['add', 'x']).bin.endsWith('cmd.exe'),
   winNoCorepack[0]?.note)
+
+// ── ⑦ 搜索可达性：只存在于「npm 包名 / README / 仓库文件」里的名字 ────────────────
+// 事故（2026-09-20，另一位用户）：搜 `web-all` 搜不到 `zhu1090093659/dsh-web`（★7800 全家桶）。
+// 实测：`web-all` 既不在该仓库的名字/描述/topics 里（仓库名是 dsh-web），GitHub 仓库搜索 32 条不含它；
+// 它是 npm 包 `@linxin666/dsh-web-all`，代码在 packages/dsh-web-all/package.json（代码搜索需登录）。
+check('索引源默认 ≥ 4 个（只有 2 个源时同时挂掉＝市场退化成只能搜 GitHub 实时结果）',
+  DEFAULT_SOURCES.indexSources.length >= 4, `共 ${DEFAULT_SOURCES.indexSources.length} 个`)
+check('索引源 URL 全是 https 且指向 marketplace/index.json',
+  DEFAULT_SOURCES.indexSources.every((s) => /^https:\/\/\S+$/u.test(s.url) && s.url.includes('marketplace/index.json')))
+check('索引源有且只有一个主源', DEFAULT_SOURCES.indexSources.filter((s) => s.primary === true).length === 1)
+
+check('parseRepoFromUrl：https / git+https / .git 后缀',
+  parseRepoFromUrl('https://github.com/zhu1090093659/dsh-web.git') === 'zhu1090093659/dsh-web'
+  && parseRepoFromUrl('git+https://github.com/Noob-stupid/dsh-plugin-hub.git') === 'Noob-stupid/dsh-plugin-hub')
+check('parseRepoFromUrl：npm 老式简写 github:o/r', parseRepoFromUrl('github:zhu1090093659/dsh-web') === 'zhu1090093659/dsh-web')
+check('parseRepoFromUrl：带 monorepo 子路径锚点', parseRepoFromUrl('https://github.com/o/r#packages/x/package.json') === 'o/r')
+check('parseRepoFromUrl：非 GitHub/Gitee → null', parseRepoFromUrl('https://gitlab.com/o/r.git') === null && parseRepoFromUrl('') === null)
+
+check('hasDirectNameHit：名字逐词命中 → 不再重查', hasDirectNameHit([{ fullName: 'zhu1090093659/dsh-web' }], 'dsh-web') === true)
+check('★ hasDirectNameHit：web-all 在结果里没有名字命中 → 触发 in:readme 重查',
+  hasDirectNameHit([{ fullName: 'bradeGithub/DSH-Plugins-Marketplace' }, { fullName: 'Amakurai/dsh-liketavern' }], 'web-all') === false)
+check('hasDirectNameHit：查询词太短（<3 字符）不做二次查询', hasDirectNameHit([], 'we') === true)
+
+// ── ⑧ 克隆重试：报「首个错误」，不被次生的"目录非空"掩盖 ────────────────────────
+// 事故（2026-09-20，另一位用户截图）：`git clone 失败：… fatal: destination path '…' already exists
+// and is not an empty directory.` —— 第一次（ghproxy 镜像）失败留下半成品目录，第二次立刻以
+// "目录非空"失败，旧代码把这条当 lastError 抛出去 → 真实原因（镜像/网络不可达）被完全掩盖。
+const cloneMsg = summarizeCloneErrors([
+  { url: 'https://ghproxy.net/https://github.com/o/r.git', message: 'fatal: unable to access: Failed to connect' },
+  { url: 'https://github.com/o/r.git', message: "fatal: destination path 'C:/t/x' already exists and is not an empty directory." },
+])
+check('★ 克隆失败报「首个错误」（真实原因）而不是次生错误',
+  cloneMsg.includes('首个错误') && cloneMsg.includes('Failed to connect'), cloneMsg.slice(0, 80))
+check('克隆失败列出尝试过的源，并把"目录非空"那条标出来',
+  cloneMsg.includes('已尝试 2 个源') && cloneMsg.includes('（目录非空）'))
+check('单源失败也能正常汇总', summarizeCloneErrors([{ url: 'a', b: 1, message: 'boom' }]).includes('boom'))
 
 server.close()
 console.log(failed === 0 ? '\nALL PASS' : `\n${failed} FAILED`)
