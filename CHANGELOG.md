@@ -2,6 +2,29 @@
 
 All notable changes to dsh-plugin-hub.
 
+## v0.3.55 — 一键更新现在会写进 lockfile：升级不再被 pnpm 还原（2026-09-20）
+
+> 来自用户实测报告（附完整时间线与复现步骤）：一键更新把文件铺进 `node_modules`、**没动 `pnpm-lock.yaml`**；
+> 而 profile 的依赖由 pnpm 按 lock 管理（`dsh plugin` 本身就是 pnpm 的薄转发器），所以之后任何一次 pnpm 操作
+> ——开关插件（改 `dsh.profile.bundles`）、`dsh plugin add/remove`——都可能按 lock 重装，把刚升上去的版本
+> **还原**成 lock 里钉住的旧版本。用户侧现象：UI 一直提示有新版、点更新显示成功、重启后还是旧版。
+
+- **自更新改为「包管理器优先」**：spec 是版本范围 → 先 `pnpm update <pkg>`（spec 不变、同步把 lock 提到范围内最新）；
+  仍没到最新（超出范围 / spec 是 git·file 来源）→ `pnpm add <pkg>@<版本>`（spec 与 lock 一起改写，并在提示里说明来源切换）。
+- **回读核实再报成功**：响应新增 `method` / `spec` / `installedVersion` / `lockVersion` / `lockUpdated` / `lockNote` /
+  `command` / `errors`；手铺 tarball 降级为**最后兜底**，且必然带「此更新未写入 pnpm-lock.yaml，之后任何 pnpm
+  操作都会还原它」的醒目警告与可复制的 `dsh plugin --profile <profile> add <包>@<版本>`。
+- 面板提示同步：`lockUpdated === false` 时把警告**显眼**拼进结果提示，不再让人以为升级成功了。
+- 附带解决报告里另一处不一致：`package.json` 的 spec 与 lock 长期不一致，导致「检测更新」一直提示一个
+  落不了地的版本——走 pnpm 路径后两者同步。
+
+**验证**：真 pnpm（本机用的是 corepack 里的 pnpm 11.21.0）端到端跑产品自己的 `selfUpdateToLatest()`：
+把 fixture profile 里的控制台从 `0.3.53` 升到 `0.3.54` → `method=pnpm-update+pnpm-add`、`lockUpdated=true`、
+`lockVersion=0.3.54`；随后再触发重装与 `pnpm install --force` 强制重链，**仍是 0.3.54 且 lock 一致**。
+如实说明：**本地没能复现"被还原"这一步**（pnpm 11 对本机手铺的文件在 install/add/--force 下都不覆写），
+报告方的证据是其环境里的 lock 重写时间戳与框架备份记录；修复的价值在于让 lock 与安装版本**始终一致**，
+并在此前不可能察觉的兜底路径上给出明确警告。18 个测试文件全绿（含 8 条新断言）。
+
 ## v0.3.54 — 真装真卸演练修出来的一整批：删除不再谎报、装完未重启也能撤、失败清场、聚合进度（2026-09-20）
 
 > 这一批全部来自 2026-09-20 的**真装真卸演练**（拿本机没有的插件真装真卸：普通插件 / bundle 插件 /
