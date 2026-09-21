@@ -2,6 +2,28 @@
 
 All notable changes to dsh-plugin-hub.
 
+## v0.3.57 — 所有安装通道都对账 lockfile：装上的插件不再可能被 pnpm 静默还原（2026-09-21）
+
+> 与 0.3.56 的自更新修复同源。起因是用户实测报告：一键更新/兜底通道只把文件铺进 `node_modules`、
+> 不写 `pnpm-lock.yaml`，而 profile 依赖由 pnpm 按 lock 管理——之后任何 pnpm 操作（开关插件改
+> `dsh.profile.bundles`、`dsh plugin add/remove`）都可能把包**还原成 lock 里的旧版本**、甚至当外来物处理。
+
+- **装完必对账**：新增 `reconcileLockfile()`，覆盖**所有**非 pnpm 通道装出来的包——并行 curl / curl tarball /
+  GitHub Release / git 装配、**套装装配出的普通插件**（`copyTree`）、**聚合包补装/对齐的子包**：
+  ① 版本与 lock 一致 → 直接返回（不跑 pnpm，零成本）；② 有漂移 → **一次** `pnpm add <包1>@<v1> <包2>@<v2> …`
+  把漂移包全部写进 lock；③ 仍对不上 → 面板**如实告警**（逐包列出"装了 X／lock 里是 Y"）并给出可复制的
+  `dsh plugin --profile <profile> add <包>@<版本>`，不再假装成功。
+- 安装结果视图新增 `lockUpdated` / `lockVersion` / `lockNote`；客户端在安装成功提示里显著追加 ⚠️ 警告。
+- 与 0.3.56 的自更新修复配套：**面板能改的东西，都不会再留下"装上了但不在 lock 里"的静默不一致**。
+
+**如实说明覆盖边界**：技能（`~/.dsh/skills`）与 agent 预设（`~/.dsh/.agent-presets`）**不由 pnpm 管理**，
+本就不需要写 lock；受 pnpm 影响的是 `node_modules` 里的包，本次已全覆盖。
+
+**验证**：18 个测试文件全绿（新增 4 条离线断言：一次 pnpm add 传数组 spec、对齐后逐包 aligned=true、
+对不上逐包说清并给命令、失败包 aligned=false 不谎报）。另做了真 pnpm 实验确认机制：lock 钉 1.2.0 + 手铺
+1.3.0 → `install` / `add 另一个包` / `install --force` 均不覆写（本机 pnpm 11.21.0），
+说明"静默不一致"是普遍存在但发作依赖环境的隐患——本版把它从根上消掉。
+
 ## v0.3.56 — 一键更新现在会写进 lockfile：升级不再被 pnpm 还原（2026-09-20）
 
 > 版本号说明：`0.3.55` 首次发布时被 npm 的暂存发布流程拦下（409 Cannot publish over previously
