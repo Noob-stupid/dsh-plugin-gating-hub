@@ -539,6 +539,46 @@ for (const [method, path, body, wantStatus, wantKeys] of SCHEMAS) {
   check('兜底响应给出可复制的 dsh 命令', fallback.command.includes('dsh plugin --profile') && fallback.command.includes(`${PKG}@0.3.55`), fallback.command)
 }
 
+// ── 多包 lock 对账（2026-09-21：非 pnpm 通道装的包 + 套装装配 + 聚合子包都要写进 lock）──────────
+{
+  const { reconcileLockfile } = await import('./lib/index.js')
+  const fix = join(ROOT, '.testdir', 'reconcile-multi-fixture')
+  const pkgs = ['@drill/pkg-a', '@drill/pkg-b']
+  for (const p of pkgs) mkdirSync(join(fix, 'node_modules', ...p.split('/')), { recursive: true })
+  const writeLock = (map) => writeFileSync(join(fix, 'pnpm-lock.yaml'), ['lockfileVersion: \'9.0\'', '', 'importers:', '', '  .:', '    dependencies:',
+    ...pkgs.map((p) => `      '${p}':\n        specifier: ^1.0.0\n        version: ${map[p] ?? '1.0.0'}`), '', 'packages:', '',
+    ...pkgs.map((p) => `  ${p}@${map[p] ?? '1.0.0'}:\n    resolution: {integrity: sha512-x}`), ''].join('\n'), 'utf8')
+  const setVer = (p, v) => writeFileSync(join(fix, 'node_modules', ...p.split('/'), 'package.json'), JSON.stringify({ name: p, version: v }), 'utf8')
+
+  writeLock({})
+  setVer(pkgs[0], '2.0.0')
+  setVer(pkgs[1], '2.0.0')
+  const calls = []
+  const r1 = await reconcileLockfile({
+    profileDir: fix,
+    packages: pkgs.map((name) => ({ name })),
+    registries: ['https://registry.example'],
+    pnpmAdd: async (dir, spec) => { calls.push(spec); writeLock({ [pkgs[0]]: '2.0.0', [pkgs[1]]: '2.0.0' }) },
+  })
+  check('★ 多包对账：一次 pnpm add 传数组 spec（不是逐包串行）',
+    calls.length === 1 && Array.isArray(calls[0]) && calls[0].length === 2, JSON.stringify(calls))
+  check('★ 多包对账：对齐后 lockUpdated=true 且逐包 aligned=true',
+    r1.lockUpdated === true && r1.lockNote === null && r1.packages.every((p) => p.aligned === true), JSON.stringify(r1.packages))
+
+  writeLock({ [pkgs[0]]: '2.0.0', [pkgs[1]]: '1.0.0' })
+  setVer(pkgs[0], '2.0.0')
+  setVer(pkgs[1], '2.0.0')
+  const r2 = await reconcileLockfile({
+    profileDir: fix,
+    packages: pkgs.map((name) => ({ name })),
+    registries: ['https://registry.example'],
+    pnpmAdd: async () => { throw new Error('模拟 pnpm 失败') },
+  })
+  check('★ 对不上时如实报 lockUpdated=false 并逐包说清（含可复制命令）',
+    r2.lockUpdated === false && typeof r2.lockNote === 'string' && r2.lockNote.includes('@drill/pkg-b') && r2.lockNote.includes('dsh plugin --profile'), String(r2.lockNote).slice(0, 100))
+  check('对齐失败的包在 packages 里 aligned=false（不谎报）', r2.packages.some((p) => p.aligned === false), JSON.stringify(r2.packages))
+}
+
 rmSync(HOME, { recursive: true, force: true })
 console.log(failed === 0 ? '\nALL PASS' : `\n${failed} FAILED`)
 process.exit(failed === 0 ? 0 : 1)
