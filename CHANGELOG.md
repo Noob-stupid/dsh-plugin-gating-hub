@@ -2,8 +2,11 @@
 
 All notable changes to dsh-plugin-hub.
 
-## v0.3.55 — 一键更新现在会写进 lockfile：升级不再被 pnpm 还原（2026-09-20）
+## v0.3.56 — 一键更新现在会写进 lockfile：升级不再被 pnpm 还原（2026-09-20）
 
+> 注：`0.3.55` 这个版本号在 npm 侧被"暂存发布"占住（409 Cannot publish over previously staged version），
+> 实际对外发布的是 `0.3.56`，内容相同。
+>
 > 来自用户实测报告（附完整时间线与复现步骤）：一键更新把文件铺进 `node_modules`、**没动 `pnpm-lock.yaml`**；
 > 而 profile 的依赖由 pnpm 按 lock 管理（`dsh plugin` 本身就是 pnpm 的薄转发器），所以之后任何一次 pnpm 操作
 > ——开关插件（改 `dsh.profile.bundles`）、`dsh plugin add/remove`——都可能按 lock 重装，把刚升上去的版本
