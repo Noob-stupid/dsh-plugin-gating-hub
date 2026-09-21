@@ -456,6 +456,89 @@ for (const [method, path, body, wantStatus, wantKeys] of SCHEMAS) {
   check('只读白名单：GET market-index 不被 405 拦', r.status !== 405, `status=${r.status}`)
 }
 
+// ── 自更新必须写进 lockfile（2026-09-20 用户实测缺陷）─────────────────────────────
+// 现象：一键更新只把文件铺进 node_modules、不写 pnpm-lock.yaml，之后任何 pnpm 操作都会把它还原成
+// lock 里钉住的旧版本（用户侧看到"升级成功、重启后还是旧版"）。下面把"包管理器优先 + 回读核实 +
+// 兜底必带警告"三条口径钉死。
+{
+  const { isRegistryRange, lockVersionOf, selfUpdateToLatest } = await import('./lib/index.js')
+  const PKG = '@noob-stupid/dsh-plugin-console'
+  const fix = join(ROOT, '.testdir', 'selfupdate-fixture')
+  const nmPkg = join(fix, 'node_modules', '@noob-stupid', 'dsh-plugin-console')
+  mkdirSync(nmPkg, { recursive: true })
+  writeFileSync(join(fix, 'package.json'), JSON.stringify({ dependencies: { [PKG]: '^0.3.47' } }, null, 2), 'utf8')
+  writeFileSync(join(nmPkg, 'package.json'), JSON.stringify({ name: PKG, version: '0.3.47' }), 'utf8')
+  const lockText = (v) => [
+    "lockfileVersion: '9.0'",
+    '',
+    'importers:',
+    '',
+    '  .:',
+    '    dependencies:',
+    `      '${PKG}':`,
+    '        specifier: ^0.3.47',
+    `        version: ${v}`,
+    "      '@noob-stupid/dsh-plugin-console-extra':",
+    '        specifier: ^9.9.9',
+    '        version: 9.9.9',
+    '',
+    'packages:',
+    '',
+    `  ${PKG}@${v}:`,
+    '    resolution: {integrity: sha512-x}',
+    '',
+    '  @noob-stupid/dsh-plugin-console-extra@9.9.9:',
+    '    resolution: {integrity: sha512-y}',
+    '',
+  ].join('\n')
+  writeFileSync(join(fix, 'pnpm-lock.yaml'), lockText('0.3.47'), 'utf8')
+
+  check('★ spec 判定：registry 范围才允许 pnpm update（git/file 来源不算）',
+    isRegistryRange('^0.3.47') && isRegistryRange('~1.2.3') && isRegistryRange('0.3.47') && isRegistryRange('>=1')
+    && !isRegistryRange('git+https://github.com/Noob-stupid/dsh-plugin-hub.git') && !isRegistryRange('file:../x') && !isRegistryRange(null))
+  check('★ lock 版本解析：从 importers 段读到被钉住的版本，且不被同前缀包误导',
+    lockVersionOf(fix, PKG) === '0.3.47', String(lockVersionOf(fix, PKG)))
+
+  const bump = (v) => {
+    writeFileSync(join(fix, 'pnpm-lock.yaml'), lockText(v), 'utf8')
+    writeFileSync(join(nmPkg, 'package.json'), JSON.stringify({ name: PKG, version: v }), 'utf8')
+  }
+  const okResult = await selfUpdateToLatest({
+    profileDir: fix, latest: '0.3.55', registries: ['https://registry.example'],
+    curlManualInstall: async () => { throw new Error('不该走到手铺兜底') },
+    runPnpm: async (args, opts) => { check('pnpm update 被调用且 cwd 指向 profile', args[0] === 'update' && opts.execOpts.cwd === fix); bump('0.3.55') },
+    pnpmAdd: async () => { throw new Error('不该走到 pnpm add') },
+  })
+  check('★ 走 pnpm update 后回读核实通过（lock 与安装版本都是新版）',
+    okResult.method === 'pnpm-update' && okResult.lockUpdated === true && okResult.lockVersion === '0.3.55' && okResult.lockNote === null,
+    JSON.stringify(okResult))
+
+  writeFileSync(join(fix, 'pnpm-lock.yaml'), lockText('0.3.47'), 'utf8')
+  writeFileSync(join(nmPkg, 'package.json'), JSON.stringify({ name: PKG, version: '0.3.47' }), 'utf8')
+  const addResult = await selfUpdateToLatest({
+    profileDir: fix, latest: '0.3.55', registries: ['https://registry.example'],
+    curlManualInstall: async () => { throw new Error('不该走到手铺兜底') },
+    runPnpm: async () => {},
+    pnpmAdd: async (dir, spec) => { check('pnpm add 收到 <包>@<版本>', spec === `${PKG}@0.3.55`, spec); bump('0.3.55') },
+  })
+  check('★ update 无效时改用 pnpm add，同样回读核实通过',
+    addResult.method === 'pnpm-update+pnpm-add' && addResult.lockUpdated === true, JSON.stringify(addResult))
+
+  writeFileSync(join(fix, 'pnpm-lock.yaml'), lockText('0.3.47'), 'utf8')
+  writeFileSync(join(nmPkg, 'package.json'), JSON.stringify({ name: PKG, version: '0.3.47' }), 'utf8')
+  const fallback = await selfUpdateToLatest({
+    profileDir: fix, latest: '0.3.55', registries: ['https://registry.example'],
+    curlManualInstall: async () => { writeFileSync(join(nmPkg, 'package.json'), JSON.stringify({ name: PKG, version: '0.3.55' }), 'utf8'); return { version: '0.3.55' } },
+    runPnpm: async () => { throw new Error('模拟 pnpm update 失败') },
+    pnpmAdd: async () => { throw new Error('模拟 pnpm add 失败') },
+  })
+  check('★ 兜底手铺文件时如实报 lockUpdated=false + 说明会被 pnpm 还原',
+    fallback.method.includes('manual-copy') && fallback.lockUpdated === false
+    && typeof fallback.lockNote === 'string' && fallback.lockNote.includes('未写入 pnpm-lock.yaml') && fallback.lockNote.includes('0.3.47'),
+    String(fallback.lockNote))
+  check('兜底响应给出可复制的 dsh 命令', fallback.command.includes('dsh plugin --profile') && fallback.command.includes(`${PKG}@0.3.55`), fallback.command)
+}
+
 rmSync(HOME, { recursive: true, force: true })
 console.log(failed === 0 ? '\nALL PASS' : `\n${failed} FAILED`)
 process.exit(failed === 0 ? 0 : 1)
