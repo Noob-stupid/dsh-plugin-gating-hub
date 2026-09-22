@@ -1,0 +1,33 @@
+name: npm-check
+
+# 只读检查：用 GitHub 出口查 registry.npmjs.org 的版本与 dist-tags
+# （本机到 npmjs 是黑洞时，用它核对发布结果）
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: '可选：额外确认某个具体版本是否存在，如 0.3.63'
+        required: false
+        default: ''
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '22'
+          registry-url: 'https://registry.npmjs.org'
+      - name: dist-tags
+        run: npm view @noob-stupid/dsh-plugin-console dist-tags --registry=https://registry.npmjs.org/
+      - name: 最近版本列表
+        run: npm view @noob-stupid/dsh-plugin-console versions --json --registry=https://registry.npmjs.org/ | tail -c 400
+      - name: 指定版本是否存在
+        if: ${{ inputs.version != '' }}
+        run: |
+          V="${{ inputs.version }}"
+          npm view "@noob-stupid/dsh-plugin-console@$V" version --registry=https://registry.npmjs.org/ \
+            && echo "版本 $V 存在 ✅" || { echo "版本 $V 不存在 ❌"; exit 1; }
