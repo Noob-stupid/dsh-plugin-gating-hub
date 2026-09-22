@@ -1,5 +1,21 @@
 // 套装安装端到端测试：/install 普通路径 → 服务端检测 .gitmodules → 自动转套装安装
-// 真实安装 yjh051108/dsh-routing-suite（预设 → .agent-presets，injector → bundle 层）
+// 真实目标仓库 yjh051108/dsh-routing-suite（预设 → .agent-presets，injector → bundle 层）。
+//
+// ── 2026-09-22（issue #3 收尾）两处改造，原因写在最前面，别改回去 ─────────────────────
+// ① **安装通道离线化**：本用例原来会真装到真实 profile。上游仓库 2026-09-04 后已无 .gitmodules，
+//    于是走到"私有聚合根（@dsh-external/dsh-super-injector，private:true）→ 自动展开子包"这条路，
+//    每个候选都要真网络走 pnpm/curl/GitHub release。issue #3 把 release 通道放开给子包候选之后，
+//    这条用例会真的按包名反查到**别的仓库**（yjh051108/dsh-super-injector）、下载产物并写进 profile ——
+//    既慢又不可重复（本机 github.com 直连 curl exit 35，换个网络结果就不同）。
+//    现在通过 ports.installChannels 注入桩：用例只断言"服务端把哪些通道、按什么顺序、派给哪个候选"，
+//    安装本身不落盘、不联网。release 反查与挑 asset 的正确性由 test-suite-detect.mjs 的 release 反查单测 +
+//    只读真实验证覆盖（见 HANDOFF-issue3.md 第三节）。
+// ② **必须应答 AI 兜底授权**：所有确定性通道失败后，服务端会停在 stage=ai-consent 等**最多 10 分钟**
+//    （面板上点「取消」才结束；见 install-job.js 的 ai-consent 段）。脚本驱动的用例没人点按钮，
+//    旧写法就是干等 8 分钟轮询后判 FAIL —— 这正是本次报的"卡死/永不结束"。
+//    现在与真实前端同一行为（client.js：aiFallback=false 时自动拒绝）：
+//    POST /ai-consent {approved:false} → 作业立刻以"用户取消本地 AI 兜底"结束。
+//    用例耗时从「8 分钟以上」降到数十秒。
 import { createRequire } from 'node:module'
 import { pathToFileURL } from 'node:url'
 import { existsSync } from 'node:fs'
@@ -16,11 +32,28 @@ if (!existsSync(join(home, 'profiles', 'web'))) {
   process.exit(0)
 }
 
+// 离线通道桩（见文件头 ①）：每个桩都记录"自己被谁调用"，并立刻以确定性错误失败。
+const channelCalls = []
+const offline = (label) => { throw new Error(`离线夹具：${label} 不联网（本用例只验证通道派发与作业终止）`) }
 const ctx = {
   baseUrl: pathToFileURL(join(home, 'profiles', 'web', 'cordis.yml')).href,
   loader: { entries: () => [] },
   webServer: { register: (route) => { globalThis.__route = route; return () => {} } },
   effect: (fn) => { fn() },
+  installChannels: {
+    raceInstallChannels: async (dir, name) => { channelCalls.push(`race:${name}`); return null },
+    pnpmInstall: async (dir, spec) => {
+      const s = String(spec)
+      channelCalls.push(`${s.startsWith('git+') || s.startsWith('github:') ? 'git' : 'pnpm'}:${s}`)
+      offline('pnpm/git')
+    },
+    curlManualInstall: async (dir, name) => { channelCalls.push(`curl:${name}`); offline('curl') },
+    githubReleaseInstall: async (dir, repo, name, options) => {
+      channelCalls.push(`release:${repo ?? 'null'}:${name}:${options?.baseUrl ?? 'null'}`)
+      offline('GitHub release')
+    },
+    backfillMissingDeps: async () => [],
+  },
 }
 mod.apply(ctx)
 const route = globalThis.__route
@@ -71,16 +104,26 @@ check('install accepted', r.status === 200 && r.json?.ok === true, JSON.stringif
 const jobId = r.json?.jobId
 check('job created', typeof jobId === 'string')
 
-// 2. 轮询直到结束（套装安装：clone 套装 + 2 子模块 + Release tgz + 预设复制，给足时间）
+// 2. 轮询直到结束。安装通道已离线化（见文件头 ①），正常情况下几秒内跑完候选；
+//    停在 ai-consent 时按真实前端的行为自动拒绝（见文件头 ②），作业随即可终止。
 let job = null
-const deadline = Date.now() + 8 * 60 * 1000
+let consentAnswered = 0
+const started = Date.now()
+const deadline = started + 4 * 60 * 1000
 while (Date.now() < deadline) {
-  await new Promise((resolve) => setTimeout(resolve, 5000))
+  await new Promise((resolve) => setTimeout(resolve, 1000))
   const s = await call('POST', '/plugin-console/install-status', { jobId })
   job = s.json
   if (job && job.status !== 'installing') break
+  if (job?.stage === 'ai-consent') {
+    const d = await call('POST', '/plugin-console/ai-consent', { jobId, approved: false })
+    consentAnswered += 1
+    check('ai-consent 可以被脚本应答（真实前端同款路径）', d.status === 200 && d.json?.ok === true, JSON.stringify(d.json))
+  }
 }
+const elapsed = ((Date.now() - started) / 1000).toFixed(1)
 check('job finished', job !== null && job.status !== 'installing', JSON.stringify({ status: job?.status, stage: job?.stage, error: job?.error }))
+console.log(`  轮询 ${elapsed}s 结束，status=${job?.status} stage=${job?.stage}${job?.error ? ` error=${job.error}` : ''}`)
 
 if (!isSuiteRepo) {
   console.log('SKIP 套装断言：上游仓库已无 .gitmodules（2026-09-04 后变更），改用「不得误判为套装」断言')
@@ -94,10 +137,36 @@ if (!isSuiteRepo) {
       console.log(`  [${item.ok ? 'OK' : 'FAIL'}] ${item.component} (${item.type}): ${item.note}`)
     }
     check('presets installed (3 presets)', job.suiteReport.filter((x) => x.type === 'preset' && x.ok).length >= 2, job.suiteReport.filter((x) => x.type === 'preset' && x.ok).map((x) => x.component).join(', '))
-    // 安全护栏：injector 是源码 bundle（Release tgz 无 lib/ 入口）→ 必须回滚失败，绝不写 bundles
+    // 安全护栏：injector 是 bundle 型子包 → 套装装配**跳过**它（绝不写 bundles），报告里如实标失败。
+    // （2026-09-22 更正：旧注释写"Release tgz 无 lib/ 入口"——实测 v0.3.5 的 asset 有 lib/index.js，
+    //  跳过它的原因是**类型**（bundle 需与框架严格兼容），不是入口缺失。）
     const inj = job.suiteReport.find((x) => x.component === 'injector')
-    check('injector safely rejected (no entry, rolled back)', inj !== undefined && inj.ok === false, JSON.stringify(inj))
+    check('injector skipped by suite assembler (bundle type, not written to bundles)', inj !== undefined && inj.ok === false, JSON.stringify(inj))
   }
+}
+
+// 2b. 通道派发（issue #3 守卫收尾的端到端核对）。
+// 这里的候选来自"私有聚合根自动展开子包"（subpackageMode=true），正是 issue #3 要求放开守卫的那类候选：
+// 展开之后并行竞速 / curl / release 都必须照常尝试，只有 git 保持不试（同一 job.repo 不重复 clone）。
+// 网络受限时可能一个子包都没读到 —— 那时跳过这组断言，避免把"读不到"误判成"守卫错了"。
+const attempted = [...new Set(channelCalls.filter((c) => c.startsWith('race:')).map((c) => c.slice('race:'.length)))]
+if (attempted.length === 0) {
+  console.log('SKIP 通道派发断言：本次没能读到候选子包（网络受限/仓库变更），只验证作业已终止且未落盘')
+} else {
+  console.log(`  候选 ${attempted.length} 个：${attempted.join('、')}`)
+  check('★ 每个候选都试过 并行竞速 + curl 手动通道（issue #3 去掉了 !expanded 连坐）',
+    attempted.every((n) => channelCalls.includes(`curl:${n}`)),
+    channelCalls.filter((c) => c.startsWith('curl:')).join(' → '))
+  check('★ 每个候选都试过 GitHub release 通道（按包名反查，不再按 job.repo 判断该不该试）',
+    attempted.every((n) => channelCalls.some((c) => c.startsWith('release:') && c.includes(`:${n}:`))),
+    channelCalls.filter((c) => c.startsWith('release:')).join(' → '))
+  check('★ release 通道按候选预算派发（≤3 个候选，不把 8 分钟作业预算吃光）',
+    channelCalls.filter((c) => c.startsWith('release:')).length <= 3,
+    `${channelCalls.filter((c) => c.startsWith('release:')).length} 次`)
+  check('★ git 通道不尝试（subpackageMode 下候选不是被请求的包，clone 根仓库装不出子包）',
+    !channelCalls.some((c) => c.startsWith('git:')),
+    channelCalls.filter((c) => c.startsWith('git:')).join(' → ') || '（无）')
+  check('作业真的走到过 AI 兜底授权（说明确定性通道确实按序试完了）', consentAnswered > 0, `应答 ${consentAnswered} 次`)
 }
 
 // 3. 验证磁盘结果（套装成功安装时才断言预设落地）
@@ -105,7 +174,10 @@ if (isSuiteRepo) {
   check('preset router-standard exists', existsSync(`${home}/.agent-presets/router-standard/preset.yml`), `${home}/.agent-presets/router-standard`)
   check('preset router-spec exists', existsSync(`${home}/.agent-presets/router-spec/preset.yml`))
 }
-check('injector NOT in node_modules (rolled back)', !existsSync(`${home}/profiles/web/node_modules/@dsh-external/dsh-super-injector`)
+// injector 没有落盘：本用例的安装通道已全部打桩（见文件头 ①），所以这里验证的是
+// "失败的确定性通道不会写下任何东西"；至于 release 产物本身能不能装，由只读真实验证回答
+// （实测：@dsh-external/dsh-super-injector 0.3.5 的 asset 能下、能过盒子验证）。
+check('injector NOT in node_modules（离线夹具：release 通道已打桩，未落盘）', !existsSync(`${home}/profiles/web/node_modules/@dsh-external/dsh-super-injector`)
   && !existsSync(`${home}/profiles/node_modules/@dsh-external/dsh-super-injector`))
 console.log('--- profile bundles 声明 ---')
 let bundles = []

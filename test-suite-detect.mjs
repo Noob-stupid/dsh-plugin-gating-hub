@@ -21,6 +21,10 @@ import {
   DEFAULT_SOURCES, FETCH_BUDGET_MS, FETCH_NOT_FOUND, FETCH_OK, FETCH_UNREACHABLE, META_BUDGET_MS,
   cleanupAttemptedCandidates, curlText, gitBin, hasDirectNameHit, looksLikeGitmodules, packageProbeErrorText, parseRepoFromUrl,
   raceFetchOutcome, readBodyOrNull, removeDirVerified, resolveInstallKind, resolvePnpmRunners, summarizeCloneErrors,
+  // issue #3：release 反查 / 产物下载 / 通道守卫 / 竞速时延（回归断言用）
+  RELEASE_CHANNEL_BUDGET_MS, RELEASE_DOWNLOAD_MIRROR_PREFIXES, RELEASE_SCAN_MAX_REPOS, assetMatchInfo, downloadReleaseArtifact,
+  fetchReleaseList, planReleaseInstall, raceInstallChannels, rankReleaseAssets, releaseDownloadUrls,
+  resolveReleaseCandidateRepos, selectReleaseInstall, sourceTarballFallback, tryCandidateChannels,
 } from './lib/index.js'
 
 let failed = 0
@@ -218,6 +222,283 @@ check('★ 清理失败时明确说"目录清不掉、多源重试无效"，而�
   const src = readFileSync(join(dirname(fileURLToPath(import.meta.url)), 'lib', 'index.js'), 'utf8')
   const hits = src.split('/\\/all$/u').length - 1
   check('★ 两处聚合包判据都补上了 /\\/all$/（源码级，共 3 处）', hits >= 3, `命中 ${hits} 处`)
+}
+
+// ── ⑫ GitHub release 通道按包名反查（issue #3）──────────────────────────────────
+// 用户 issue 现场：装 yjh051108/dsh-routing-suite（根包 @dsh-external/dsh-super-injector，private: true）
+// 时 npm registry 404 → 直接掉进 AI 兜底（约 4 分钟）。真正能装上的产物在**另一个仓库**
+// yjh051108/dsh-super-injector 的 release 里（asset 形如 dsh-external-dsh-super-injector-0.3.5.tgz）；
+// 旧实现只用 job.repo 找仓库、只看 releases/latest、且对同一 release 下多个 asset 不看包名。
+{
+  // ① asset 文件名 ↔ 包名（纯函数）
+  check('★ asset 名匹配：@scope/pkg ↔ scope-pkg-1.2.3.tgz（scope 用短横线连接）',
+    assetMatchInfo('scope-pkg-1.2.3.tgz', '@scope/pkg')?.version === '1.2.3')
+  check('asset 名匹配：@scope/pkg ↔ pkg-1.2.3.tgz（裸包名形式）',
+    assetMatchInfo('pkg-1.2.3.tgz', '@scope/pkg')?.version === '1.2.3')
+  check('asset 名匹配：无版本号也算（scope-pkg.tgz / pkg.tgz）',
+    assetMatchInfo('scope-pkg.tgz', '@scope/pkg') !== null && assetMatchInfo('pkg.tgz', '@scope/pkg') !== null)
+  check('asset 名匹配：大小写不敏感 + 下划线/短横线互换',
+    assetMatchInfo('SCOPE_PKG-1.2.3.TGZ', '@scope/pkg') !== null
+    && assetMatchInfo('dsh_external_dsh_graded_mode-0.0.1-rc1.tgz', '@dsh-external/dsh-graded-mode') !== null)
+  check('asset 名匹配：.tar.gz 同样认', assetMatchInfo('scope-pkg-1.2.3.tar.gz', '@scope/pkg')?.version === '1.2.3')
+  check('★ asset 名匹配：别的包一律不认（other-1.0.0.tgz）', assetMatchInfo('other-1.0.0.tgz', '@scope/pkg') === null)
+  check('asset 名匹配：仅以本包名开头、实为别的包也不认（scope-pkg-extra-1.0.0.tgz）',
+    assetMatchInfo('scope-pkg-extra-1.0.0.tgz', '@scope/pkg') === null)
+  check('asset 名匹配：非 tarball 资产不认（zip / 校验文件）',
+    assetMatchInfo('scope-pkg-1.2.3.zip', '@scope/pkg') === null
+    && assetMatchInfo('scope-pkg-1.2.3.tgz.sha256', '@scope/pkg') === null)
+  check('★ asset 名匹配：issue 里的真实资产名命中 @dsh-external/dsh-super-injector',
+    assetMatchInfo('dsh-external-dsh-super-injector-0.3.5.tgz', '@dsh-external/dsh-super-injector')?.version === '0.3.5')
+
+  // ② 多 asset / 多 release / 多仓库的选择
+  const rel = (tag, names, at) => ({ tag_name: tag, published_at: at, assets: names.map((name) => ({ name, browser_download_url: `https://example.test/${name}` })) })
+  const ranked = rankReleaseAssets(rel('v1', ['pkg-1.0.0.tgz', 'scope-pkg-1.0.0.tgz', 'other-9.9.9.tgz'], '2026-01-01T00:00:00Z').assets, '@scope/pkg')
+  check('★ 同一 release 多 asset：包名精确匹配（scope-pkg）优先于裸名（pkg），别的包被剔除',
+    ranked.length === 2 && ranked[0].file === 'scope-pkg-1.0.0.tgz', ranked.map((r) => r.file).join('、'))
+  const planPick = planReleaseInstall('@scope/pkg', [
+    { repo: 'o/other-repo', releases: [rel('v1', ['other-1.0.0.tgz'], '2026-02-01T00:00:00Z')] },
+    { repo: 'o/pkg-repo', releases: [rel('v1', ['scope-pkg-1.0.0.tgz'], '2025-01-02T00:00:00Z'), rel('v2', ['scope-pkg-2.0.0.tgz'], '2026-01-02T00:00:00Z')] },
+  ])
+  check('★ 多仓库/多 release：跳过没有匹配 asset 的仓库，在命中的仓库里选版本更高那条',
+    planPick.ok === true && planPick.repo === 'o/pkg-repo' && planPick.file === 'scope-pkg-2.0.0.tgz' && planPick.version === '2.0.0',
+    `repo=${planPick.repo} file=${planPick.file}`)
+  const planExact = planReleaseInstall('@scope/pkg', [
+    { repo: 'o/pkg-repo', releases: [rel('v3', ['pkg-3.0.0.tgz', 'scope-pkg-1.0.0.tgz'], '2026-01-01T00:00:00Z')] },
+  ])
+  check('★ 包名精确匹配优先于版本更高（scope-pkg-1.0.0 胜过 pkg-3.0.0）',
+    planExact.ok === true && planExact.file === 'scope-pkg-1.0.0.tgz', planExact.file)
+  check('候选仓库优先级：第一个命中仓库胜出，不跨仓库比版本（o/first 的 1.0.0 不被 o/second 的 9.0.0 顶掉）',
+    planReleaseInstall('@scope/pkg', [
+      { repo: 'o/first', releases: [rel('v1', ['scope-pkg-1.0.0.tgz'], '2025-01-01T00:00:00Z')] },
+      { repo: 'o/second', releases: [rel('v9', ['scope-pkg-9.0.0.tgz'], '2026-01-01T00:00:00Z')] },
+    ]).repo === 'o/first')
+
+  // ③ 反查不到 / 挑不中：返回清单式错误，绝不抛未捕获异常
+  const planNoRepo = planReleaseInstall('@scope/never', [])
+  check('★ 一个候选仓库都没有 → ok:false + 清单式文案（不抛异常）',
+    planNoRepo.ok === false && planNoRepo.message.includes('@scope/never') && planNoRepo.message.includes('没能反查到候选仓库'),
+    planNoRepo.message.slice(0, 60))
+  const groupsMiss = [{ repo: 'o/routing-suite', releases: [rel('0.0.1-rc1', ['dsh-external-dsh-graded-mode-0.0.1-rc1.tgz'], '2026-01-01T00:00:00Z'), rel('v0.1.0', [], '2026-01-02T00:00:00Z')] }]
+  const planMiss = planReleaseInstall('@dsh-external/dsh-super-injector', groupsMiss)
+  check('★ 全部候选都没匹配 asset → 错误里列出尝试过的仓库与每条 release 的 asset 清单',
+    planMiss.ok === false
+    && planMiss.message.includes('o/routing-suite')
+    && planMiss.message.includes('dsh-external-dsh-graded-mode-0.0.1-rc1.tgz')
+    && planMiss.message.includes('（无 asset）'), planMiss.message.replace(/\n/gu, ' | '))
+  check('挑不中时仍保留老行为兜底目标（最新 tag 源码 tarball）',
+    sourceTarballFallback(groupsMiss)?.repo === 'o/routing-suite' && sourceTarballFallback(groupsMiss)?.tag === '0.0.1-rc1')
+
+  // ④ 反查顺序与容错（注入假网络：真模块逻辑 + 假响应，不碰公网）
+  const probeDir = join(dirname(fileURLToPath(import.meta.url)), '.testdir', 'release-lookup-profile')
+  const probePkg = join(probeDir, 'node_modules', '@probe', 'rev-lookup')
+  mkdirSync(probePkg, { recursive: true })
+  writeFileSync(join(probePkg, 'package.json'), JSON.stringify({
+    name: '@probe/rev-lookup', version: '1.0.0',
+    repository: { type: 'git', url: 'git+https://github.com/probe-org/from-pkg-json.git' },
+  }), 'utf8')
+  const searchQueries = []
+  const fakeFetchers = {
+    fetchJson: async (url) => {
+      if (!url.includes('/@probe%2frev-lookup')) throw new Error('请求失败 (HTTP 404)')
+      return { repository: { url: 'git+https://github.com/probe-org/from-npm.git' } }
+    },
+    githubJson: async (url) => {
+      const q = decodeURIComponent(String(url).replace(/^.*[?&]q=/u, '').replace(/&.*$/u, ''))
+      searchQueries.push(q)
+      // 复现真实观测：`scope name` 查询 0 条（scope 不在仓库检索面里），裸包名才命中
+      if (q.includes(' ')) return { items: [] }
+      return { items: [{ full_name: 'probe-org/rev-lookup', name: 'rev-lookup', stargazers_count: 3 }] }
+    },
+  }
+  const repos = await resolveReleaseCandidateRepos({
+    repo: 'probe-org/explicit', packageName: '@probe/rev-lookup', profileDir: probeDir,
+    registries: ['https://registry.fake'], token: null, fetchers: fakeFetchers,
+  })
+  check('★ 反查顺序：显式 repo → 已装包 package.json.repository → npm 元数据 → GitHub 搜索',
+    repos.length === 4
+    && repos[0].repo === 'probe-org/explicit'
+    && repos[1].repo === 'probe-org/from-pkg-json'
+    && repos[2].repo === 'probe-org/from-npm'
+    && repos[3].repo === 'probe-org/rev-lookup',
+    repos.map((r) => `${r.repo}(${r.from})`).join(' → '))
+  check('★ 从包名推导：先试 `scope name`、命中为空再退回裸包名（实测该查询常为 0 条）',
+    searchQueries.length === 2 && searchQueries[0] === 'probe rev-lookup' && searchQueries[1] === 'rev-lookup',
+    searchQueries.join(' | '))
+  const none = await resolveReleaseCandidateRepos({
+    repo: null, packageName: '@probe/never-lookup', profileDir: probeDir,
+    registries: ['https://registry.fake'], token: null,
+    fetchers: { fetchJson: async () => { throw new Error('请求失败 (HTTP 404)') }, githubJson: async () => { throw new Error('GitHub 接口限流已用尽') } },
+  })
+  check('★ 四个来源全军覆没 → 返回空列表（不抛异常），交给上层出清单式文案',
+    Array.isArray(none) && none.length === 0, JSON.stringify(none))
+  const selNone = await selectReleaseInstall({
+    repo: null, packageName: '@probe/never-lookup', profileDir: probeDir,
+    registries: ['https://registry.fake'], token: null,
+    fetchers: { fetchJson: async () => { throw new Error('请求失败 (HTTP 404)') }, githubJson: async () => { throw new Error('GitHub 接口限流已用尽') } },
+  })
+  check('★ selectReleaseInstall 全败也不抛：ok:false + 清单式 message + 无兜底目标',
+    selNone.ok === false && typeof selNone.message === 'string' && selNone.sourceFallback === null && selNone.repos.length === 0)
+  removeDirVerified(probeDir)
+
+  // ⑤ 通道守卫（issue #3）：懒惰展开之后谁还被尝试
+  // 旧代码 `if (!expanded)` / `if (repoChannelAllowed && !expanded)` 把展开后的所有非 npm 通道全跳过，
+  // 子包候选只能靠 AI 兜底 —— 桩函数断言"谁被调用了"即可钉死新语义，不必真装。
+  const guardProfile = join(dirname(fileURLToPath(import.meta.url)), '.testdir', 'guard-profile')
+  const runGuard = async ({ expanded, repoChannelAllowed, budget = { release: 3 }, releaseResult = null }) => {
+    const calls = []
+    const ch = {
+      raceInstallChannels: async () => { calls.push('race'); return null },
+      pnpmInstall: async (dir, spec) => {
+        calls.push(String(spec).startsWith('git+') || String(spec).startsWith('github:') ? `git:${spec}` : `pnpm:${spec}`)
+        throw new Error('registry 404 / git 不可用')
+      },
+      curlManualInstall: async () => { calls.push('curl'); throw new Error('curl 通道：registry 404') },
+      githubReleaseInstall: async (dir, repo, name, options) => {
+        calls.push(`release:${repo ?? 'null'}:${name}:${options?.baseUrl ?? 'null'}`)
+        if (releaseResult !== null) return releaseResult
+        throw new Error('GitHub release 通道：没能找到匹配的发布产物')
+      },
+      backfillMissingDeps: async () => [],
+    }
+    const job = { id: 'guard', repo: 'probe-org/agg', packageName: '@scope/root', update: false, source: 'github' }
+    const res = await tryCandidateChannels({ job, ch, name: '@scope/sub', profileDir: guardProfile, registries: ['https://registry.fake'], repoChannelAllowed, budget, baseUrl: 'file:///probe/cordis.yml', expanded })
+    return { calls, job, res }
+  }
+  const gExpanded = await runGuard({ expanded: true, repoChannelAllowed: false })
+  check('★ expanded 之后：并行竞速 / curl / release 三条通道仍会被尝试（旧代码会全部跳过）',
+    ['race', 'curl'].every((c) => gExpanded.calls.includes(c)) && gExpanded.calls.some((c) => c.startsWith('release:')),
+    gExpanded.calls.join(' → '))
+  check('★ release 通道不受 subpackageMode 限制：子包候选也按包名反查（repo 仍传 job.repo，由反查自行扩大候选）',
+    gExpanded.calls.includes('release:probe-org/agg:@scope/sub:file:///probe/cordis.yml'), gExpanded.calls.join(' → '))
+  check('★ expanded 之后：git 通道不再尝试（同一个 job.repo 不重复 clone）',
+    !gExpanded.calls.some((c) => c.startsWith('git:')), gExpanded.calls.join(' → '))
+  const gExpandedRoot = await runGuard({ expanded: true, repoChannelAllowed: true })
+  check('★ expanded 之后即使候选与请求同源，git 也不重复尝试（保留 !expanded 的级联顺序）',
+    !gExpandedRoot.calls.some((c) => c.startsWith('git:')), gExpandedRoot.calls.join(' → '))
+  const gBefore = await runGuard({ expanded: false, repoChannelAllowed: true })
+  check('未展开时 git 通道照旧尝试（级联顺序没被破坏）',
+    gBefore.calls.some((c) => c.startsWith('git:')), gBefore.calls.join(' → '))
+  const gBudget = { release: 1 }
+  await runGuard({ expanded: true, repoChannelAllowed: false, budget: gBudget })
+  const gBudget2 = await runGuard({ expanded: true, repoChannelAllowed: false, budget: gBudget })
+  check('★ release 反查有候选预算：预算用尽后不再扫 release（避免吃光 8 分钟作业时间）',
+    gBudget2.calls.some((c) => c.startsWith('release:')) === false, gBudget2.calls.join(' → '))
+  check('预算用尽不覆盖真实错误（面板/AI 兜底要看的是 curl·pnpm 的失败原因）',
+    String(gBudget2.res.lastError?.message ?? '').includes('curl'), String(gBudget2.res.lastError?.message ?? ''))
+  const gSource = await runGuard({
+    expanded: true, repoChannelAllowed: false,
+    releaseResult: { version: '0.3.5', missingDeps: [], boxNote: null, sourceNote: 'yjh051108/dsh-super-injector 的 release v0.3.5 的资产 dsh-external-dsh-super-injector-0.3.5.tgz' },
+  })
+  check('★ 成功时如实写明来源：仓库 + release + asset 都进 job.curlNote',
+    gSource.res.installedName === '@scope/sub'
+    && gSource.job.curlNote.includes('yjh051108/dsh-super-injector')
+    && gSource.job.curlNote.includes('v0.3.5')
+    && gSource.job.curlNote.includes('dsh-external-dsh-super-injector-0.3.5.tgz'),
+    gSource.job.curlNote)
+}
+
+// ── ⑬ 挂起根因回归：并行竞速在"两条通道都已失败"时必须立刻收工（issue #3 收尾）─────────────
+// 现场：test-suite-install.mjs 单独跑 5 分钟不结束。根因是 raceInstallChannels 只挂"成功"与
+// "120 秒兜底"两个出口，失败被吞成永不 settle 的 Promise —— 包根本没发布（pnpm 与 curl 都秒级 404）时
+// 也要空等满 120 秒；私有聚合根展开出 3 个候选 = 6 分钟，作业 8 分钟预算被吃光 → 掉进 AI 兜底再等 10 分钟。
+// 这里用桩把两条通道换成"立刻失败"，断言收工时延；真网络（真 pnpm/curl）不参与，CI 可跑。
+{
+  const rejectFast = async () => { throw new Error('桩：registry 404') }
+  const t = Date.now()
+  const none = await raceInstallChannels(join(dirname(fileURLToPath(import.meta.url)), '.testdir'), '@probe/never-published', ['https://registry.fake'], { pnpmInstall: rejectFast, curlManualInstall: rejectFast })
+  const ms = Date.now() - t
+  check('★ 两条通道都失败 → 立刻返回 null（不再空等 120 秒兜底）', none === null && ms < 3000, `${ms}ms`)
+  const curlWins = await raceInstallChannels(join(dirname(fileURLToPath(import.meta.url)), '.testdir'), '@probe/whatever', ['https://registry.fake'], {
+    pnpmInstall: rejectFast,
+    curlManualInstall: async () => ({ version: '1.0.0', missingDeps: [], boxNote: null }),
+  })
+  check('一条成功即胜出（竞速语义没被改坏）', curlWins?.channel === 'curl' && curlWins?.info?.version === '1.0.0', JSON.stringify(curlWins))
+  const curlSlow = await raceInstallChannels(join(dirname(fileURLToPath(import.meta.url)), '.testdir'), '@probe/slow', ['https://registry.fake'], {
+    pnpmInstall: rejectFast,
+    curlManualInstall: () => new Promise(() => {}),
+    capMs: 400, // 只给单测缩短兜底时长（生产恒为 120 秒），否则这条断言要跑 2 分钟
+  })
+  const slowMs = Date.now() - t - ms
+  check('另一条还在跑时不提前收工（等满兜底出口才返回 null）', curlSlow === null && slowMs >= 350, `${slowMs}ms（capMs=400）`)
+}
+
+// ── ⑭ release 反查的硬预算（issue #3 收尾）：到点即放弃，绝不阻塞安装主链 ────────────────
+{
+  // fetchReleaseList 的预算为 0/负 → 不发起请求，直接给出"超出预算"的结论（而不是空转）
+  let called = 0
+  const noCall = await fetchReleaseList('probe-org/x', null, async () => { called += 1; return [] }, 10, 0)
+  check('★ 预算已用尽 → 不发起 releases 请求，直接返回"超出预算"',
+    called === 0 && noCall.releases.length === 0 && String(noCall.error).includes('预算'), noCall.error)
+  check('预算常量合理（总 ≤ 30 秒、扫描候选 ≤ 5 个）',
+    RELEASE_CHANNEL_BUDGET_MS <= 30000 && RELEASE_SCAN_MAX_REPOS >= 1 && RELEASE_SCAN_MAX_REPOS <= 5,
+    `${RELEASE_CHANNEL_BUDGET_MS}ms / ${RELEASE_SCAN_MAX_REPOS} 个`)
+  // 候选仓库多于扫描上限 → 只对前 N 个真的列 release，其余在清单里如实说明"预算裁剪"
+  const scanned = []
+  const many = await selectReleaseInstall({
+    repo: 'probe-org/explicit', packageName: '@probe/never', profileDir: null, registries: ['https://registry.fake'], token: null,
+    fetchers: {
+      fetchJson: async () => ({ repository: { url: 'git+https://github.com/probe-org/from-npm.git' } }),
+      githubJson: async (url) => {
+        if (String(url).includes('/search/repositories')) {
+          // 仓库名与包名逐字对上 → 按星数取前几个（同名不同 owner 的真实形态）
+          return { items: ['a', 'b', 'c'].map((o, i) => ({ full_name: `probe-org-${o}/never`, name: 'never', stargazers_count: 9 - i })) }
+        }
+        scanned.push(String(url))
+        return []
+      },
+    },
+  })
+  check('★ 候选仓库扫描有上限：只对前 N 个列 release，其余如实标注"预算裁剪"',
+    many.repos.length > RELEASE_SCAN_MAX_REPOS && scanned.length === RELEASE_SCAN_MAX_REPOS && many.ok === false
+    && many.groups.some((g) => String(g.error ?? '').includes('预算裁剪')),
+    `共 ${many.repos.length} 个候选仓库，实际扫描 ${scanned.length} 个（上限 ${RELEASE_SCAN_MAX_REPOS}）`)
+  check('release 链路的失败一律是"返回值"而不是抛出的异常（探测失败＝这个来源没有）',
+    many.ok === false && typeof many.message === 'string' && many.message.includes('@probe/never'))
+}
+
+// ── ⑮ release 产物下载：直连优先 + 镜像兜底（issue #3 收尾，本机实测）────────────────────
+// 现场实测（2026-09-22）：curl 直连 github.com 的 releases/download 地址是 exit 35（SSL connect error），
+// node https 也报证书错误；而同一 URL 经 ghproxy.net 是 200 / 358KB。只试直连会让"反查命中 + asset 挑对"
+// 之后仍然装不上。这里用可注入 runner 离线钉死"直连失败 → 走镜像 → 校验体积"的语义。
+{
+  const direct = 'https://github.com/o/r/releases/download/v1/pkg-1.0.0.tgz'
+  const urls = releaseDownloadUrls(direct)
+  check('★ 下载地址：直连优先，镜像兜底（前缀复用 raw/api 那批加速器）',
+    urls.length === RELEASE_DOWNLOAD_MIRROR_PREFIXES.length + 1 && urls[0] === direct
+    && urls.slice(1).every((u, i) => u === `${RELEASE_DOWNLOAD_MIRROR_PREFIXES[i]}${direct}`),
+    urls.join('\n   '))
+  check('空地址不产生任何请求', releaseDownloadUrls('').length === 0 && releaseDownloadUrls(null).length === 0)
+
+  const dlDir = join(dirname(fileURLToPath(import.meta.url)), '.testdir', 'download-probe')
+  mkdirSync(dlDir, { recursive: true })
+  const dest = join(dlDir, 'pkg.tgz')
+  const seen = []
+  const fakeRunner = async (bin, args) => {
+    const url = args[args.length - 1]
+    seen.push(url)
+    if (seen.length === 1) throw new Error('curl exit 35（SSL connect error）') // 直连必失败：复现本机现场
+    writeFileSync(dest, Buffer.alloc(2048, 7)) // 镜像成功：写一个够大的假产物
+  }
+  const size = await downloadReleaseArtifact(direct, dest, { runner: fakeRunner })
+  check('★ 直连失败自动改走镜像并成功落盘（否则 issue #3 在本机永远装不上）',
+    size === 2048 && seen.length === 2 && seen[1] === `${RELEASE_DOWNLOAD_MIRROR_PREFIXES[0]}${direct}`,
+    `尝试 ${seen.length} 条：${seen.map((u) => u.replace(direct, '…asset')).join(' → ')}`)
+
+  // 全部地址都失败 → 抛出的错误必须把"试过哪几条"说清楚（排查靠它）
+  let allFail = null
+  try {
+    await downloadReleaseArtifact(direct, dest, { runner: async () => { throw new Error('桩：全部失败') }, mirrors: true })
+  } catch (error) { allFail = error }
+  check('★ 所有下载地址都失败时，错误里列出尝试过的地址（含"直连"标注）',
+    allFail !== null && String(allFail.message).includes('已尝试 3 条地址') && String(allFail.message).includes('（直连）'),
+    String(allFail?.message).slice(0, 120))
+  // 体积下限：黑洞期常见的 0 字节/错误页必须当失败，不能拿去装
+  let tooSmall = null
+  try {
+    await downloadReleaseArtifact(direct, dest, { mirrors: false, runner: async (bin, args) => { writeFileSync(args[args.indexOf('-o') + 1], 'x') } })
+  } catch (error) { tooSmall = error }
+  check('★ 下载内容过小（黑洞期错误页）判失败，不拿去装', tooSmall !== null && String(tooSmall.message).includes('过小'), String(tooSmall?.message).slice(0, 90))
+  removeDirVerified(dlDir)
 }
 
 server.close()
