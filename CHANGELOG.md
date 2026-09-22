@@ -2,6 +2,24 @@
 
 All notable changes to dsh-plugin-hub.
 
+## v0.3.58 — 安装通道不再连坐：private 根 + 带包名也能走 git/release/curl，子包发现弃用目录白名单（2026-09-21）
+
+> 来自用户 issue（附逐条实测）：根包 `private: true` 且前端带了包名时会置位 `subpackageMode`，同一个守卫把
+> curl / GitHub release / git 三条通道一起跳过，只剩 npm 通道 404 —— 明明 UI 推荐的 `dsh plugin add github:owner/repo`
+> 从未被尝试，最后被拖进约 4 分钟的 AI 兜底。
+
+- **守卫语义修正**：`subpackageMode` 只表达「优先装子包」，不再表达「禁止其它策略」。并行竞速与 curl 通道
+  （按包名走 registry，与根包是否 private 无关）对子包候选一并开放；release / git 通道（按 `job.repo` 施工）
+  只在「候选就是被请求的那个包」时尝试 —— 既修掉连坐，又保留「别对聚合仓库的 private 根做无意义尝试」的原意。
+  放开后即使失败也会留下 `lastError`，排查信息才完整。
+- **子包发现弃用目录白名单**：原来只认 `packages|examples|plugins|skills|apps|extensions|src|lib` 下的
+  `package.json`（本 issue 仓库的子包在 `injector/`、`preset/`、`graded/` → 命中 0 条；trees 接口本身正常，
+  是本地正则把候选全过滤掉了）；现改为**任意深度 ≤2 的 `package.json`**（排除 `node_modules`），仍聚合包优先、上限 24。
+- 测试：18 个测试文件全绿。
+
+**尚未做（下一步）**：按包名反查真实发布仓库 + 遍历 release assets 挑选匹配包（issue #3，本例真正解法的来源）、
+git-hosted 包自动写 `onlyBuiltDependencies`（issue #5，pnpm 10.34+ 要求带完整 URL 的精确 spec）。
+
 ## v0.3.57 — 所有安装通道都对账 lockfile：装上的插件不再可能被 pnpm 静默还原（2026-09-21）
 
 > 与 0.3.56 的自更新修复同源。起因是用户实测报告：一键更新/兜底通道只把文件铺进 `node_modules`、
