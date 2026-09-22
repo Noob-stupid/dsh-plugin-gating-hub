@@ -2,6 +2,27 @@
 
 All notable changes to dsh-plugin-hub.
 
+## v0.3.62 — 注入缝改用 `ctx.get`（方案 A）+ 假 ctx 换严格替身（2026-09-22）
+
+> 承接 0.3.60/0.3.61 的抢修。那两版只是用 try/catch **兜住症状**，本版按 issue 草案把修法与根因一起做扎实。
+
+- **① 注入缝语义修正（草案方案 A）**：`channelImpls(ports)` 改为**优先 `ctx.get('installChannels')`** ——
+  Cordis 的正规可选读取，未声明也不抛，与同文件 `ctx.get('subagents')` / `ctx.get('agents')` /
+  `ctx.get('skills')` 等 5 处既有写法一致；普通对象（测试替身/窄接口）才回退属性访问，try/catch 保留。
+  属性式读取未 inject 的名字在真实 cordis ctx 上会**同步抛** `cannot get property "installChannels" without inject`。
+  草案第一条建议（把"同文件其它 5 处都写对了"列为佐证）正是选 A 的依据：这不是风格问题，是新加的这处偏离了既有约定。
+- **② 测试替身现在会校验未声明属性（真正杜绝同类回归）**：新增 `strict-ctx.mjs` —— 复刻 cordis 语义的严格替身：
+  `inject` 声明过的名字可属性访问；只 provide、未 inject 的名字**只能 `ctx.get` 读**，属性访问抛
+  `cannot get property "X" without inject` **并记入账本**（即使异常被 try/catch 吞掉也留痕）。
+  `test-suite-detect.mjs` 新增 ⑯ 节、`test-suite-install.mjs` 全程换用它，并断言"整条安装路径账本为空"。
+  实测演示：把注入缝改回属性访问 → 两条用例立刻红（`race=false` + 账本记下 `installChannels`）。
+  草案第二条建议（把"单测为什么没拦住"写进去）落实为这条防线：根因是**替身与真实运行时语义不一致**，
+  只改那一行代码，同类缺陷还会再来。
+- **审计**：`ctx.` / `ports.` 的属性式访问逐个对照 `inject = ['webServer','loader']` 与本对象实际形状 ——
+  除本处外全是 `loader` / `webServer`（已 inject）、`baseUrl`（Context 的 own property）、`effect`（原型方法）
+  与 `ctx.get(...)`（不校验 inject），无第二处隐患。
+- 18/18 测试全绿（逐文件单独跑）。
+
 ## v0.3.60 — 紧急修复：安装通道注入缝读到了 cordis ctx，导致每一次安装都失败（2026-09-22）
 
 > **如果你在 0.3.59 上装插件报 `cannot get property installChannels without inject`，请立刻升级到本版。**

@@ -1,7 +1,7 @@
 // 套装安装端到端测试：/install 普通路径 → 服务端检测 .gitmodules → 自动转套装安装
 // 真实目标仓库 yjh051108/dsh-routing-suite（预设 → .agent-presets，injector → bundle 层）。
 //
-// ── 2026-09-22（issue #3 收尾）两处改造，原因写在最前面，别改回去 ─────────────────────
+// ── 2026-09-22（issue #3 收尾）三处改造，原因写在最前面，别改回去 ─────────────────────
 // ① **安装通道离线化**：本用例原来会真装到真实 profile。上游仓库 2026-09-04 后已无 .gitmodules，
 //    于是走到"私有聚合根（@dsh-external/dsh-super-injector，private:true）→ 自动展开子包"这条路，
 //    每个候选都要真网络走 pnpm/curl/GitHub release。issue #3 把 release 通道放开给子包候选之后，
@@ -16,11 +16,17 @@
 //    现在与真实前端同一行为（client.js：aiFallback=false 时自动拒绝）：
 //    POST /ai-consent {approved:false} → 作业立刻以"用户取消本地 AI 兜底"结束。
 //    用例耗时从「8 分钟以上」降到数十秒。
+// ③ **假 ctx 换成严格替身**（2026-09-22 事故的真正根因防线）：旧写法把 ctx 写成手写普通对象，
+//    读未声明的属性只会得到 undefined —— 于是 0.3.59 那个"属性式读取未声明的 ctx.installChannels"
+//    在单测里全绿、在真实 cordis 上必抛（cannot get property ... without inject），每次安装都失败。
+//    现在用 strict-ctx.mjs 复刻 cordis 语义（未 inject 的名字属性访问即抛 + 记账本），
+//    并在末尾断言账本为空；把注入缝改回属性访问，本用例立刻红。
 import { createRequire } from 'node:module'
 import { pathToFileURL } from 'node:url'
 import { existsSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
+import { strictCtx, violationsOf } from './strict-ctx.mjs'
 
 const require = createRequire(import.meta.url)
 const mod = await import(new URL('./lib/index.js', import.meta.url).href)
@@ -35,26 +41,59 @@ if (!existsSync(join(home, 'profiles', 'web'))) {
 // 离线通道桩（见文件头 ①）：每个桩都记录"自己被谁调用"，并立刻以确定性错误失败。
 const channelCalls = []
 const offline = (label) => { throw new Error(`离线夹具：${label} 不联网（本用例只验证通道派发与作业终止）`) }
-const ctx = {
-  baseUrl: pathToFileURL(join(home, 'profiles', 'web', 'cordis.yml')).href,
-  loader: { entries: () => [] },
-  webServer: { register: (route) => { globalThis.__route = route; return () => {} } },
-  effect: (fn) => { fn() },
-  installChannels: {
-    raceInstallChannels: async (dir, name) => { channelCalls.push(`race:${name}`); return null },
-    pnpmInstall: async (dir, spec) => {
-      const s = String(spec)
-      channelCalls.push(`${s.startsWith('git+') || s.startsWith('github:') ? 'git' : 'pnpm'}:${s}`)
-      offline('pnpm/git')
-    },
-    curlManualInstall: async (dir, name) => { channelCalls.push(`curl:${name}`); offline('curl') },
-    githubReleaseInstall: async (dir, repo, name, options) => {
-      channelCalls.push(`release:${repo ?? 'null'}:${name}:${options?.baseUrl ?? 'null'}`)
-      offline('GitHub release')
-    },
-    backfillMissingDeps: async () => [],
+const installChannels = {
+  raceInstallChannels: async (dir, name) => { channelCalls.push(`race:${name}`); return null },
+  pnpmInstall: async (dir, spec) => {
+    const s = String(spec)
+    channelCalls.push(`${s.startsWith('git+') || s.startsWith('github:') ? 'git' : 'pnpm'}:${s}`)
+    offline('pnpm/git')
   },
+  curlManualInstall: async (dir, name) => { channelCalls.push(`curl:${name}`); offline('curl') },
+  githubReleaseInstall: async (dir, repo, name, options) => {
+    channelCalls.push(`release:${repo ?? 'null'}:${name}:${options?.baseUrl ?? 'null'}`)
+    offline('GitHub release')
+  },
+  backfillMissingDeps: async () => [],
 }
+
+// ── 假 ctx 换**严格替身**（文件头 ③，2026-09-22 事故的根因防线）───────────────────────
+// 旧写法是手写普通对象：读任何属性都返回 undefined，于是 0.3.59 那个「属性式读取未声明的
+// ctx.installChannels」在单测里全绿、到真实 cordis 上必炸（cannot get property ... without inject）。
+// 严格替身复刻 cordis 的语义：
+//   · inject 声明过的（webServer / loader）→ 属性访问合法；
+//   · 只是 provide 进来的 installChannels    → **只能 ctx.get 读**，属性访问抛 "without inject" 并记账；
+//   · baseUrl / effect 等 ctx 自身成员       → 属性访问合法。
+// 账本（violationsOf）在文件末尾断言：整条安装路径不许出现属性式访问未声明的名字。
+const ctx = strictCtx({
+  inject: mod.inject,
+  services: {
+    webServer: { register: (route) => { globalThis.__route = route; return () => {} } },
+    loader: { entries: () => [] },
+    installChannels,
+  },
+  own: { baseUrl: pathToFileURL(join(home, 'profiles', 'web', 'cordis.yml')).href },
+})
+// 自检：替身必须"有牙齿"——拿一颗一次性的替身演示属性式读取会抛（并留下账本），
+// 否则下面那条"账本为空"就只是装饰。绝不能在主 ctx 上做这个演示（会给账本记一笔假账）。
+const probeCtx = strictCtx({ inject: mod.inject, services: { installChannels } })
+let probeError = null
+try { void probeCtx.installChannels } catch (error) { probeError = error }
+check('严格替身自检：属性式读取未声明的 installChannels 必抛（与 cordis 一致）',
+  probeError !== null && /cannot get property "installChannels" without inject/u.test(probeError.message)
+  && violationsOf(probeCtx).length === 1,
+  probeError === null ? '（没有抛错 —— 替身坏了）' : probeError.message)
+check('严格替身自检：被 provide 的服务仍然可以经 ctx.get 读到（可选读取的正规入口）',
+  ctx.get('installChannels') === installChannels && ctx.get('never-provided') === undefined)
+// 注入缝本身：channelImpls 必须经 ctx.get 取到桩。若有人把主路径改回 ports?.installChannels，
+// 严格替身会抛 → 被 channelImpls 的 try/catch 吞掉 → 回落到**真实通道** → 这里必红（这条断言不联网、不落盘）。
+const seam = mod.channelImpls(ctx)
+check('★ 注入缝经 ctx.get(\'installChannels\') 取到桩函数（改回属性访问则此断言必红）',
+  seam.raceInstallChannels === installChannels.raceInstallChannels
+  && seam.pnpmInstall === installChannels.pnpmInstall
+  && seam.curlManualInstall === installChannels.curlManualInstall
+  && seam.githubReleaseInstall === installChannels.githubReleaseInstall
+  && seam.backfillMissingDeps === installChannels.backfillMissingDeps,
+  `race=${seam.raceInstallChannels === installChannels.raceInstallChannels}`)
 mod.apply(ctx)
 const route = globalThis.__route
 
@@ -187,6 +226,16 @@ try {
   console.log('bundles:', JSON.stringify(bundles))
 } catch (e) { console.log('profile package.json 读取失败：' + e.message) }
 check('bundles does NOT contain injector', !bundles.includes('@dsh-external/dsh-super-injector'))
+
+// ── 严格替身账本：整条安装路径不许出现「属性式访问未声明的 ctx 名字」────────────────────
+// 0.3.59 的注入缝就是属性式访问了未声明的 ctx.installChannels：假 ctx 是普通对象 → 单测全绿；
+// 真实 cordis 直接抛 → 每次安装必失败。这条断言让同类改法再也过不去（即使异常被 try/catch 吞掉，
+// 账本仍然记得有人读过那个名字）。若它红了：对照 strict-ctx.mjs 的说明，把该处改成 ctx.get('名字')
+// 或显式传参，**不要**把名字塞进 inject 来"修"（那是方案 B，只适用于真服务）。
+const violations = violationsOf(ctx)
+check('★ 严格替身：整条安装路径没有属性式访问未声明的 ctx 名字（0.3.59 事故的回归断言）',
+  violations.length === 0,
+  violations.length === 0 ? '账本为空' : `越界读取 ${violations.length} 次：${[...new Set(violations)].join('、')}`)
 
 console.log(failed === 0 ? '\nALL PASS' : `\n${failed} FAILED`)
 process.exit(failed === 0 ? 0 : 1)

@@ -19,13 +19,17 @@ import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import {
   DEFAULT_SOURCES, FETCH_BUDGET_MS, FETCH_NOT_FOUND, FETCH_OK, FETCH_UNREACHABLE, META_BUDGET_MS,
+  channelImpls,
   cleanupAttemptedCandidates, curlText, gitBin, hasDirectNameHit, looksLikeGitmodules, packageProbeErrorText, parseRepoFromUrl,
   raceFetchOutcome, readBodyOrNull, removeDirVerified, resolveInstallKind, resolvePnpmRunners, summarizeCloneErrors,
   // issue #3：release 反查 / 产物下载 / 通道守卫 / 竞速时延（回归断言用）
   RELEASE_CHANNEL_BUDGET_MS, RELEASE_DOWNLOAD_MIRROR_PREFIXES, RELEASE_SCAN_MAX_REPOS, assetMatchInfo, downloadReleaseArtifact,
   fetchReleaseList, planReleaseInstall, raceInstallChannels, rankReleaseAssets, releaseDownloadUrls,
   resolveReleaseCandidateRepos, selectReleaseInstall, sourceTarballFallback, tryCandidateChannels,
+  // 2026-09-22 注入缝事故：严格替身要拿插件真实声明的 inject，别手抄
+  inject as PLUGIN_INJECT,
 } from './lib/index.js'
+import { normalizeInject, strictCtx, violationsOf } from './strict-ctx.mjs'
 
 let failed = 0
 const check = (label, cond, extra) => {
@@ -499,6 +503,50 @@ check('★ 清理失败时明确说"目录清不掉、多源重试无效"，而�
   } catch (error) { tooSmall = error }
   check('★ 下载内容过小（黑洞期错误页）判失败，不拿去装', tooSmall !== null && String(tooSmall.message).includes('过小'), String(tooSmall?.message).slice(0, 90))
   removeDirVerified(dlDir)
+}
+
+// ── ⑯ 注入缝必须是 ctx.get（2026-09-22 事故：单测全绿、生产必炸）────────────────────────
+// 事故：为单测留的「安装通道实现注入缝」写成 `ctx.installChannels`（属性式读取一个没写进 inject 的名字）。
+// 单测喂进去的 ctx 是**手写普通对象** → 读任何属性得到 undefined → 全绿；
+// 生产路径上 runInstallJob 拿到的就是 cordis 的 ctx 代理 → 同步抛
+// `cannot get property "installChannels" without inject` → 0.3.59 每一次安装都在进入通道之前失败。
+// 修法（方案 A）：主路径走 `ctx.get('installChannels')`。这里用 strict-ctx.mjs 的严格替身把语义钉死：
+// 可选读取走 get，未 inject 的名字属性访问必抛（并记账本 —— 即使被 try/catch 吞掉也留痕）。
+{
+  const STUB = {
+    raceInstallChannels: async () => 'stub-race',
+    pnpmInstall: async () => 'stub-pnpm',
+    curlManualInstall: async () => 'stub-curl',
+    githubReleaseInstall: async () => 'stub-release',
+    backfillMissingDeps: async () => 'stub-backfill',
+  }
+  const strict = strictCtx({ inject: PLUGIN_INJECT, services: { installChannels: STUB } })
+  // 自检用**另一颗一次性替身**：属性式访问会往账本里记一笔，绝不能污染 strict 的账本（下面要断言它为空）
+  const probe = strictCtx({ inject: PLUGIN_INJECT, services: { installChannels: STUB } })
+  let directError = null
+  try { void probe.installChannels } catch (error) { directError = error }
+  check('★ 严格替身自检：未 inject 的名字属性访问必抛（与 cordis 的 without inject 同文案）',
+    directError !== null && directError.message === 'cannot get property "installChannels" without inject'
+    && violationsOf(probe).length === 1,
+    directError === null ? '（没有抛错 —— 替身坏了，下面几条断言就没有意义）' : directError.message)
+  check('严格替身自检：被 provide 的服务仍可经 ctx.get 读到（可选读取的正规入口，未提供返回 undefined）',
+    strict.get('installChannels') === STUB && strict.get('never-provided') === undefined)
+  const seam = channelImpls(strict)
+  check('★ channelImpls 经 ctx.get(\'installChannels\') 取到注入桩（改回属性访问 → 严格替身抛 → try/catch 吞掉 → 回落真实实现 → 此断言必红）',
+    seam.raceInstallChannels === STUB.raceInstallChannels && seam.pnpmInstall === STUB.pnpmInstall
+    && seam.curlManualInstall === STUB.curlManualInstall && seam.githubReleaseInstall === STUB.githubReleaseInstall
+    && seam.backfillMissingDeps === STUB.backfillMissingDeps,
+    `race=${seam.raceInstallChannels === STUB.raceInstallChannels}（${typeof seam.raceInstallChannels}）`)
+  check('★ 取桩过程没有属性式访问未声明的名字（账本为空）',
+    violationsOf(strict).length === 0, violationsOf(strict).join('、') || '账本为空')
+  check('没有注入桩时回落真实实现（生产路径：没人 provide installChannels）',
+    channelImpls(strictCtx({ inject: PLUGIN_INJECT })).raceInstallChannels === raceInstallChannels)
+  check('普通对象（老式窄接口/测试替身）仍保留属性回退，不被这次改动打断',
+    channelImpls({ installChannels: STUB }).pnpmInstall === STUB.pnpmInstall)
+  const declared = normalizeInject(PLUGIN_INJECT)
+  check('注入缝没被塞进 inject（方案 A：它是测试缝不是可选服务；若真要改成方案 B，请连同本断言一起改）',
+    !declared.required.includes('installChannels') && !declared.optional.includes('installChannels'),
+    JSON.stringify(PLUGIN_INJECT))
 }
 
 server.close()
