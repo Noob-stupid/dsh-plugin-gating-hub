@@ -2,6 +2,38 @@
 
 All notable changes to dsh-plugin-hub.
 
+## v0.3.59 — release 通道学会「按包名反查真正发布它的仓库」；并修掉 0.3.58 引入的一处回归与竞速通道的永不结算（2026-09-22）
+
+> 承接 v0.3.58 的 issue 修复。这一版把 issue 的 #3 做完了，同时修掉两处**必须尽快发**的缺陷。
+
+### 修复
+- **回归（0.3.58 引入，务必升级）**：候选循环里 `repoChannelAllowed` 的声明写在 `const name` **之前**，
+  触发 TDZ `ReferenceError` —— **私有聚合根 + 前端带包名的安装必然失败**（正是本 issue 的场景）。已修。
+- **并行竞速通道「永不结算」**：该通道只有「成功」与「120 秒兜底」两个出口，pnpm 与 curl **两条都秒失败时
+  没有出口** → 每个候选白等满 120 秒（3 个候选 ≈ 6 分钟就吃光作业预算，然后掉进 AI 授权再等 10 分钟）。
+  现补第三个出口（两条都 settle 即收工）并清理兜底定时器；`test-suite-install.mjs` 从 **8 分钟以上降到 6 秒**。
+
+### 新增能力（issue #3）
+- **release 通道按包名反查真实发布仓库**：显式 repo → 已装包 `package.json.repository` → npm registry 元数据 →
+  GitHub 搜索（先 `scope name` 再裸名）；再**遍历 ≤10 条 release 的全部 assets**、按包名匹配挑选
+  （`@scope/pkg` ↔ `scope-pkg-1.2.3.tgz`/`pkg-1.2.3.tgz` 等大小写/下划线/版本变体，精确匹配优先、版本高优先）。
+  成功时在面板写明「哪个仓库 / 哪条 release / 哪个 asset」，失败时把**尝试过的仓库与资产清单**写进错误。
+  硬预算：总 20 秒、只扫前 3 个候选仓库、release 不翻页。
+- 落盘前仍走**盒子验证**（包名 / 入口 / 依赖引用），不通过不装。
+- 守卫收尾：curl 与并行竞速不再受 `!expanded` 限制；release 不再受 `subpackageMode` 限制（改为按包名施工 + 预算）；
+  git 通道保持「只对根包」+「展开后不再重复尝试」。
+
+### 真实验证（只读，未真装）
+- `@dsh-external/dsh-super-injector` → 反查到 `yjh051108/dsh-super-injector`，选中 release `v0.3.5` 的
+  `dsh-external-dsh-super-injector-0.3.5.tgz`（358.2 KB）→ 解压校验 name/version/main/`dsh.bundle.patch` 全部通过，
+  耗时 6.5~7.1 秒；失败路径（无仓库的包）会明说「也没能反查到候选仓库」。
+- 子包发现（v0.3.58 起）：`yjh051108/dsh-routing-suite` 能列出 3 个子包（`injector/`、`graded/`、`preset/`），旧白名单命中 0。
+
+- 顺带修：本机 release 产物**直连下载不可用**（SSL exit 35），而同一 URL 经镜像正常 → 已加「直连优先 + ghproxy/ghfast 兜底」（总 70 秒封顶）；
+  `releaseInstallTarget` 在开发检出下的目标目录判据加固（避免往检出父目录写包）。
+
+测试：18 个测试文件全绿（总 28.6 秒）。
+
 ## v0.3.58 — 安装通道不再连坐：private 根 + 带包名也能走 git/release/curl，子包发现弃用目录白名单（2026-09-21）
 
 > 来自用户 issue（附逐条实测）：根包 `private: true` 且前端带了包名时会置位 `subpackageMode`，同一个守卫把
