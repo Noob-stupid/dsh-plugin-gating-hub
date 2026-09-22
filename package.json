@@ -1,6 +1,6 @@
 {
   "name": "@noob-stupid/dsh-plugin-console",
-  "version": "0.3.62",
+  "version": "0.3.63",
   "description": "DSH plugin management panel & marketplace: one-click enable/disable, multi-source market (GitHub/Gitee/custom), static-index market (500+ plugins / 300 skills), skills, suites, and one-click framework upgrade.",
   "repository": {
     "type": "git",
