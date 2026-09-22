@@ -1,0 +1,72 @@
+name: publish-npm
+
+# 手动触发的 npm 发布通道：本机到 registry.npmjs.org 是黑洞时，用 GitHub 的出口发布。
+# 用法：Actions → publish-npm → Run workflow（可填版本号，默认读 package.json）。
+#
+# 认证二选一（优先 OIDC 可信发布，无需任何密钥）：
+#   1) npmjs.com → 该包 → Settings → Trusted Publisher → GitHub Actions
+#      填：Organization/User = Noob-stupid，Repository = 本仓库名，Workflow = publish-npm.yml
+#      （配置后本 workflow 无需 secret，`npm publish` 自动用 id-token 换短期凭据）
+#   2) 仓库 Settings → Secrets and variables → Actions → New repository secret：NPM_TOKEN
+#      （npmjs.com → Access Tokens → Generate New Token → Automation 类型）
+
+on:
+  workflow_dispatch:
+    inputs:
+      dist_tag:
+        description: 'npm dist-tag（默认 latest）'
+        required: false
+        default: 'latest'
+      dry_run:
+        description: '只打包不发布（true/false）'
+        required: false
+        default: 'false'
+
+permissions:
+  contents: read
+  id-token: write          # OIDC 可信发布所需
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '22'
+          registry-url: 'https://registry.npmjs.org'
+
+      - name: 校验 tag 与 package.json 版本一致（防发错产物）
+        run: |
+          PKG=$(node -p "require('./package.json').version")
+          echo "package.json 版本: $PKG"
+          echo "触发 ref: $GITHUB_REF"
+          case "$GITHUB_REF" in
+            refs/tags/v*) TAGVER="${GITHUB_REF#refs/tags/v}"
+              if [ "$TAGVER" != "$PKG" ]; then
+                echo "::error::tag v$TAGVER 与 package.json $PKG 不一致，拒绝发布"; exit 1
+              fi ;;
+            *) echo "非 tag 触发（手动），按 package.json 版本发布" ;;
+          esac
+
+      - name: 语法自检（硬门槛）
+        run: |
+          node --check lib/index.js
+          node --check lib/client.js
+
+      - name: 发布到 npm
+        if: ${{ inputs.dry_run != 'true' }}
+        run: |
+          npm publish --registry=https://registry.npmjs.org/ --tag "${{ inputs.dist_tag }}"
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+      - name: 打包自检（dry-run）
+        if: ${{ inputs.dry_run == 'true' }}
+        run: npm pack --dry-run
+
+      - name: 核对 dist-tags
+        if: ${{ inputs.dry_run != 'true' }}
+        run: |
+          npm view @noob-stupid/dsh-plugin-console dist-tags --registry=https://registry.npmjs.org/ || true
