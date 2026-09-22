@@ -2,6 +2,18 @@
 
 All notable changes to dsh-plugin-hub.
 
+## v0.3.60 — 紧急修复：安装通道注入缝读到了 cordis ctx，导致每一次安装都失败（2026-09-22）
+
+> **如果你在 0.3.59 上装插件报 `cannot get property installChannels without inject`，请立刻升级到本版。**
+
+- 根因：为单测加的"通道实现注入缝"写成 `ports?.installChannels`，而**生产路径上 `ports` 就是 cordis 的 `ctx` 代理**——
+  访问未在 `inject` 里声明的属性会**同步抛错**，于是每次安装都在进入通道前就失败（面板显示"操作失败：cannot get property installChannels without inject"）。
+  预览线不受影响，因为它传的是 `routeDeps()` 出来的纯对象，所以这个错误只在稳定线（单体版）出现 —— 这正是"越改越坏"的那一处。
+- 修复：注入缝的读取改为 try/catch 兜底（读不到就用真实实现），并加注释说明为什么不能直接访问 ctx 属性。
+- 测试：18 个测试文件全绿；另核对单体版 `channelImpls(ctx)` 在生产路径下会安全回落到真实实现。
+
+**教训（写进代码注释）**：给测试留的注入缝，绝不能挂在 cordis 的 ctx 代理上——要么走显式参数，要么兜住访问异常。
+
 ## v0.3.59 — release 通道学会「按包名反查真正发布它的仓库」；并修掉 0.3.58 引入的一处回归与竞速通道的永不结算（2026-09-22）
 
 > 承接 v0.3.58 的 issue 修复。这一版把 issue 的 #3 做完了，同时修掉两处**必须尽快发**的缺陷。
