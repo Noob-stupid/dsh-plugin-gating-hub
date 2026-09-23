@@ -2,6 +2,22 @@
 
 All notable changes to dsh-plugin-hub.
 
+## v0.3.65 — 元数据与默认索引源修正：内网 / 离线能力写进身份描述 + 索引源改到新仓库名（2026-09-23）
+
+> 无功能逻辑变更：一处默认配置修正（索引源 URL）+ 身份描述补全。
+
+- **身份描述补上「内网 / 离线」这条硬能力**（用户指出：这条能力我们早就有，但描述里没人看得出来）：
+  仓库描述、npm description、中英 README 首屏现在都写明——安装源 / 搜索源 / 索引源 / Git 源**四类源全部可自定义**，
+  可指向公司内网私有 registry、内网自建索引、`file://` 本地裸仓库，**纯内网或断网环境照样浏览与安装**。
+- **修默认索引源仍是旧仓库名**（`dsh-plugin-hub` → `dsh-plugin-gating-hub`，5 条：jsDelivr cdn/gcore/fastly、ghproxy、raw）：
+  旧路径在 jsDelivr 上命中**旧缓存**，实测拿到的 `marketplace/index.json` 的 `generatedAt` 落后一天（2026-09-22T15:49Z），
+  而新路径与 GitHub `main` 一致（2026-09-23T02:01Z，556,993 B）。默认索引源本该**始终**是最新的那份。
+  5 条源逐个实测：cdn / gcore / fastly / ghproxy / raw 新路径全部 200。
+- 内务：测试文件收进 `tests/`（根目录 tracked 32 → 13），CI 路径同步；发布物不含 `tests/`。
+
+**验证**：19 个测试文件全绿（18 套 + suite-detect）；clean-install 发版门槛对**已发布 0.3.64** PASS 17/17；
+本版对 0.3.64 的差异为 `package.json`（描述/版本）+ 5 条索引源 URL + README 文案，`lib/index.js` 除索引源数组外无改动。
+
 ## v0.3.64 — 元数据版：npm 描述/关键词中英双语 + repository 指向新仓库名（2026-09-23）
 
 > 纯元数据与检索可见性改进，**不含功能变更**（代码与 0.3.63 相同）。

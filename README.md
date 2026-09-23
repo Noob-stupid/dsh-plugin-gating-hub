@@ -25,7 +25,10 @@
 > version** after an upgrade → plugins the new framework cannot load are **auto-disabled** →
 > the **plugin upgrade gate** refuses a version the host can't take.
 > A **built-in multi-source plugin market & index** (500+ plugins / 300+ skills, zero GitHub
-> API calls) rides on top as the **discovery layer**.
+> API calls) rides on top as the **discovery layer** — and **every source is swappable**: install
+> source (incl. a private intranet registry), search source (URL template + headers), index source
+> (self-hosted intranet index), Git source (incl. a local `file://` bare repo), so plugins can be
+> installed on an **intranet-only or fully offline** machine.
 
 ## Why DSH Plugin Gating Hub
 
@@ -46,6 +49,9 @@
 - 🧩 **Built-in discovery layer** — multi-source plugin market (GitHub / Gitee / custom sources)
   plus the static index of `dsh-plugin` repos (500+ by stars) and a Skills tab (up to 300);
   browse, search, one-click install, **zero GitHub API calls** (served via CDN).
+  **Every source is swappable** — private intranet npm registry, custom search source (URL template +
+  headers), self-hosted index source, Git source (incl. local `file://` bare repo) — so an
+  **intranet-only / offline** machine can still browse and install.
 - 🤖 **AI Empower** — give the console a package name or GitHub repo, the local AI
   reads its docs and drafts a safe, confirmable deployment plan (install / config /
   start / health-check); server components get an automatic control card.
@@ -330,4 +336,4 @@ The layered-refactor preview lives in its **own repository**: [**`Noob-stupid/ds
 - **What it is**: the monolithic `lib/index.js` (8547 lines) split into layers — `lib/index.js` **141 lines** + `lib/server/**` **38 modules**; **feature-equivalent to `0.3.57`**, maintainability only;
 - **Verified**: 19 test suites green · 8 architecture-guard assertions · **route inventory identical** (`status` + response fields) against the stable build;
 - **Not yet exercised**: real framework upgrade / rollback, restart guardian, component start/stop, real AI run, Gitee OAuth (~10–25% long-tail risk, subjective);
-- **For everyday use** stick to npm `@noob-stupid/dsh-plugin-console@0.3.64`, or `main` of this repo.
+- **For everyday use** stick to npm `@noob-stupid/dsh-plugin-console@0.3.65`, or `main` of this repo.
