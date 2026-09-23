@@ -187,6 +187,9 @@ git clone https://github.com/Noob-stupid/dsh-plugin-hub /tmp/dsh-plugin-console 
   （gitee.com → 数据管理 → 第三方应用，权限勾选 user_info、projects）后填入
   client_id / client_secret → 保存 → 授权登录。
 
+<img width="393" height="525" alt="image" src="https://github.com/user-attachments/assets/caacbe78-034b-4151-b1d1-2b67b73a5de6" />
+
+
 ---
 
 ## 文档
