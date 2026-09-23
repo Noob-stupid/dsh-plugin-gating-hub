@@ -1,7 +1,7 @@
 {
   "name": "@noob-stupid/dsh-plugin-console",
   "version": "0.3.63",
-  "description": "DSH plugin management panel & marketplace: one-click enable/disable, multi-source market (GitHub/Gitee/custom), static-index market (500+ plugins / 300 skills), skills, suites, and one-click framework upgrade.",
+  "description": "DeepSeek Harness (DSH) 插件管理面板：一键启用/停用插件 + 多源插件市场/自定义索引 + 插件详情与一键安装 + 一键框架升级失败自动回滚 + 插件升级门控 | DSH plugin manager & marketplace: one-click framework upgrade with auto-rollback, version gating, suites & skills.",
   "repository": {
     "type": "git",
     "url": "https://github.com/Noob-stupid/dsh-plugin-hub"
@@ -16,7 +16,18 @@
   "keywords": [
     "dsh-plugin",
     "deepseek-harness",
-    "plugin-manager"
+    "plugin-manager",
+    "dsh",
+    "dsh-plugins",
+    "plugin-market",
+    "plugin-console",
+    "marketplace",
+    "framework-upgrade",
+    "rollback",
+    "auto-rollback",
+    "插件市场",
+    "框架升级",
+    "自动回滚"
   ],
   "dsh": {
     "bundle": {
