@@ -4,31 +4,48 @@
 
 <img width="1170" height="609" alt="image" src="https://github.com/user-attachments/assets/b802d606-14ba-4151-9956-ff642ed12b0a" />
 
-# DSH Plugin Hub (dsh-plugin-hub)
+# DSH Plugin Gating Hub (dsh-plugin-gating-hub)
+
+*Renamed from `dsh-plugin-hub` — old URLs redirect.*
 
 [![](https://img.shields.io/badge/powered_by-dsh-4D6BFE?style=flat-square&logo=deepseek&logoColor=white)](https://github.com/deepseek-ai/deepseek-harness)
 [![Awesome DSH Plugin](https://awesome-dsh-plugin.com/badge.svg)](https://awesome-dsh-plugin.com)
-[![GitHub stars](https://img.shields.io/github/stars/Noob-stupid/dsh-plugin-hub?style=flat-square&logo=github)](https://github.com/Noob-stupid/dsh-plugin-hub/stargazers)
-[![License](https://img.shields.io/github/license/Noob-stupid/dsh-plugin-hub?style=flat-square)](LICENSE)
-[![Last commit](https://img.shields.io/github/last-commit/Noob-stupid/dsh-plugin-hub?style=flat-square)](https://github.com/Noob-stupid/dsh-plugin-hub/commits/main)
-[![Registry CI](https://img.shields.io/github/actions/workflow/status/Noob-stupid/dsh-plugin-hub/registry.yml?label=registry%20CI&style=flat-square)](https://github.com/Noob-stupid/dsh-plugin-hub/actions/workflows/registry.yml)
+[![GitHub stars](https://img.shields.io/github/stars/Noob-stupid/dsh-plugin-gating-hub?style=flat-square&logo=github)](https://github.com/Noob-stupid/dsh-plugin-gating-hub/stargazers)
+[![License](https://img.shields.io/github/license/Noob-stupid/dsh-plugin-gating-hub?style=flat-square)](LICENSE)
+[![Last commit](https://img.shields.io/github/last-commit/Noob-stupid/dsh-plugin-gating-hub?style=flat-square)](https://github.com/Noob-stupid/dsh-plugin-gating-hub/commits/main)
+[![Registry CI](https://img.shields.io/github/actions/workflow/status/Noob-stupid/dsh-plugin-gating-hub/registry.yml?label=registry%20CI&style=flat-square)](https://github.com/Noob-stupid/dsh-plugin-gating-hub/actions/workflows/registry.yml)
 [![topic: dsh-plugin](https://img.shields.io/badge/topic-dsh_plugin-4D6BFE?style=flat-square)](https://github.com/topics/dsh-plugin)
 [![npm version](https://img.shields.io/npm/v/@noob-stupid/dsh-plugin-console?style=flat-square)](https://www.npmjs.com/package/@noob-stupid/dsh-plugin-console)
 [![npm downloads](https://img.shields.io/npm/dm/@noob-stupid/dsh-plugin-console?style=flat-square)](https://www.npmjs.com/package/@noob-stupid/dsh-plugin-console)
-[![GitHub Release](https://img.shields.io/github/v/release/Noob-stupid/dsh-plugin-hub?style=flat-square)](https://github.com/Noob-stupid/dsh-plugin-hub/releases)[![dsh.so security](https://www.dsh.so/badge/dsh-plugin-hub.svg)](https://www.dsh.so/artifact/dsh-plugin-hub)
+[![GitHub Release](https://img.shields.io/github/v/release/Noob-stupid/dsh-plugin-gating-hub?style=flat-square)](https://github.com/Noob-stupid/dsh-plugin-gating-hub/releases)[![dsh.so security](https://www.dsh.so/badge/dsh-plugin-hub.svg)](https://www.dsh.so/artifact/dsh-plugin-hub)
 [![dsh.so install](https://www.dsh.so/badge/install/dsh-plugin-hub.svg)](https://www.dsh.so/artifact/dsh-plugin-hub)
 
-> Manage all your DeepSeek Harness plugins in one panel: one-click enable/disable,
-> a 500+ plugin & skill marketplace with one-click install, and one-click framework
-> upgrade with auto-rollback.
+> **Framework upgrade safety & plugin version gating for DeepSeek Harness (DSH)**: one-click
+> framework upgrade with **auto-rollback on failure** → **one-click rollback to the previous
+> version** after an upgrade → plugins the new framework cannot load are **auto-disabled** →
+> the **plugin upgrade gate** refuses a version the host can't take.
+> A **built-in multi-source plugin market & index** (500+ plugins / 300+ skills, zero GitHub
+> API calls) rides on top as the **discovery layer**.
 
-## Why DSH Plugin Hub
+## Why DSH Plugin Gating Hub
 
-- 🧩 **Plugin & skill hub** — auto-collected index of `dsh-plugin` repos (500+ by
-  stars) plus a Skills tab; browse, search, one-click install, **zero GitHub API
-  calls** (served via CDN).
-- 🚀 **One-click framework upgrade** — backup → online install (service stays up) →
-  verify → **auto-rollback on failure**. Tested end-to-end.
+- 🛡️ **Framework upgrade safety, end-to-end** — one-click upgrade: config backup + full-tree
+  checkpoint (rollback point) → online install (service stays up, page never disconnects) →
+  version verification → auto-restart. A failed install **auto-rolls the whole tree back**,
+  version check catches fake success, 15-min hard timeout + stall detection — the framework is
+  never left broken. → [details](docs/upgrade-safety-adapt-gate.md)
+- ↩️ **One-click rollback to the previous version** — after an upgrade the framework card keeps
+  a 「roll back to previous」 button: stop service → restore full tree → relaunch → health check,
+  state visible throughout.
+- 🚫 **Incompatible plugins auto-disabled** — the **adapt gate** force-disables plugins the new
+  framework cannot load (enable locked; the server rejects `/toggle` with 409 — unbypassable);
+  「Check update → Update & adapt」auto-verifies and unlocks them.
+- 🔒 **Plugin upgrade gating** — a version/declaration gate (`dsh.engines.framework` /
+  `engines.dsh` + `@deepseek-ai/*` ranges, built-in zero-dependency semver engine) decides
+  whether a plugin version may run on this host, so an upgrade can't silently take plugins out.
+- 🧩 **Built-in discovery layer** — multi-source plugin market (GitHub / Gitee / custom sources)
+  plus the static index of `dsh-plugin` repos (500+ by stars) and a Skills tab (up to 300);
+  browse, search, one-click install, **zero GitHub API calls** (served via CDN).
 - 🤖 **AI Empower** — give the console a package name or GitHub repo, the local AI
   reads its docs and drafts a safe, confirmable deployment plan (install / config /
   start / health-check); server components get an automatic control card.

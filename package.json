@@ -1,7 +1,7 @@
 {
   "name": "@noob-stupid/dsh-plugin-console",
   "version": "0.3.64",
-  "description": "DeepSeek Harness (DSH) 插件管理面板：一键启用/停用插件 + 多源插件市场/自定义索引 + 插件详情与一键安装 + 一键框架升级失败自动回滚 + 插件升级门控 | DSH plugin manager & marketplace: one-click framework upgrade with auto-rollback, version gating, suites & skills.",
+  "description": "DSH 框架升级安全与插件升级门控：一键升级、失败自动回滚、升级后回滚上版、旧插件不适配自动禁用；内置多源市场为发现层 | Framework upgrade safety & plugin version gating for DSH: one-click upgrade, auto-rollback, previous-version rollback, incompatible-plugin auto-disable; built-in market as the discovery layer.",
   "repository": {
     "type": "git",
     "url": "https://github.com/Noob-stupid/dsh-plugin-gating-hub"
@@ -25,9 +25,12 @@
     "framework-upgrade",
     "rollback",
     "auto-rollback",
+    "upgrade-safety",
+    "gating",
     "插件市场",
     "框架升级",
-    "自动回滚"
+    "自动回滚",
+    "插件升级门控"
   ],
   "dsh": {
     "bundle": {
