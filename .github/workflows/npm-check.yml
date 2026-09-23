@@ -29,5 +29,6 @@ jobs:
         if: ${{ inputs.version != '' }}
         run: |
           V="${{ inputs.version }}"
+          # 只报告、不失败：核查"某版本是否已生效"时，未出现是正常中间态，不该让整个 run 变红（会刷 failed 通知）
           npm view "@noob-stupid/dsh-plugin-console@$V" version --registry=https://registry.npmjs.org/ \
-            && echo "版本 $V 存在 ✅" || { echo "版本 $V 不存在 ❌"; exit 1; }
+            && echo "版本 $V 存在 ✅" || echo "版本 $V 暂未出现（未发布或仍在同步）❌——本步骤只报告，不判失败"

@@ -2,6 +2,20 @@
 
 All notable changes to dsh-plugin-hub.
 
+## v0.3.64 — 元数据版：npm 描述/关键词中英双语 + repository 指向新仓库名（2026-09-23）
+
+> 纯元数据与检索可见性改进，**不含功能变更**（代码与 0.3.63 相同）。
+
+- **npm description 改为中英双语**，补上用户实际会搜的词：`一键框架升级失败自动回滚` / `one-click framework upgrade with auto-rollback`、
+  `插件升级门控` / `version gating`（此前只有英文 `one-click framework upgrade`，中文用户搜"框架升级/回滚"匹配不到）。
+- **keywords 扩充到 14 个**（npm 搜索按 keywords 加权）：`dsh-plugin`、`dsh-plugins`、`deepseek-harness`、`plugin-manager`、
+  `plugin-market`、`plugin-console`、`marketplace`、`framework-upgrade`、`rollback`、`auto-rollback`、`插件市场`、`框架升级`、`自动回滚`。
+- **`repository` 字段改为新仓库名** `https://github.com/Noob-stupid/dsh-plugin-gating-hub`（旧名 301 跳转仍有效；
+  社区目录站 dsh-plugin.org 会做 repo→npm 反查，旧名可能被判定"信息不一致"）。
+- CI 内务：`npm-check` 工作流的"某版本是否存在"改为**只报告不失败**（核查未发布版本属正常中间态，不该刷 failed 通知）。
+
+**验证**：18 个测试文件全绿；clean-install 发版门槛对 0.3.63 已 PASS 17/17（本版代码与其一致）。
+
 ## v0.3.63 — 修「安装后依赖规格被改写成不存在的 npm 版本」（缺陷②，潜伏性数据一致性缺陷）（2026-09-22）
 
 > **本版 = 0.3.62（注入缝 `ctx.get` 修复）+ 缺陷②修复 合并发布。** 0.3.62 已提交（`c3cd8d8`）但发布环节被打断
