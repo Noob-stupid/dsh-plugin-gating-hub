@@ -106,7 +106,7 @@ Requires: DSH ≥ 0.1.0-rc.6 (web profile, with `dsh-client-modules` / `dsh-host
 - [Compatibility](#compatibility)
 - [Project layout](#project-layout)
 - [HTTP endpoints](#http-endpoints)
-- [Security](#security)
+- [安全](#security)
 - [Known limitations](#known-limitations)
 - [Help & Ecosystem](#help--ecosystem)
 - [Contributing](#contributing)
@@ -121,7 +121,7 @@ Requires: DSH ≥ 0.1.0-rc.6 (web profile, with `dsh-client-modules` / `dsh-host
 1. Restart DSH → open the Web GUI → **Settings → Plugins → Plugin Console**.
 2. **Installed list**: toggle plugins on/off (HMR applies within ~1s), search by name/id,
    expand details (version, repository, README summary).
-3. **Marketplace**: empty query on the GitHub source opens the static index (instant);
+3. **市场**: empty query on the GitHub source opens the static index (instant);
    type a query to search live. Switch sources via the login pill (GitHub / Gitee / custom);
    `⊞` merges all sources; `★` filters to `dsh plugin add`-installable packages.
 4. **Skills tab**: switch 插件/技能 next to the search box to browse and install skills
@@ -220,6 +220,8 @@ The floating "Sources" button (right of the title row, semi-transparent) opens t
 
 ---
 
+<img width="393" height="525" alt="56ccd0b3-f174-4365-848b-64013b27d604" src="https://github.com/user-attachments/assets/5a2816ce-12d9-4001-b895-1e422c11d423" />
+
 ## Documentation
 
 - [AI Empower 与服务器组件控制](docs/ai-empower.md)
@@ -244,7 +246,7 @@ The floating "Sources" button (right of the title row, semi-transparent) opens t
 
 ---
 
-## Help
+##帮助
 
 - **Panel missing**: restart dsh → refresh → Settings → Plugins → Plugin Console.
 - **Toggle does nothing**: infrastructure rows are "Protected" (by design); normal toggles
