@@ -11,7 +11,7 @@ import { mkdirSync, writeFileSync, readFileSync, rmSync, existsSync } from 'node
 import { join, dirname } from 'node:path'
 import { pathToFileURL, fileURLToPath } from 'node:url'
 
-const ROOT = dirname(fileURLToPath(import.meta.url))
+const ROOT = dirname(dirname(fileURLToPath(import.meta.url)))
 const HOME = join(ROOT, '.testdir', 'format-contract-home')
 process.env.DSH_HOME = HOME
 rmSync(HOME, { recursive: true, force: true })
@@ -35,7 +35,7 @@ const ctx = {
   webServer: { register: (route) => { globalThis.__route = route; return () => {} } },
   effect: (fn) => { try { fn() } catch {}; return () => {} },
 }
-const mod = await import('./lib/index.js')
+const mod = await import('../lib/index.js')
 mod.apply(ctx)
 const route = globalThis.__route
 const fakeReq = (method, pathname, body) => ({

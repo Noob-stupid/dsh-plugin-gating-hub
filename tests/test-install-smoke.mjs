@@ -11,7 +11,7 @@ import { join, dirname } from 'node:path'
 import { tmpdir } from 'node:os'
 import { pathToFileURL, fileURLToPath } from 'node:url'
 
-const ROOT = dirname(fileURLToPath(import.meta.url))
+const ROOT = dirname(dirname(fileURLToPath(import.meta.url)))
 const HOME = join(tmpdir(), `dsh-install-smoke-${Date.now()}-${process.pid}`)
 process.env.DSH_HOME = HOME
 const profileDir = join(HOME, 'profiles', 'web')

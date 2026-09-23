@@ -10,7 +10,7 @@ import { mkdirSync, writeFileSync, readFileSync, rmSync, existsSync, symlinkSync
 import { join, dirname } from 'node:path'
 import { pathToFileURL, fileURLToPath } from 'node:url'
 
-const ROOT = dirname(fileURLToPath(import.meta.url))
+const ROOT = dirname(dirname(fileURLToPath(import.meta.url)))
 const HOME = join(ROOT, '.testdir', 'route-inventory-home')
 process.env.DSH_HOME = HOME
 rmSync(HOME, { recursive: true, force: true })
@@ -34,7 +34,7 @@ const ctx = {
   webServer: { register: (route) => { globalThis.__route = route; return () => {} } },
   effect: (fn) => { try { fn() } catch {}; return () => {} },
 }
-const mod = await import('./lib/index.js')
+const mod = await import('../lib/index.js')
 mod.apply(ctx)
 const route = globalThis.__route
 
@@ -461,7 +461,7 @@ for (const [method, path, body, wantStatus, wantKeys] of SCHEMAS) {
 // lock 里钉住的旧版本（用户侧看到"升级成功、重启后还是旧版"）。下面把"包管理器优先 + 回读核实 +
 // 兜底必带警告"三条口径钉死。
 {
-  const { isRegistryRange, lockVersionOf, selfUpdateToLatest } = await import('./lib/index.js')
+  const { isRegistryRange, lockVersionOf, selfUpdateToLatest } = await import('../lib/index.js')
   const PKG = '@noob-stupid/dsh-plugin-console'
   const fix = join(ROOT, '.testdir', 'selfupdate-fixture')
   const nmPkg = join(fix, 'node_modules', '@noob-stupid', 'dsh-plugin-console')
@@ -541,7 +541,7 @@ for (const [method, path, body, wantStatus, wantKeys] of SCHEMAS) {
 
 // ── 多包 lock 对账（2026-09-21：非 pnpm 通道装的包 + 套装装配 + 聚合子包都要写进 lock）──────────
 {
-  const { reconcileLockfile } = await import('./lib/index.js')
+  const { reconcileLockfile } = await import('../lib/index.js')
   const fix = join(ROOT, '.testdir', 'reconcile-multi-fixture')
   const pkgs = ['@drill/pkg-a', '@drill/pkg-b']
   for (const p of pkgs) mkdirSync(join(fix, 'node_modules', ...p.split('/')), { recursive: true })
@@ -589,7 +589,7 @@ for (const [method, path, body, wantStatus, wantKeys] of SCHEMAS) {
 // package.json 改写成裸版本号（EXIT=0）→ lock 一重建就 ERR_PNPM_FETCH_404，而报错指向 npm registry。
 // 修法：写回前先探 registry（不可解析 → 物化到 <DSH_HOME>/plugin-src + 写 link:），并保持其它来源不变。
 {
-  const { reconcileLockfile, lockVersionOf } = await import('./lib/index.js')
+  const { reconcileLockfile, lockVersionOf } = await import('../lib/index.js')
   const fix = join(ROOT, '.testdir', 'dep-source-fixture')
   const releaseOnly = '@dsh-external/dsh-super-injector'
   const notFound = async () => { const e = new Error('Response code 404 (Not Found)'); e.statusCode = 404; throw e }

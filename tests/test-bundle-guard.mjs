@@ -4,7 +4,7 @@ import vm from 'node:vm'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
-const ROOT = path.dirname(fileURLToPath(import.meta.url))
+const ROOT = path.dirname(path.dirname(fileURLToPath(import.meta.url)))
 const src = fs.readFileSync(path.join(ROOT, 'lib', 'index.js'), 'utf8')
 const start = src.indexOf('/** 包名归一')
 const end = src.indexOf('/** 已加载插件的包元信息缓存')

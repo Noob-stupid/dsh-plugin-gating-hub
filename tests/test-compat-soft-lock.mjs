@@ -9,7 +9,7 @@ import { join, dirname } from 'node:path'
 import { pathToFileURL, fileURLToPath } from 'node:url'
 import { spawnSync } from 'node:child_process'
 
-const ROOT = dirname(fileURLToPath(import.meta.url))
+const ROOT = dirname(dirname(fileURLToPath(import.meta.url)))
 const HOME = join(ROOT, '.testdir', 'compat-soft-home')
 process.env.DSH_HOME = HOME // 必须在 import 前设置（模块顶层常量按 DSH_HOME 求值）
 rmSync(HOME, { recursive: true, force: true })
@@ -60,7 +60,7 @@ const ctx = {
   effect: (fn) => { try { fn() } catch {}; return () => {} },
 }
 
-const mod = await import('./lib/index.js')
+const mod = await import('../lib/index.js')
 mod.apply(ctx)
 const route = globalThis.__route
 if (!route) throw new Error('路由未注册')

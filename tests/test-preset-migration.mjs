@@ -12,7 +12,7 @@ import { join, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { createRequire } from 'node:module'
 
-const ROOT = dirname(fileURLToPath(import.meta.url))
+const ROOT = dirname(dirname(fileURLToPath(import.meta.url)))
 const HOME = join(ROOT, '.testdir', 'preset-home')
 process.env.DSH_HOME = HOME // 必须在 import 之前：模块顶层常量按 DSH_HOME 求值
 
@@ -45,7 +45,7 @@ const already = write('already', [
   '',
 ])
 
-const { migrateAgentConfigsForUpgrade } = await import('./lib/index.js')
+const { migrateAgentConfigsForUpgrade } = await import('../lib/index.js')
 const require2 = createRequire(join(ROOT, 'package.json'))
 let YAML = null
 try { YAML = require2('yaml') } catch {}

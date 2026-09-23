@@ -11,7 +11,7 @@ import { mkdirSync, writeFileSync, readFileSync, existsSync, rmSync } from 'node
 import { join, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
-const ROOT = dirname(fileURLToPath(import.meta.url))
+const ROOT = dirname(dirname(fileURLToPath(import.meta.url)))
 const HOME = join(ROOT, '.testdir', 'preflight-home')
 process.env.DSH_HOME = HOME // 必须在 import 前设置（模块顶层常量按 DSH_HOME 求值）
 
@@ -52,7 +52,7 @@ const ctx = {
   effect: (fn) => { try { fn() } catch {}; return () => {} },
 }
 
-const { preflightDisableIncompatible, analyzeBootFailure } = await import('./lib/index.js')
+const { preflightDisableIncompatible, analyzeBootFailure } = await import('../lib/index.js')
 const patchPath = join(profileDir, 'cordis.patch.yml')
 
 let failed = 0
@@ -98,7 +98,7 @@ check('分析器保留命中行用于展示', analyzed.lines.length >= 3, `${ana
 check('分析器对正常日志返回空', analyzeBootFailure('all good\nno errors here').presets.length === 0 && analyzeBootFailure('all good').modules.length === 0)
 
 // ── 启动失败隔离决策器（planQuarantine）──────────────────────────────────────
-const { planQuarantine } = await import('./lib/index.js')
+const { planQuarantine } = await import('../lib/index.js')
 const candidates = [
   { rowId: 'bad-plugin', moduleName: '@fake/incompatible', toggleable: true, enabled: true },
   { rowId: 'webserver', moduleName: '@deepseek-ai/dsh-host-webserver', toggleable: false, enabled: true },

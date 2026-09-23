@@ -10,7 +10,7 @@ import { fileURLToPath } from 'node:url'
 import { execFileSync } from 'node:child_process'
 import { createRequire } from 'node:module'
 
-const ROOT = dirname(fileURLToPath(import.meta.url))
+const ROOT = dirname(dirname(fileURLToPath(import.meta.url)))
 const SRC = readFileSync(join(ROOT, 'lib', 'index.js'), 'utf8')
 const OUT = join(ROOT, '.testdir')
 mkdirSync(OUT, { recursive: true })

@@ -29,7 +29,7 @@ import { join } from 'node:path'
 import { strictCtx, violationsOf } from './strict-ctx.mjs'
 
 const require = createRequire(import.meta.url)
-const mod = await import(new URL('./lib/index.js', import.meta.url).href)
+const mod = await import(new URL('../lib/index.js', import.meta.url).href)
 
 // 该测试真实安装到 profile；无 profile 的环境（CI）跳过而非红灯
 const home = process.env.DSH_HOME ?? join(homedir(), '.dsh')

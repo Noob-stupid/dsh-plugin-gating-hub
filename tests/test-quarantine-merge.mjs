@@ -8,7 +8,7 @@ import { mkdirSync, writeFileSync, readFileSync, rmSync, existsSync, readdirSync
 import { join, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
-const ROOT = dirname(fileURLToPath(import.meta.url))
+const ROOT = dirname(dirname(fileURLToPath(import.meta.url)))
 const HOME = join(ROOT, '.testdir', 'quarantine-merge-home')
 process.env.DSH_HOME = HOME // 必须在 import 前设置
 
@@ -25,7 +25,7 @@ const reset = (pending = { frameworkVersion: '0.1.2-rc.1', upgradedAt: null, pen
 const writeQuarantineBom = (record) => writeFileSync(qFile, `\uFEFF${JSON.stringify(record, null, 4)}`, 'utf8')
 const readPending = () => JSON.parse(readFileSync(pFile, 'utf8'))
 
-const { mergeQuarantineRecord } = await import('./lib/index.js')
+const { mergeQuarantineRecord } = await import('../lib/index.js')
 let failed = 0
 const check = (label, cond, extra) => {
   console.log(`${cond ? 'PASS' : 'FAIL'} ${label}${extra === undefined ? '' : ' — ' + extra}`)
@@ -116,7 +116,7 @@ const makeCtx = (rows) => ({
     ],
   },
 })
-const { reconcileCompatPending } = await import('./lib/index.js')
+const { reconcileCompatPending } = await import('../lib/index.js')
 
 reset()
 writeQuarantineBom({ at: '2026-09-11 14:00:00', mode: 'safe-mode', presets: [], rows: ['web-ui-market', 'web-ui-i18n'], lines: [] })

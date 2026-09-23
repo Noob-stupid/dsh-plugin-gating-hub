@@ -7,11 +7,11 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 const require = createRequire(import.meta.url)
-const pkgPath = new URL('./lib/index.js', import.meta.url).href
+const pkgPath = new URL('../lib/index.js', import.meta.url).href
 const mod = await import(pkgPath)
 
 // 测试目录放在仓库内（.testdir/，已 gitignore）：系统 tmpdir 在部分环境下 rmSync 静默失败
-const ROOT = dirname(fileURLToPath(import.meta.url))
+const ROOT = dirname(dirname(fileURLToPath(import.meta.url)))
 const TESTDIR = process.env.DSH_TEST_DIR ?? join(ROOT, '.testdir')
 const PATCH = join(TESTDIR, 'cordis.patch.yml')
 import { writeFile, readFile, mkdir } from 'node:fs/promises'

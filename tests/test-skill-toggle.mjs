@@ -7,7 +7,7 @@ import { join, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 // 测试目录放在仓库内（.testdir/，已 gitignore）：系统 tmpdir 在部分环境下 rmSync 静默失败
-const ROOT = dirname(fileURLToPath(import.meta.url))
+const ROOT = dirname(dirname(fileURLToPath(import.meta.url)))
 process.env.DSH_HOME = process.env.DSH_TEST_HOME ?? join(ROOT, '.testdir', 'skill-home')
 const home = process.env.DSH_HOME
 await rm(home, { recursive: true, force: true })
@@ -22,7 +22,7 @@ description: 测试技能
 await writeFile(`${home}/skills/test-skill/SKILL.md`, original, 'utf8')
 
 const require = createRequire(import.meta.url)
-const mod = await import(new URL('./lib/index.js', import.meta.url).href)
+const mod = await import(new URL('../lib/index.js', import.meta.url).href)
 
 const ctx = {
   baseUrl: 'file:///C:/Users/%E8%8A%B1%E7%81%AB/.dsh/profiles/web/cordis.yml',

@@ -24,19 +24,19 @@ jobs:
         run: |
           node --check lib/index.js
           node --check lib/client.js
-          for f in test-*.mjs; do node --check "$f"; done
+          for f in tests/test-*.mjs; do node --check "$f"; done
 
       - name: Unit tests (hard gate)
         run: |
-          node test-compat-gate.mjs
-          node test-compat-soft-lock.mjs
-          node test-preflight-guard.mjs
-          node test-quarantine-merge.mjs
-          node test-route-inventory.mjs
-          node test-suite-detect.mjs
-          node test-format-contract.mjs
-          node test-skill-toggle.mjs
-          node test-harness.mjs
+          node tests/test-compat-gate.mjs
+          node tests/test-compat-soft-lock.mjs
+          node tests/test-preflight-guard.mjs
+          node tests/test-quarantine-merge.mjs
+          node tests/test-route-inventory.mjs
+          node tests/test-suite-detect.mjs
+          node tests/test-format-contract.mjs
+          node tests/test-skill-toggle.mjs
+          node tests/test-harness.mjs
 
       # 真装真卸冒烟：在 CI 的 Linux 宿主上跑（临时 DSH_HOME，不碰真实目录）。
       # 为什么单独一步且**不带** DSH_TEST_SKIP_NETWORK：环境相关测试"没 profile 就整体 SKIP"，
@@ -44,15 +44,15 @@ jobs:
       - name: Real install/uninstall smoke (temp DSH_HOME)
         env:
           DSH_TEST_SKIP_NETWORK: ''
-        run: node test-install-smoke.mjs
+        run: node tests/test-install-smoke.mjs
 
       - name: Environment-dependent tests (auto-SKIP without local profile)
         run: |
-          node test-framework-upgrade.mjs
-          node test-bundle-guard.mjs
-          node test-issue15-resolve.mjs
-          node test-suite-install.mjs
-          node test-registry-scan.mjs
-          node test-preset-migration.mjs
-          node test-upgrade-script-syntax.mjs
-          node test-preflight-disable.mjs
+          node tests/test-framework-upgrade.mjs
+          node tests/test-bundle-guard.mjs
+          node tests/test-issue15-resolve.mjs
+          node tests/test-suite-install.mjs
+          node tests/test-registry-scan.mjs
+          node tests/test-preset-migration.mjs
+          node tests/test-upgrade-script-syntax.mjs
+          node tests/test-preflight-disable.mjs

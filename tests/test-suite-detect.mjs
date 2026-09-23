@@ -28,8 +28,11 @@ import {
   resolveReleaseCandidateRepos, selectReleaseInstall, sourceTarballFallback, tryCandidateChannels,
   // 2026-09-22 注入缝事故：严格替身要拿插件真实声明的 inject，别手抄
   inject as PLUGIN_INJECT,
-} from './lib/index.js'
+} from '../lib/index.js'
 import { normalizeInject, strictCtx, violationsOf } from './strict-ctx.mjs'
+
+// 仓库根：本文件在 tests/ 下，所以取上一层的上一层
+const ROOT = dirname(dirname(fileURLToPath(import.meta.url)))
 
 let failed = 0
 const check = (label, cond, extra) => {
@@ -186,7 +189,7 @@ check('★ 清理失败时明确说"目录清不掉、多源重试无效"，而�
 // 演练实测（2026-09-20）：同一个 rmSync 在 D:\dsh\repos 删得掉，在 C:\Users\<user>\.dsh\… 下
 // 返回成功但目录原封不动；旧代码删完直接 {ok:true} → 对用户撒谎（技能删不掉、残留清理假装清干净）。
 {
-  const probe = join(dirname(fileURLToPath(import.meta.url)), '.testdir', 'rm-verify-probe')
+  const probe = join(ROOT, '.testdir', 'rm-verify-probe')
   mkdirSync(probe, { recursive: true })
   writeFileSync(join(probe, 'a.txt'), 'x', 'utf8')
   const okResult = removeDirVerified(probe)
@@ -200,7 +203,7 @@ check('★ 清理失败时明确说"目录清不掉、多源重试无效"，而�
 // 真装演练（2026-09-20）：11 个子包的聚合仓库跑 19 分钟后失败，node_modules 里留着
 // `@captain1275/dsh-full-stats_tmp_56272_2` 这类 pnpm 半成品和一个真包，面板只报"安装失败"。
 {
-  const fakeProfile = join(dirname(fileURLToPath(import.meta.url)), '.testdir', 'fake-profile')
+  const fakeProfile = join(ROOT, '.testdir', 'fake-profile')
   const pkgDir = join(fakeProfile, 'node_modules', '@drill', 'pkg-a')
   const tmpDir = join(fakeProfile, 'node_modules', '@drill', 'pkg-a_tmp_123_1')
   mkdirSync(pkgDir, { recursive: true })
@@ -223,7 +226,7 @@ check('★ 清理失败时明确说"目录清不掉、多源重试无效"，而�
   // 为什么是源码级断言：subpackageCandidates() 要联网读仓库子包列表且未导出，判据本身是内联正则。
   // 期望 3 处：subpackageCandidates 的 isAll 1 处 + 懒惰展开的排序里 a/b 各 1 处 —— 少一处就会出现
   // "列表页排序对了、懒惰展开又先试错包"。
-  const src = readFileSync(join(dirname(fileURLToPath(import.meta.url)), 'lib', 'index.js'), 'utf8')
+  const src = readFileSync(join(ROOT, 'lib', 'index.js'), 'utf8')
   const hits = src.split('/\\/all$/u').length - 1
   check('★ 两处聚合包判据都补上了 /\\/all$/（源码级，共 3 处）', hits >= 3, `命中 ${hits} 处`)
 }
@@ -293,7 +296,7 @@ check('★ 清理失败时明确说"目录清不掉、多源重试无效"，而�
     sourceTarballFallback(groupsMiss)?.repo === 'o/routing-suite' && sourceTarballFallback(groupsMiss)?.tag === '0.0.1-rc1')
 
   // ④ 反查顺序与容错（注入假网络：真模块逻辑 + 假响应，不碰公网）
-  const probeDir = join(dirname(fileURLToPath(import.meta.url)), '.testdir', 'release-lookup-profile')
+  const probeDir = join(ROOT, '.testdir', 'release-lookup-profile')
   const probePkg = join(probeDir, 'node_modules', '@probe', 'rev-lookup')
   mkdirSync(probePkg, { recursive: true })
   writeFileSync(join(probePkg, 'package.json'), JSON.stringify({
@@ -347,7 +350,7 @@ check('★ 清理失败时明确说"目录清不掉、多源重试无效"，而�
   // ⑤ 通道守卫（issue #3）：懒惰展开之后谁还被尝试
   // 旧代码 `if (!expanded)` / `if (repoChannelAllowed && !expanded)` 把展开后的所有非 npm 通道全跳过，
   // 子包候选只能靠 AI 兜底 —— 桩函数断言"谁被调用了"即可钉死新语义，不必真装。
-  const guardProfile = join(dirname(fileURLToPath(import.meta.url)), '.testdir', 'guard-profile')
+  const guardProfile = join(ROOT, '.testdir', 'guard-profile')
   const runGuard = async ({ expanded, repoChannelAllowed, budget = { release: 3 }, releaseResult = null }) => {
     const calls = []
     const ch = {
@@ -409,15 +412,15 @@ check('★ 清理失败时明确说"目录清不掉、多源重试无效"，而�
 {
   const rejectFast = async () => { throw new Error('桩：registry 404') }
   const t = Date.now()
-  const none = await raceInstallChannels(join(dirname(fileURLToPath(import.meta.url)), '.testdir'), '@probe/never-published', ['https://registry.fake'], { pnpmInstall: rejectFast, curlManualInstall: rejectFast })
+  const none = await raceInstallChannels(join(ROOT, '.testdir'), '@probe/never-published', ['https://registry.fake'], { pnpmInstall: rejectFast, curlManualInstall: rejectFast })
   const ms = Date.now() - t
   check('★ 两条通道都失败 → 立刻返回 null（不再空等 120 秒兜底）', none === null && ms < 3000, `${ms}ms`)
-  const curlWins = await raceInstallChannels(join(dirname(fileURLToPath(import.meta.url)), '.testdir'), '@probe/whatever', ['https://registry.fake'], {
+  const curlWins = await raceInstallChannels(join(ROOT, '.testdir'), '@probe/whatever', ['https://registry.fake'], {
     pnpmInstall: rejectFast,
     curlManualInstall: async () => ({ version: '1.0.0', missingDeps: [], boxNote: null }),
   })
   check('一条成功即胜出（竞速语义没被改坏）', curlWins?.channel === 'curl' && curlWins?.info?.version === '1.0.0', JSON.stringify(curlWins))
-  const curlSlow = await raceInstallChannels(join(dirname(fileURLToPath(import.meta.url)), '.testdir'), '@probe/slow', ['https://registry.fake'], {
+  const curlSlow = await raceInstallChannels(join(ROOT, '.testdir'), '@probe/slow', ['https://registry.fake'], {
     pnpmInstall: rejectFast,
     curlManualInstall: () => new Promise(() => {}),
     capMs: 400, // 只给单测缩短兜底时长（生产恒为 120 秒），否则这条断言要跑 2 分钟
@@ -473,7 +476,7 @@ check('★ 清理失败时明确说"目录清不掉、多源重试无效"，而�
     urls.join('\n   '))
   check('空地址不产生任何请求', releaseDownloadUrls('').length === 0 && releaseDownloadUrls(null).length === 0)
 
-  const dlDir = join(dirname(fileURLToPath(import.meta.url)), '.testdir', 'download-probe')
+  const dlDir = join(ROOT, '.testdir', 'download-probe')
   mkdirSync(dlDir, { recursive: true })
   const dest = join(dlDir, 'pkg.tgz')
   const seen = []

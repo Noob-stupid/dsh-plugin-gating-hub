@@ -8,7 +8,7 @@ import vm from 'node:vm';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-const root = path.dirname(fileURLToPath(import.meta.url));
+const root = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 const src = fs.readFileSync(path.join(root, 'lib', 'index.js'), 'utf8');
 const start = src.indexOf('/** 最小 semver：解析（含 prerelease/build）。 */');
 const mid = src.indexOf('/** 读取用户额外 bundle（非官方模板）的补丁插入行 id 与包名，用于"额外插件"判定。 */');

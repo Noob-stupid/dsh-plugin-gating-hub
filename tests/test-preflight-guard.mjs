@@ -9,7 +9,7 @@ import { mkdirSync, writeFileSync, readFileSync, rmSync } from 'node:fs'
 import { join, dirname } from 'node:path'
 import { pathToFileURL, fileURLToPath } from 'node:url'
 
-const ROOT = dirname(fileURLToPath(import.meta.url))
+const ROOT = dirname(dirname(fileURLToPath(import.meta.url)))
 const HOME = join(ROOT, '.testdir', 'preflight-guard-home')
 process.env.DSH_HOME = HOME // 必须在 import 前设置
 rmSync(HOME, { recursive: true, force: true })
@@ -51,7 +51,7 @@ const ctx = {
   effect: (fn) => { try { fn() } catch {}; return () => {} },
 }
 
-const { preflightDisableIncompatible } = await import('./lib/index.js')
+const { preflightDisableIncompatible } = await import('../lib/index.js')
 let failed = 0
 const check = (label, cond, extra) => {
   console.log(`${cond ? 'PASS' : 'FAIL'} ${label}${extra === undefined ? '' : ' — ' + extra}`)

@@ -8,7 +8,7 @@ import { mkdir, writeFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
-const ROOT = dirname(fileURLToPath(import.meta.url))
+const ROOT = dirname(dirname(fileURLToPath(import.meta.url)))
 const HOME = join(ROOT, '.testdir', 'scan-home')
 await mkdir(HOME, { recursive: true })
 await writeFile(join(HOME, 'plugin-console-sources.json'), JSON.stringify({
@@ -21,7 +21,7 @@ await writeFile(join(HOME, 'plugin-console-sources.json'), JSON.stringify({
 process.env.DSH_HOME = HOME
 
 // DSH_HOME 必须在 import 之前设置：SOURCES_FILE 是模块顶层常量
-const mod = await import('./lib/index.js')
+const mod = await import('../lib/index.js')
 
 const ctx = {
   baseUrl: 'file:///' + HOME.replace(/\\/gu, '/'),

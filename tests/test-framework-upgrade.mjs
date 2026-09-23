@@ -8,7 +8,7 @@ import { join, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 // 测试目录放在仓库内（.testdir/，已 gitignore）：系统 tmpdir 在部分环境下 rmSync 静默失败
-const ROOT = dirname(fileURLToPath(import.meta.url))
+const ROOT = dirname(dirname(fileURLToPath(import.meta.url)))
 process.env.DSH_HOME = process.env.DSH_TEST_HOME ?? join(ROOT, '.testdir', 'fw-home')
 const home = process.env.DSH_HOME
 // 该测试需要真实 DSH 框架（@deepseek-ai/dsh 从真实 profile 的 node_modules 解析出版本）；
@@ -30,7 +30,7 @@ await mkdir(`${home}/plugin-console`, { recursive: true })
 await writeFile(`${home}/plugin-console/framework-state.json`, JSON.stringify({ lastVersion: '0.1.0-rc.5', backupAt: 0 }), 'utf8')
 
 const require = createRequire(import.meta.url)
-const mod = await import(new URL('./lib/index.js', import.meta.url).href)
+const mod = await import(new URL('../lib/index.js', import.meta.url).href)
 
 const fakeEntries = [
   { id: 'include', options: { name: 'cordis:include', group: true, config: { path: pathToFileURL(`${home}/profiles/web/cordis.yml`).href } } },
