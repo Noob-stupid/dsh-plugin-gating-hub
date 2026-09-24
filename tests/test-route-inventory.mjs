@@ -75,6 +75,7 @@ const ROUTES = [
   '/compat-status',
   '/compat-mode',
   '/compat-stamp',
+  '/declare-installed',
 ]
 // 分层后路由可能写在 lib/server/routes/**（表项）或 index.js（内联分支）—— 两种写法都要认
 const walkSrc = (dir) => readdirSync(dir, { withFileTypes: true }).flatMap((e) => {
