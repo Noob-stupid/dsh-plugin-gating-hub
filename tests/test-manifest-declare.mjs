@@ -45,13 +45,13 @@ check('读磁盘真实版本（不猜）', (await installedVersionOf(profileDir,
 check('读不到的包返回 null 而不是抛错', (await installedVersionOf(profileDir, '@fake/not-installed')) === null)
 
 // ① 声明：写进去的是磁盘上的版本
-const first = await declareProfileDependency(profileDir, '@fake/hand-laid')
+const first = await declareProfileDependency(profileDir, '@fake/hand-laid', null, { syncLock: false })
 check('声明成功且写的是磁盘版本', first.changed === true && first.version === '1.2.3' && readManifest().dependencies['@fake/hand-laid'] === '1.2.3', JSON.stringify(first))
 // ② 幂等：重复声明不改动
-const again = await declareProfileDependency(profileDir, '@fake/hand-laid')
+const again = await declareProfileDependency(profileDir, '@fake/hand-laid', null, { syncLock: false })
 check('重复声明幂等（changed=false）', again.changed === false && readManifest().dependencies['@fake/hand-laid'] === '1.2.3', JSON.stringify(again))
 // ③ 读不到版本的包：如实回报，不瞎写
-const ghost = await declareProfileDependency(profileDir, '@fake/not-installed')
+const ghost = await declareProfileDependency(profileDir, '@fake/not-installed', null, { syncLock: false })
 check('读不到版本的包不写清单且带原因', ghost.changed === false && ghost.version === null && typeof ghost.reason === 'string' && !('@fake/not-installed' in (readManifest().dependencies ?? {})), JSON.stringify(ghost))
 
 // ④ bundle 路径：bundles 与 dependencies 一次写齐（同一把写锁）
@@ -71,7 +71,7 @@ check('清单文件仍是合法 JSON 且保留其它字段', readManifest().name
 
 // ⑥ 装完能**被清理判据看见**：这正是「官方面板可见 / 不被当孤儿」的前提
 writePkg('@fake/visible', '0.5.0')
-await declareProfileDependency(profileDir, '@fake/visible')
+await declareProfileDependency(profileDir, '@fake/visible', null, { syncLock: false })
 check('声明后包出现在清单里（官方面板与清理判据都以它为准）', readManifest().dependencies['@fake/visible'] === '0.5.0' && existsSync(join(profileDir, 'node_modules', '@fake', 'visible', 'package.json')))
 
 rmSync(HOME, { recursive: true, force: true })
