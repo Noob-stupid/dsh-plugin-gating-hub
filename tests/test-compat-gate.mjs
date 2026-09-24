@@ -18,8 +18,8 @@ process.env.DSH_HOME = HOME
 rmSync(HOME, { recursive: true, force: true })
 mkdirSync(join(HOME, 'plugin-console'), { recursive: true })
 
-const { semverRangeMatch, semverRangeMatchLoose } = await import('./lib/server/infra/semver.js')
-const { checkPluginFrameworkCompat } = await import('./lib/server/domain/compat.js')
+const { semverRangeMatch, semverRangeMatchLoose } = await import('../lib/server/infra/semver.js')
+const { checkPluginFrameworkCompat } = await import('../lib/server/domain/compat.js')
 
 let pass = 0, fail = 0
 function eq(name, got, want) {

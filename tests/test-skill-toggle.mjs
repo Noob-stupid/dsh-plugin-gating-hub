@@ -22,7 +22,7 @@ description: 测试技能
 await writeFile(`${home}/skills/test-skill/SKILL.md`, original, 'utf8')
 
 const require = createRequire(import.meta.url)
-const mod = await import(new URL('./lib/index.js', import.meta.url).href)
+const mod = await import(new URL('../lib/index.js', import.meta.url).href)
 
 const ctx = {
   baseUrl: 'file:///C:/Users/%E8%8A%B1%E7%81%AB/.dsh/profiles/web/cordis.yml',

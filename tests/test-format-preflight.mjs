@@ -77,7 +77,7 @@ const {
   buildContract,
   discoverFormatContract,
   summarizeContract,
-} = await import('./lib/server/domain/format-contract.js')
+} = await import('../lib/server/domain/format-contract.js')
 const {
   planSourceKindRewrites,
   applyRewrites,
@@ -86,7 +86,7 @@ const {
   collectProducerTargets,
   applyFormatPatch,
   probeSchemasteryVolatile,
-} = await import('./lib/server/domain/format-scan.js')
+} = await import('../lib/server/domain/format-scan.js')
 
 let failed = 0
 const check = (label, cond, extra) => {
@@ -317,7 +317,7 @@ const ctx = {
   webServer: { register: (route) => { globalThis.__route = route; return () => {} } },
   effect: (fn) => { try { fn() } catch {}; return () => {} },
 }
-const mod = await import('./lib/index.js')
+const mod = await import('../lib/index.js')
 mod.apply(ctx)
 const route = globalThis.__route
 const fakeReq = (method, pathname, body) => ({

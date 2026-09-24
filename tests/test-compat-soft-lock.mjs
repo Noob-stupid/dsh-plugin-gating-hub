@@ -60,8 +60,8 @@ const ctx = {
   effect: (fn) => { try { fn() } catch {}; return () => {} },
 }
 
-const mod = await import('./lib/index.js')
-const { preflightDisableIncompatible } = await import('./lib/server/domain/framework.js')
+const mod = await import('../lib/index.js')
+const { preflightDisableIncompatible } = await import('../lib/server/domain/framework.js')
 mod.apply(ctx)
 const route = globalThis.__route
 if (!route) throw new Error('路由未注册')
@@ -178,7 +178,7 @@ check('打开后补丁写入禁用块', /- id: incompat-row\r?\n {2}disabled: tr
 check('用户强行启用过的行不被预扫回收（enabled 的不再扫到）', !/- id: locked-row/u.test(readPatch()))
 
 // ── ⑦ 客户端接线（服务端有、UI 没接 = 用户看不到）───────────────────────────
-const client = readFileSync(join(ROOT, 'lib', 'client.js'), 'utf8')
+const client = readFileSync(join(ROOT, '..', 'lib', 'client.js'), 'utf8')
 check('客户端调用 /compat-gate', client.includes('/plugin-console/compat-gate'))
 check('客户端渲染两个总开关', client.includes('compatGateAutoDisable') && client.includes('compatGateAutoDetect'))
 // v0.3.36（用户要求）：总开关收进「功能包」里的 [门控] 按钮（弹窗拉杆），不再占已安装列表表头

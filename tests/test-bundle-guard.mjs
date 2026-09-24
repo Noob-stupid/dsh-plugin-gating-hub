@@ -7,7 +7,7 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const ROOT = path.dirname(fileURLToPath(import.meta.url))
-const { resolvePackageJson, packageNameOf } = await import('./lib/server/infra/paths.js')
+const { resolvePackageJson, packageNameOf } = await import('../lib/server/infra/paths.js')
 
 const profileDir = process.env.DSH_PROFILE_DIR ?? path.join(os.homedir(), '.dsh', 'profiles', 'web')
 // 该测试需要真实已安装插件树（解析 web-all 等第三方包）；CI 无 profile 时跳过而非红灯

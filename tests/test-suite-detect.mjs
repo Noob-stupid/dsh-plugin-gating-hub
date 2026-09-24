@@ -20,17 +20,17 @@ import { fileURLToPath } from 'node:url'
 import {
   FETCH_BUDGET_MS, FETCH_NOT_FOUND, FETCH_OK, FETCH_UNREACHABLE, META_BUDGET_MS,
   curlText, looksLikeGitmodules, raceFetchOutcome, readBodyOrNull,
-} from './lib/server/infra/http.js'
-import { gitBin, resolvePnpmRunners } from './lib/server/infra/exec.js'
-import { channelImpls, cleanupAttemptedCandidates, tryCandidateChannels } from './lib/server/domain/install-job.js'
-import { raceInstallChannels } from './lib/server/domain/install.js'
-import { removeDirVerified } from './lib/server/infra/fsx.js'
-import { DEFAULT_SOURCES } from './lib/server/domain/sources.js'
-import { hasDirectNameHit, packageProbeErrorText, parseRepoFromUrl } from './lib/server/domain/market.js'
-import { RELEASE_CHANNEL_BUDGET_MS, RELEASE_DOWNLOAD_MIRROR_PREFIXES, RELEASE_SCAN_MAX_REPOS, assetMatchInfo, downloadReleaseArtifact, fetchReleaseList, planReleaseInstall, rankReleaseAssets, releaseDownloadUrls, resolveReleaseCandidateRepos, selectReleaseInstall, sourceTarballFallback } from './lib/server/domain/release-source.js'
-import { summarizeCloneErrors } from './lib/server/domain/repoland.js'
-import { resolveInstallKind } from './lib/server/domain/suite.js'
-import { inject as PLUGIN_INJECT } from './lib/index.js'
+} from '../lib/server/infra/http.js'
+import { gitBin, resolvePnpmRunners } from '../lib/server/infra/exec.js'
+import { channelImpls, cleanupAttemptedCandidates, tryCandidateChannels } from '../lib/server/domain/install-job.js'
+import { raceInstallChannels } from '../lib/server/domain/install.js'
+import { removeDirVerified } from '../lib/server/infra/fsx.js'
+import { DEFAULT_SOURCES } from '../lib/server/domain/sources.js'
+import { hasDirectNameHit, packageProbeErrorText, parseRepoFromUrl } from '../lib/server/domain/market.js'
+import { RELEASE_CHANNEL_BUDGET_MS, RELEASE_DOWNLOAD_MIRROR_PREFIXES, RELEASE_SCAN_MAX_REPOS, assetMatchInfo, downloadReleaseArtifact, fetchReleaseList, planReleaseInstall, rankReleaseAssets, releaseDownloadUrls, resolveReleaseCandidateRepos, selectReleaseInstall, sourceTarballFallback } from '../lib/server/domain/release-source.js'
+import { summarizeCloneErrors } from '../lib/server/domain/repoland.js'
+import { resolveInstallKind } from '../lib/server/domain/suite.js'
+import { inject as PLUGIN_INJECT } from '../lib/index.js'
 import { normalizeInject, strictCtx, violationsOf } from './strict-ctx.mjs'
 
 let failed = 0

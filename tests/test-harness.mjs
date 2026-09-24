@@ -7,7 +7,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 const require = createRequire(import.meta.url)
-const pkgPath = new URL('./lib/index.js', import.meta.url).href
+const pkgPath = new URL('../lib/index.js', import.meta.url).href
 const mod = await import(pkgPath)
 
 // 测试目录放在仓库内（.testdir/，已 gitignore）：系统 tmpdir 在部分环境下 rmSync 静默失败

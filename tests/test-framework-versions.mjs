@@ -36,7 +36,7 @@ const check = (label, cond, extra) => {
 }
 
 // ── ① helper：候选列表 ───────────────────────────────────────────────────────
-const { frameworkUpgradeCandidates } = await import('./lib/server/infra/semver.js')
+const { frameworkUpgradeCandidates } = await import('../lib/server/infra/semver.js')
 
 const META = {
 	'dist-tags': { latest: '0.1.5-rc.3', next: '0.1.7-rc.1', alpha: '0.1.7-alpha.2' },
@@ -75,7 +75,7 @@ const ctx = {
 	webServer: { register: (route) => { globalThis.__fwRoute = route; return () => {} } },
 	effect: (fn) => { try { fn() } catch {}; return () => {} },
 }
-const mod = await import('./lib/index.js')
+const mod = await import('../lib/index.js')
 mod.apply(ctx)
 const route = globalThis.__fwRoute
 check('路由已装配（register 拿到 handler）', route !== undefined && typeof route.handler === 'function')

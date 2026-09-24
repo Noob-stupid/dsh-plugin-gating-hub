@@ -6,7 +6,7 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const ROOT = path.dirname(fileURLToPath(import.meta.url))
-const { resolvePackageJson } = await import('./lib/server/infra/paths.js')
+const { resolvePackageJson } = await import('../lib/server/infra/paths.js')
 
 const os = await import('node:os')
 // 模拟全局 dsh 树：优先环境变量，其次本机 npx 缓存常见位置（CI 无此环境则跳过）

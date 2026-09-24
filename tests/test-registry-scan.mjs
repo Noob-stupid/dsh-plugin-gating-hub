@@ -21,7 +21,7 @@ await writeFile(join(HOME, 'plugin-console-sources.json'), JSON.stringify({
 process.env.DSH_HOME = HOME
 
 // DSH_HOME 必须在 import 之前设置：SOURCES_FILE 是模块顶层常量
-const mod = await import('./lib/index.js')
+const mod = await import('../lib/index.js')
 
 const ctx = {
   baseUrl: 'file:///' + HOME.replace(/\\/gu, '/'),

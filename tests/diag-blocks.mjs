@@ -4,10 +4,10 @@ import { join, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const ROOT = dirname(fileURLToPath(import.meta.url))
-const SRC = readFileSync(join(ROOT, 'lib', 'index.js'), 'utf8')
-const SRC_RFU = readFileSync(join(ROOT, 'lib', 'server', 'routes', 'framework-upgrade.js'), 'utf8')
-const SRC_FR = readFileSync(join(ROOT, 'lib', 'server', 'routes', 'framework.js'), 'utf8')
-const SRC_FWIS = readFileSync(join(ROOT, 'lib', 'server', 'domain', 'framework-install-script.js'), 'utf8')
+const SRC = readFileSync(join(ROOT, '..', 'lib', 'index.js'), 'utf8')
+const SRC_RFU = readFileSync(join(ROOT, '..', 'lib', 'server', 'routes', 'framework-upgrade.js'), 'utf8')
+const SRC_FR = readFileSync(join(ROOT, '..', 'lib', 'server', 'routes', 'framework.js'), 'utf8')
+const SRC_FWIS = readFileSync(join(ROOT, '..', 'lib', 'server', 'domain', 'framework-install-script.js'), 'utf8')
 
 const endMarker = ".filter((l) => l !== '').join('\\r\\n')"
 const startMarker = 'const lines = ['

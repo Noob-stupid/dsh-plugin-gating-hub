@@ -28,7 +28,7 @@ if (process.env.DSH_TEST_SKIP_NETWORK === '1') {
 }
 
 // 兼容两种仓库结构：单体版函数都在 lib/index.js；分层版在 lib/server/**（按名字逐个找）
-const entry = await import(pathToFileURL(join(ROOT, 'lib', 'index.js')).href)
+const entry = await import(pathToFileURL(join(ROOT, '..', 'lib', 'index.js')).href)
 const pick = async (name, specs) => {
   if (typeof entry[name] === 'function') return entry[name]
   for (const spec of specs) {
@@ -48,7 +48,7 @@ const resolvePnpmRunners = await pick('resolvePnpmRunners', ['lib/server/infra/e
 const installJobsOf = async () => {
   if (entry.installJobs instanceof Map) return entry.installJobs
   try {
-    const m = await import(pathToFileURL(join(ROOT, 'lib', 'server', 'state.js')).href)
+    const m = await import(pathToFileURL(join(ROOT, '..', 'lib', 'server', 'state.js')).href)
     return m.installJobs instanceof Map ? m.installJobs : null
   } catch {
     return null

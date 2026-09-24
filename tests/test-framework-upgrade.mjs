@@ -30,7 +30,7 @@ await mkdir(`${home}/plugin-console`, { recursive: true })
 await writeFile(`${home}/plugin-console/framework-state.json`, JSON.stringify({ lastVersion: '0.1.0-rc.5', backupAt: 0 }), 'utf8')
 
 const require = createRequire(import.meta.url)
-const mod = await import(new URL('./lib/index.js', import.meta.url).href)
+const mod = await import(new URL('../lib/index.js', import.meta.url).href)
 
 const fakeEntries = [
   { id: 'include', options: { name: 'cordis:include', group: true, config: { path: pathToFileURL(`${home}/profiles/web/cordis.yml`).href } } },
@@ -104,7 +104,7 @@ rs = await call('GET', '/plugin-console/framework-upgrade-status')
 check('目标版本对不上时不误报', rs.json?.frameworkAtTarget === undefined || rs.json?.frameworkAtTarget === null, String(rs.json?.frameworkAtTarget))
 
 // 5d. 客户端按 stage 标步骤（接线断言）
-const clientSrc = await readFile(join(ROOT, 'lib', 'client.js'), 'utf8')
+const clientSrc = await readFile(join(ROOT, '..', 'lib', 'client.js'), 'utf8')
 check('客户端按 stage 标步骤状态', clientSrc.includes('failedStage') && clientSrc.includes('stageIdx'))
 check('客户端对「本体已升级」给出说明文案', clientSrc.includes('fwFailedButUpgraded'))
 

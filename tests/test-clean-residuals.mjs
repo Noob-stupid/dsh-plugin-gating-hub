@@ -68,7 +68,7 @@ const ctx = {
   webServer: { register: (route) => { globalThis.__route = route; return () => {} } },
   effect: (fn) => { try { fn() } catch {}; return () => {} },
 }
-const mod = await import('./lib/index.js')
+const mod = await import('../lib/index.js')
 mod.apply(ctx)
 const route = globalThis.__route
 
@@ -113,7 +113,7 @@ check('幂等：二次清理无残余且仍成功', again.json?.ok === true && (
 check('二次清理仍然保留在用插件', existsSync(inUseDir) && (again.json?.kept ?? []).includes('@linxin666/dsh-i18n'))
 
 // 删除器单测：正常树删除成功并回报方法
-const { removeDirVerifiedAsync } = await import('./lib/server/infra/fsx.js')
+const { removeDirVerifiedAsync } = await import('../lib/server/infra/fsx.js')
 const plainDir = join(HOME, 'plain-tree')
 mkdirSync(join(plainDir, 'sub'), { recursive: true })
 writeFileSync(join(plainDir, 'sub', 'a.txt'), 'x', 'utf8')

@@ -11,13 +11,17 @@ import { execFileSync } from 'node:child_process'
 import { createRequire } from 'node:module'
 
 const ROOT = dirname(fileURLToPath(import.meta.url))
-const SRC = readFileSync(join(ROOT, 'lib', 'index.js'), 'utf8')
+// 统一归一化行尾再抽函数：本机 core.autocrlf=true，工作区文件是 CRLF，
+// 而下面的 `indexOf('\n}\n')` 是按 LF 写的 —— 不归一化就会在 Windows 上抠不到函数定义
+// （CI 是 Linux/LF 所以一直绿，本地却红：2026-09-24 整理 tests/ 后实测踩到）。
+const readSrc = (p) => readFileSync(p, 'utf8').replace(/\r\n/gu, '\n')
+const SRC = readSrc(join(ROOT, '..', 'lib', 'index.js'))
 // relaunchPrelude 已在 Step 6 搬进 framework.js（生成器函数里的局部 ps/launchSnippet 仍在 index.js）
-const SRC_FW = readFileSync(join(ROOT, 'lib', 'server', 'domain', 'framework.js'), 'utf8')
-const SRC_RFU = readFileSync(join(ROOT, 'lib', 'server', 'routes', 'framework-upgrade.js'), 'utf8')
-const SRC_FR = readFileSync(join(ROOT, 'lib', 'server', 'routes', 'framework.js'), 'utf8')
+const SRC_FW = readSrc(join(ROOT, '..', 'lib', 'server', 'domain', 'framework.js'))
+const SRC_RFU = readSrc(join(ROOT, '..', 'lib', 'server', 'routes', 'framework-upgrade.js'))
+const SRC_FR = readSrc(join(ROOT, '..', 'lib', 'server', 'routes', 'framework.js'))
 // 2026-09-24：安装后「结构完整性校验」生成器抽到 infra（routes 撞守卫行数上限）
-const SRC_FWIS = readFileSync(join(ROOT, 'lib', 'server', 'infra', 'fw-integrity-check.js'), 'utf8')
+const SRC_FWIS = readSrc(join(ROOT, '..', 'lib', 'server', 'infra', 'fw-integrity-check.js'))
 const OUT = join(ROOT, '.testdir')
 mkdirSync(OUT, { recursive: true })
 

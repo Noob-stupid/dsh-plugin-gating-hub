@@ -45,8 +45,8 @@ const already = write('already', [
   '',
 ])
 
-const { migrateAgentConfigsForUpgrade } = await import('./lib/server/domain/presets.js')
-const require2 = createRequire(join(ROOT, 'package.json'))
+const { migrateAgentConfigsForUpgrade } = await import('../lib/server/domain/presets.js')
+const require2 = createRequire(join(ROOT, '..', 'package.json'))
 let YAML = null
 try { YAML = require2('yaml') } catch {}
 if (YAML === null) {

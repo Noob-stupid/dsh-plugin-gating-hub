@@ -96,10 +96,10 @@ const importedIn = (src) => {
 // Step 1 之前是 7637 行 —— 方案终点是 ≤200 行，已达到。**这个数字只允许下调**。
 // 注：Step 6 的 4590 → 4594 是 patchHealAt/patchHealReport 从 patch.js 回搬（routes 层节流状态，被 index.js 赋值，见 bug 6-2）
 const INDEX_LIMIT = 142
-const indexLines = lineCount(join(ROOT, 'lib', 'index.js'))
+const indexLines = lineCount(join(ROOT, '..', 'lib', 'index.js'))
 check(`行数棘轮：lib/index.js ≤ ${INDEX_LIMIT}（当前 ${indexLines}）`, indexLines <= INDEX_LIMIT, indexLines > INDEX_LIMIT ? 'index.js 变大了 —— 新功能应该进 lib/server/**' : undefined)
 
-const serverDir = join(ROOT, 'lib', 'server')
+const serverDir = join(ROOT, '..', 'lib', 'server')
 const serverFiles = []
 const walk = (dir) => {
   for (const e of readdirSync(dir, { withFileTypes: true })) {
@@ -113,15 +113,15 @@ if (existsSync(serverDir)) walk(serverDir)
 // routes/framework-upgrade.js = 单个 661 行 handler（内置大段 PowerShell 升级脚本模板），
 // 待抽包阶段把模板挪进 domain/framework-script.js 后撤销例外。
 const SIZE_EXCEPTIONS = { '/lib/server/routes/framework-upgrade.js': 700 }
-const limitOf = (p) => SIZE_EXCEPTIONS[p.replace(ROOT, '').replace(/\\/gu, '/')] ?? 600
-const oversized = serverFiles.filter((p) => lineCount(p) > limitOf(p)).map((p) => `${p.replace(ROOT, '')}(${lineCount(p)} > ${limitOf(p)})`)
+const limitOf = (p) => SIZE_EXCEPTIONS[p.replace(join(ROOT, '..'), '').replace(/\\/gu, '/')] ?? 600
+const oversized = serverFiles.filter((p) => lineCount(p) > limitOf(p)).map((p) => `${p.replace(join(ROOT, '..'), '')}(${lineCount(p)} > ${limitOf(p)})`)
 check(`lib/server/** 单文件 ≤ 600 行（共 ${serverFiles.length} 个文件）`, oversized.length === 0, oversized.join(', ') || undefined)
 
 // ── ② 依赖方向 ────────────────────────────────────────────────────────────────
 const importLinesOf = (p) => [...readFileSync(p, 'utf8').matchAll(/^import\s[^\n]*from\s+'([^']+)'/gmu)].map((m) => m[1])
 const badDirection = []
 for (const p of serverFiles) {
-  const rel = p.replace(ROOT, '').replace(/\\/gu, '/')
+  const rel = p.replace(join(ROOT, '..'), '').replace(/\\/gu, '/')
   for (const spec of importLinesOf(p)) {
     if (rel.includes('/infra/') && /domain|routes|\/index\.js$/u.test(spec)) badDirection.push(`${rel} → ${spec}`)
     if (/\.\.\/\.\.\/index\.js|\.\.\/index\.js/u.test(spec)) badDirection.push(`${rel} → ${spec}（循环）`)
@@ -131,8 +131,8 @@ check('依赖方向：infra 不依赖 domain/routes/index', badDirection.length 
 
 // ── ③ 包根唯一 + pluginRoot 契约 ──────────────────────────────────────────────
 const metaUsers = []
-for (const p of [join(ROOT, 'lib', 'index.js'), ...serverFiles]) {
-  const rel = p.replace(ROOT, '').replace(/\\/gu, '/')
+for (const p of [join(ROOT, '..', 'lib', 'index.js'), ...serverFiles]) {
+  const rel = p.replace(join(ROOT, '..'), '').replace(/\\/gu, '/')
   for (const line of readFileSync(p, 'utf8').split('\n')) {
     if (!line.includes('import.meta.url')) continue
     if (/^\s*(\*|\/\/)/u.test(line)) continue // 注释不算
@@ -141,12 +141,12 @@ for (const p of [join(ROOT, 'lib', 'index.js'), ...serverFiles]) {
 }
 check('只有 infra/paths.js 用 import.meta.url 算包根', metaUsers.every((m) => m.startsWith('/lib/server/infra/paths.js')), metaUsers.join(' | ') || undefined)
 
-const { pluginRoot } = await import('./lib/server/infra/paths.js')
+const { pluginRoot } = await import('../lib/server/infra/paths.js')
 check('pluginRoot() 指向包根（含 package.json 与 lib/index.js）',
-  resolve(pluginRoot()) === resolve(ROOT) && existsSync(join(pluginRoot(), 'package.json')) && existsSync(join(pluginRoot(), 'lib', 'index.js')),
-  `${pluginRoot()} vs ${ROOT}`)
+  resolve(pluginRoot()) === resolve(ROOT, '..') && existsSync(join(pluginRoot(), 'package.json')) && existsSync(join(pluginRoot(), 'lib', 'index.js')),
+  `${pluginRoot()} vs ${resolve(ROOT, '..')}`)
 // 脚本生成器必须走 pluginRoot（错了会让升级脚本找不到插件目录）
-const indexSrc = readFileSync(join(ROOT, 'lib', 'index.js'), 'utf8')
+const indexSrc = readFileSync(join(ROOT, '..', 'lib', 'index.js'), 'utf8')
 // 路由拆分后 relaunchPrelude 的调用点会落在 lib/server/routes/** —— 整棵源码一起扫
 const allSrc = [indexSrc, ...serverFiles.map((p) => readFileSync(p, 'utf8'))].join('\n')
 const generatorCalls = [...allSrc.matchAll(/relaunchPrelude\(\{([^}]*)\}/gu)].map((m) => m[1])
@@ -207,7 +207,7 @@ check(`已搬走的声明没有在 index.js 里回潮（共 ${MOVED.length} 个�
 
 // ── ⑤ L1 规则：domain 层不认识 cordis ctx（方案 §二 三条硬规则之一）────────────
 const domainFiles = serverFiles.filter((p) => p.replace(/\\/gu, '/').includes('/server/domain/'))
-const ctxUsers = domainFiles.filter((p) => /(?<![\w$.])ctx(?![\w$])/u.test(stripCode(readFileSync(p, 'utf8')))).map((p) => p.replace(ROOT, ''))
+const ctxUsers = domainFiles.filter((p) => /(?<![\w$.])ctx(?![\w$])/u.test(stripCode(readFileSync(p, 'utf8')))).map((p) => p.replace(join(ROOT, '..'), ''))
 check(`domain 层不出现 ctx（${domainFiles.length} 个模块）`, ctxUsers.length === 0, ctxUsers.join(', ') || undefined)
 
 // ── ⑥ import 落地 + 不自引用 + 导入名真的被导出 ────────────────────────────────
@@ -233,8 +233,8 @@ const exportedNamesOf = (p) => {
 const namedImportsOf = (p) => [...readFileSync(p, 'utf8').matchAll(/^import\s*\{([^}]*)\}\s*from\s*'([^']+)'/gmu)]
   .map((m) => ({ names: m[1].split(',').map((s) => s.trim()).filter(Boolean).map((s) => (s.match(/\sas\s+([A-Za-z_$][\w$]*)$/u) ?? [null, s])[1]), spec: m[2] }))
 const importIssues = []
-for (const p of [...serverFiles, join(ROOT, 'lib', 'index.js')]) {
-  const rel = p.replace(ROOT, '').replace(/\\/gu, '/')
+for (const p of [...serverFiles, join(ROOT, '..', 'lib', 'index.js')]) {
+  const rel = p.replace(join(ROOT, '..'), '').replace(/\\/gu, '/')
   for (const { spec } of namedImportsOf(p)) {
     if (!spec.startsWith('.')) continue
     const target = resolve(dirname(p), spec)
@@ -258,8 +258,8 @@ const namespaceNames = new Set()
 for (const p of serverFiles) for (const n of exportedNamesOf(p)) namespaceNames.add(n)
 for (const m of indexSrc.matchAll(/^(?:export\s+)?(?:async\s+)?function\s+([A-Za-z_$][\w$]*)|^(?:export\s+)?(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=/gmu)) namespaceNames.add(m[1] ?? m[2])
 const freeVars = []
-for (const p of [...serverFiles, join(ROOT, 'lib', 'index.js')]) {
-  const rel = p.replace(ROOT, '').replace(/\\/gu, '/')
+for (const p of [...serverFiles, join(ROOT, '..', 'lib', 'index.js')]) {
+  const rel = p.replace(join(ROOT, '..'), '').replace(/\\/gu, '/')
   const src = readFileSync(p, 'utf8')
   const declared = declaredIn(src)
   const imported = importedIn(src)
@@ -286,8 +286,8 @@ check(`模块内引用的命名空间标识符都有声明或 import（已知 ${
 const ownerOf = new Map()
 for (const p of serverFiles) for (const n of exportedNamesOf(p)) ownerOf.set(n, p)
 const mutatedImports = []
-for (const p of [...serverFiles, join(ROOT, 'lib', 'index.js')]) {
-  const rel = p.replace(ROOT, '').replace(/\\/gu, '/')
+for (const p of [...serverFiles, join(ROOT, '..', 'lib', 'index.js')]) {
+  const rel = p.replace(join(ROOT, '..'), '').replace(/\\/gu, '/')
   const lines = stripCode(readFileSync(p, 'utf8')).split('\n')
   for (const [n, owner] of ownerOf) {
     if (resolve(owner) === resolve(p)) continue
@@ -324,8 +324,8 @@ const CTX_MEMBER_ALLOW = new Set([
 // 这条例外本身由 test-suite-detect.mjs ⑯ 的动态断言兜住（改回属性访问 → 注入桩取不到 → 红）。
 const CTX_PROPERTY_EXEMPT = new Set(['installChannels'])
 const hostAccessIssues = []
-for (const p of [...serverFiles, join(ROOT, 'lib', 'index.js')]) {
-  const rel = p.replace(ROOT, '').replace(/\\/gu, '/')
+for (const p of [...serverFiles, join(ROOT, '..', 'lib', 'index.js')]) {
+  const rel = p.replace(join(ROOT, '..'), '').replace(/\\/gu, '/')
   const lines = stripCode(readFileSync(p, 'utf8')).split('\n')
   for (let i = 0; i < lines.length; i += 1) {
     for (const m of lines[i].matchAll(/(?<![\w$.])(?:ctx|ports)(\??)\.([A-Za-z_$][\w$]*)/gu)) {

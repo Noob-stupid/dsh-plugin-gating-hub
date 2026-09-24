@@ -35,7 +35,7 @@ const ctx = {
   webServer: { register: (route) => { globalThis.__route = route; return () => {} } },
   effect: (fn) => { try { fn() } catch {}; return () => {} },
 }
-const mod = await import('./lib/index.js')
+const mod = await import('../lib/index.js')
 mod.apply(ctx)
 const route = globalThis.__route
 const fakeReq = (method, pathname, body) => ({
@@ -63,10 +63,10 @@ const serverSrc = (function walkServer(dir) {
     else if (e.name.endsWith('.js')) out += readFileSync(f, 'utf8')
   }
   return out
-})(join(ROOT, 'lib', 'server'))
+})(join(ROOT, '..', 'lib', 'server'))
 // 分层后这些契约字符串分散在 index.js 与 lib/server/** 各模块里 —— 契约是"整个插件源码里仍然这么写"
-const indexSrc = readFileSync(join(ROOT, 'lib', 'index.js'), 'utf8') + serverSrc
-const clientSrc = readFileSync(join(ROOT, 'lib', 'client.js'), 'utf8')
+const indexSrc = readFileSync(join(ROOT, '..', 'lib', 'index.js'), 'utf8') + serverSrc
+const clientSrc = readFileSync(join(ROOT, '..', 'lib', 'client.js'), 'utf8')
 
 // ── ① cordis.patch.yml 禁用块格式（升级/回滚/隔离脚本都在写它）────────────────
 await call('POST', '/plugin-console/toggle', { entryId: 'include:demo', enabled: false })

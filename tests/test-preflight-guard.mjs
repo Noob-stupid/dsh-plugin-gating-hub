@@ -51,7 +51,7 @@ const ctx = {
   effect: (fn) => { try { fn() } catch {}; return () => {} },
 }
 
-const { preflightDisableIncompatible } = await import('./lib/server/domain/framework.js')
+const { preflightDisableIncompatible } = await import('../lib/server/domain/framework.js')
 let failed = 0
 const check = (label, cond, extra) => {
   console.log(`${cond ? 'PASS' : 'FAIL'} ${label}${extra === undefined ? '' : ' — ' + extra}`)

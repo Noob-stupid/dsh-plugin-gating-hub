@@ -52,8 +52,8 @@ const ctx = {
   effect: (fn) => { try { fn() } catch {}; return () => {} },
 }
 
-const { preflightDisableIncompatible } = await import('./lib/server/domain/framework.js')
-  const { analyzeBootFailure } = await import('./lib/server/domain/quarantine.js')
+const { preflightDisableIncompatible } = await import('../lib/server/domain/framework.js')
+  const { analyzeBootFailure } = await import('../lib/server/domain/quarantine.js')
 const patchPath = join(profileDir, 'cordis.patch.yml')
 
 let failed = 0
@@ -99,7 +99,7 @@ check('分析器保留命中行用于展示', analyzed.lines.length >= 3, `${ana
 check('分析器对正常日志返回空', analyzeBootFailure('all good\nno errors here').presets.length === 0 && analyzeBootFailure('all good').modules.length === 0)
 
 // ── 启动失败隔离决策器（planQuarantine）──────────────────────────────────────
-const { planQuarantine } = await import('./lib/server/domain/quarantine.js')
+const { planQuarantine } = await import('../lib/server/domain/quarantine.js')
 const candidates = [
   { rowId: 'bad-plugin', moduleName: '@fake/incompatible', toggleable: true, enabled: true },
   { rowId: 'webserver', moduleName: '@deepseek-ai/dsh-host-webserver', toggleable: false, enabled: true },

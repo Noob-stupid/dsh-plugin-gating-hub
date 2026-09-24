@@ -34,7 +34,7 @@ const ctx = {
   webServer: { register: (route) => { globalThis.__route = route; return () => {} } },
   effect: (fn) => { try { fn() } catch {}; return () => {} },
 }
-const mod = await import('./lib/index.js')
+const mod = await import('../lib/index.js')
 mod.apply(ctx)
 const route = globalThis.__route
 
@@ -76,7 +76,7 @@ const walkSrc = (dir) => readdirSync(dir, { withFileTypes: true }).flatMap((e) =
   const f = join(dir, e.name)
   return e.isDirectory() ? walkSrc(f) : (e.name.endsWith('.js') ? [readFileSync(f, 'utf8')] : [])
 })
-const src = [readFileSync(join(ROOT, 'lib', 'index.js'), 'utf8'), ...walkSrc(join(ROOT, 'lib', 'server'))].join('\n')
+const src = [readFileSync(join(ROOT, '..', 'lib', 'index.js'), 'utf8'), ...walkSrc(join(ROOT, '..', 'lib', 'server'))].join('\n')
 const found = new Set()
 for (const m of src.matchAll(/path(?:name === |: )`\$\{ROUTE_PREFIX\}([^`]*)`/gu)) found.add(m[1])
 const missing = ROUTES.filter((p) => !found.has(p))
@@ -144,7 +144,7 @@ for (const [method, path, body, wantStatus, wantKeys] of SCHEMAS) {
     typeof p0.note === 'string' && p0.note.includes('启动失败隔离') && p0.source === 'boot-quarantine', `note=${String(p0.note).slice(0, 30)} source=${p0.source}`)
   check('adopted 行也在（用户要能核对历史上动过哪些行）',
     (g?.adopted ?? [])[0]?.name === '@fake/demo/market' && (g?.adopted ?? [])[0]?.version === '0.3.14')
-  const gateClient = readFileSync(join(ROOT, 'lib', 'client.js'), 'utf8')
+  const gateClient = readFileSync(join(ROOT, '..', 'lib', 'client.js'), 'utf8')
   check('门控面板渲染 gating 明细（不再只有一句数量）',
     gateClient.includes('state.data.gating') && gateClient.includes('gateRows.pending') && gateClient.includes('gateRows.adopted'))
   rmSync(join(cpDir, 'compat-pending.json'), { force: true })
@@ -155,7 +155,7 @@ for (const [method, path, body, wantStatus, wantKeys] of SCHEMAS) {
 // → ReferenceError → /install-status 恒 500（轮询 90 次全 500，安装进度卡刷不出来），
 // 而上面的契约表只测了 jobId 为空的 404 早返回分支，命不中出错那一行 → 测试与守卫双双漏过。
 {
-  const { installJobs } = await import('./lib/server/state.js')
+  const { installJobs } = await import('../lib/server/state.js')
   installJobs.set('job-inventory-1', {
     id: 'job-inventory-1', repo: 'owner/demo', source: 'github', packageName: null, status: 'installing',
     stage: 'preparing', error: null, startedAt: 1, finishedAt: null, entryId: null, bundle: false, ai: false,
@@ -172,7 +172,7 @@ for (const [method, path, body, wantStatus, wantKeys] of SCHEMAS) {
   installJobs.delete('job-inventory-1')
   // 同一类漏 import（守卫补洞后新发现）：routes/ai.js 用了 aiJobView 却没有 import
   // → /ai-empower/status 命中真实任务时必然 500；老契约表同样只测了 jobId 为空的 404 分支。
-  const { aiJobs } = await import('./lib/server/domain/ai.js')
+  const { aiJobs } = await import('../lib/server/domain/ai.js')
   aiJobs.set('ai-inventory-1', { id: 'ai-inventory-1', source: 'local', status: 'running', stage: 'planning', error: null })
   const a = await call('POST', '/plugin-console/ai-empower/status', { jobId: 'ai-inventory-1' })
   check('ai-empower/status 命中真实任务 → 200（不是 500）',
@@ -188,8 +188,8 @@ for (const [method, path, body, wantStatus, wantKeys] of SCHEMAS) {
 // 这一节把「服务端必须下发什么」钉死：progress{index,total,name,done} 与
 // aiConsent{pending,since,timeoutMs,lastError}，以及同意/取消两条决策路径真的送达等待中的任务。
 {
-  const { installJobView, AI_CONSENT_TIMEOUT_MS } = await import('./lib/server/domain/install.js')
-  const { installJobs } = await import('./lib/server/state.js')
+  const { installJobView, AI_CONSENT_TIMEOUT_MS } = await import('../lib/server/domain/install.js')
+  const { installJobs } = await import('../lib/server/state.js')
 
   // ① 聚合安装进行中：第 3/11 个，正在试 @captain1275/dsh-full-stats
   const running = installJobView({
@@ -274,7 +274,7 @@ for (const [method, path, body, wantStatus, wantKeys] of SCHEMAS) {
     bogus.status === 400 && String(bogus.json?.error).includes('AI 授权'), `status=${bogus.status} error=${bogus.json?.error}`)
 
   // ⑧ 失败文案（纯函数）：超时 / 取消两条路径的措辞 + 清场汇报都必须如实
-  const { aiConsentFailureText } = await import('./lib/server/domain/install-job.js')
+  const { aiConsentFailureText } = await import('../lib/server/domain/install-job.js')
   const timeoutText = aiConsentFailureText({ approved: false, timeout: true }, { cleaned: ['@a/one'], failed: [] })
   check('★ 超时失败文案：说清 10 分钟超时 + 清掉了什么',
     timeoutText.includes('等待授权超时（10 分钟）') && timeoutText.includes('已清理本次落盘残留：@a/one'),
@@ -329,7 +329,7 @@ for (const [method, path, body, wantStatus, wantKeys] of SCHEMAS) {
 // 这里钉死三件事：① /uninstall 接受 { jobId } 这种入参形态；② /state 输出含 pendingRestart；
 // ③ 撤销真的把补丁行 / bundles 清单清干净，并回报 verified（回读核实，不是"删完就报成功"）。
 {
-  const { installJobs } = await import('./lib/server/state.js')
+  const { installJobs } = await import('../lib/server/state.js')
   const manifestPath = join(profileDir, 'package.json')
   const readPatchText = () => readFileSync(join(profileDir, 'cordis.patch.yml'), 'utf8')
   const readBundles = () => JSON.parse(readFileSync(manifestPath, 'utf8')).dsh.profile.bundles
@@ -434,7 +434,7 @@ for (const [method, path, body, wantStatus, wantKeys] of SCHEMAS) {
 // 本机实测过 rmSync/pnpm 在受限环境里会静默落空甚至抛错（见 infra/fsx.js removeDirVerified 注释），
 // 所以 domain/revoke.js 的三个子项都回读核实。这里用注入的 pnpmRemove 桩钉死两条路径。
 {
-  const { revokePendingInstall } = await import('./lib/server/domain/revoke.js')
+  const { revokePendingInstall } = await import('../lib/server/domain/revoke.js')
   const manifestPath = join(profileDir, 'package.json')
   const patchPath = join(profileDir, 'cordis.patch.yml')
   const STUCK = '@fake/stuck-pkg'
@@ -539,7 +539,7 @@ for (const [method, path, body, wantStatus, wantKeys] of SCHEMAS) {
 // lock 里钉住的旧版本（用户侧看到"升级成功、重启后还是旧版"）。下面把"包管理器优先 + 回读核实 +
 // 兜底必带警告"三条口径钉死。
 {
-  const { isRegistryRange, lockVersion, selfUpdateToLatest } = await import('./lib/server/domain/selfupdate.js')
+  const { isRegistryRange, lockVersion, selfUpdateToLatest } = await import('../lib/server/domain/selfupdate.js')
   const PKG = '@noob-stupid/dsh-plugin-console'
   const fix = join(ROOT, '.testdir', 'selfupdate-fixture')
   const nmPkg = join(fix, 'node_modules', '@noob-stupid', 'dsh-plugin-console')
@@ -619,7 +619,7 @@ for (const [method, path, body, wantStatus, wantKeys] of SCHEMAS) {
 
 // ── 多包 lock 对账（2026-09-21：非 pnpm 通道装的包 + 套装装配 + 聚合子包都要写进 lock）──────────
 {
-  const { reconcileLockfile } = await import('./lib/server/domain/selfupdate.js')
+  const { reconcileLockfile } = await import('../lib/server/domain/selfupdate.js')
   const fix = join(ROOT, '.testdir', 'reconcile-multi-fixture')
   const pkgs = ['@drill/pkg-a', '@drill/pkg-b']
   for (const p of pkgs) mkdirSync(join(fix, 'node_modules', ...p.split('/')), { recursive: true })
@@ -669,7 +669,7 @@ for (const [method, path, body, wantStatus, wantKeys] of SCHEMAS) {
 // package.json 改写成裸版本号（EXIT=0）→ lock 一重建就 ERR_PNPM_FETCH_404，而报错指向 npm registry。
 // 修法：写回前先探 registry（不可解析 → 物化到 <DSH_HOME>/plugin-src + 写 link:），并保持其它来源不变。
 {
-  const { reconcileLockfile, lockVersion } = await import('./lib/server/domain/selfupdate.js')
+  const { reconcileLockfile, lockVersion } = await import('../lib/server/domain/selfupdate.js')
   const fix = join(ROOT, '.testdir', 'dep-source-fixture')
   const releaseOnly = '@dsh-external/dsh-super-injector'
   const notFound = async () => { const e = new Error('Response code 404 (Not Found)'); e.statusCode = 404; throw e }
