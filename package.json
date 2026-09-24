@@ -1,6 +1,6 @@
 {
   "name": "@noob-stupid/dsh-plugin-console",
-  "version": "0.5.0",
+  "version": "0.5.1",
   "description": "DSH 框架升级安全与插件升级门控：一键升级、失败自动回滚、升级后回滚上版、旧插件不适配自动禁用；内置多源插件市场为发现层，插件源全部可自定义，可指向公司内网私有源 / 私有索引 / 本地 Git 仓库，纯内网离线可用 | Framework upgrade safety & plugin version gating for DSH, with a customizable multi-source plugin market: point every source at internal mirrors or a local file:// repo for intranet-only, offline installs.",
   "repository": {
     "type": "git",
