@@ -79,13 +79,15 @@ check('没有未登记的新路由（新增必须同步更新本清单）', extr
 
 // ── ② 只读接口：status + 顶层响应字段逐字段固化 ───────────────────────────────
 const SCHEMAS = [
-  ['GET', '/plugin-console/state', undefined, 200, ['compat', 'compatGate', 'compatPending', 'components', 'entries', 'framework', 'github', 'installJobs', 'ok', 'patch', 'patchHeal', 'patchPath', 'pendingRestart', 'recentFailures', 'rollback', 'selfVersion']],
+  // 2026-09-24：门控面板要显示「具体是哪些插件」→ /state 新增 gating 明细块
+  ['GET', '/plugin-console/state', undefined, 200, ['compat', 'compatGate', 'compatPending', 'components', 'entries', 'framework', 'gating', 'github', 'installJobs', 'ok', 'patch', 'patchHeal', 'patchPath', 'pendingRestart', 'recentFailures', 'rollback', 'selfVersion']],
   ['GET', '/plugin-console/sources', undefined, 200, ['giteeStatus', 'ok', 'sources']],
   ['GET', '/plugin-console/skills-installed', undefined, 200, ['ok', 'pluginSkills', 'skills']],
   ['GET', '/plugin-console/framework-upgrade-status', undefined, 200, ['message', 'ok', 'status']],
   ['POST', '/plugin-console/details', { entryId: 'include:demo' }, 200, ['entryId', 'meta', 'moduleName', 'ok', 'readme', 'rowId']],
   ['POST', '/plugin-console/compat-gate', {}, 200, ['compatGate', 'ok']],
-  ['POST', '/plugin-console/framework-check', {}, 200, ['checkedAt', 'current', 'latest', 'next', 'ok', 'registryError', 'target']],
+  // 2026-09-23：面板改成「可选版本列表」→ 契约新增 alpha / tagDefault / versions 三个字段
+  ['POST', '/plugin-console/framework-check', {}, 200, ['alpha', 'checkedAt', 'current', 'latest', 'next', 'ok', 'registryError', 'tagDefault', 'target', 'versions']],
   ['POST', '/plugin-console/ai-empower/list', {}, 200, ['ok', 'tasks']],
   ['POST', '/plugin-console/ai-empower/status', {}, 404, ['error', 'ok']],
   ['POST', '/plugin-console/install-status', {}, 404, ['error', 'ok']],
@@ -104,6 +106,47 @@ for (const [method, path, body, wantStatus, wantKeys] of SCHEMAS) {
   const keys = r.json === null ? [] : Object.keys(r.json).sort()
   const same = r.status === wantStatus && JSON.stringify(keys) === JSON.stringify([...wantKeys].sort())
   check(`响应契约 ${method} ${path.replace('/plugin-console', '')}`, same, `status=${r.status} keys=${keys.join(',')}`)
+}
+
+// ── ①b 门控面板必须能看到「具体是哪些插件」（2026-09-24 用户要求）─────────────
+// 用户原话：「门控面板应该可以显示是哪些，有列表数据」。此前 /state 只下发 pending 行、
+// 且只有 rowId/checkNote，面板也只显示一句「当前待适配：N 行」——看得到数量，看不到是谁。
+// 这一节真造一份 compat-pending.json（含一条 pending + 一条 adopted），验证 /state 把它们
+// 变成可读明细：名字、版本、原因、来源、时间，并且 adopted 那半边也在。
+{
+  const cpDir = join(HOME, 'plugin-console')
+  mkdirSync(cpDir, { recursive: true })
+  writeFileSync(join(cpDir, 'compat-pending.json'), JSON.stringify({
+    frameworkVersion: '0.1.5-rc.2',
+    upgradeFrom: '0.1.5-rc.1',
+    pending: [
+      { rowId: 'include:demo', moduleName: '@fake/demo', version: '1.0.0', status: 'pending', check: 'unknown', checkNote: '启动失败隔离（safe-mode）：启动日志命中，服务曾被它拖垮', source: 'boot-quarantine', forcedAt: 1790218032109 },
+      { rowId: 'web-ui-pet', moduleName: null, version: null, status: 'pending', check: 'unknown', checkNote: '升级预扫判定不适配', source: 'upgrade-prescan' },
+      { rowId: 'web-ui-market', moduleName: '@fake/demo/market', version: '0.3.14', status: 'adopted', check: 'unknown', checkNote: '源码扫描无已删除 API 引用', adoptedAt: 1789996822423 },
+    ],
+  }, null, 2), 'utf8')
+
+  const st = await call('GET', '/plugin-console/state', undefined)
+  const g = st.json?.gating ?? null
+  check('/state 带 gating 明细块', g !== null && typeof g === 'object', `gating=${g === null ? 'null' : 'ok'}`)
+  check('gating 分开统计 pending / adopted 两侧', g?.pendingCount === 2 && g?.adoptedCount === 1, `pending=${g?.pendingCount} adopted=${g?.adoptedCount}`)
+  const p0 = (g?.pending ?? [])[0] ?? {}
+  check('pending 行带名字（moduleName 缺失时回落到可读条目名）',
+    p0.name === '@fake/demo' && (g?.pending ?? [])[1]?.name === 'web-ui-pet',
+    `name0=${p0.name} name1=${(g?.pending ?? [])[1]?.name}`)
+  check('pending 行带原因与来源（面板要显示"为什么被拦"）',
+    typeof p0.note === 'string' && p0.note.includes('启动失败隔离') && p0.source === 'boot-quarantine', `note=${String(p0.note).slice(0, 40)} source=${p0.source}`)
+  check('pending 行带版本/时间字段（缺数据时为 null 而不是崩）',
+    p0.version === '1.0.0' && typeof p0.forcedAt === 'number', `version=${p0.version} forcedAt=${p0.forcedAt}`)
+  const a0 = (g?.adopted ?? [])[0] ?? {}
+  check('adopted 行也在（用户要能核对历史上动过哪些行）',
+    a0.name === '@fake/demo/market' && a0.version === '0.3.14' && typeof a0.adoptedAt === 'number', `name=${a0.name} version=${a0.version}`)
+  check('gating 带清单元信息（框架版本/来源版本）', g?.version === '0.1.5-rc.2' && g?.upgradeFrom === '0.1.5-rc.1', `v=${g?.version} from=${g?.upgradeFrom}`)
+  // 面板接线（宿主端算得对、前端没渲染＝用户还是看不到，所以这条必须断）
+  const gateClient = readFileSync(join(ROOT, 'lib', 'client.js'), 'utf8')
+  check('门控面板渲染 gating 明细（不再只有一句数量）',
+    gateClient.includes('state.data.gating') && gateClient.includes('gateRows.pending') && gateClient.includes('gateRows.adopted'))
+  rmSync(join(cpDir, 'compat-pending.json'), { force: true })
 }
 
 // ── ②a-2 子包级进度 + AI 授权请求必须能被面板看到（2026-09-20 真装实测缺口）──────────

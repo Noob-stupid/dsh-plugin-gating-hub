@@ -196,6 +196,12 @@ for (const [name, expr] of blocks) {
     const qCall = script.indexOf('if (-not (Invoke-Quarantine))')
     const rCall = script.lastIndexOf('Invoke-Rollback')
     check('隔离重试在回滚之前', qCall !== -1 && qCall < rCall, `隔离调用@${qCall} 回滚调用@${rCall}`)
+    // 2026-09-24 事故后补：安装后必须验「结构完整」，不能只对版本号。
+    // 当天真实事故：一次 0.1.7-rc.1 升级的 pnpm 安装被中断，顶层 @deepseek-ai\dsh 目录整个消失、
+    // .pnpm 实体只剩 lib 里几个硬链接。只对版本号的校验有可能被"package.json 写成功但 lib 没落全"骗过。
+    check('升级脚本含安装后结构校验（package.json + bin.js + CLI 自报版本）',
+      script.includes('结构校验失败') && script.includes('结构校验通过')
+      && script.includes('lib\\bin.js') && script.includes('--version'))
   }
 
   // ── v0.3.37 事故回归：拉起服务那一步崩在 `Test-Path $null` 上（$null -ne '' 是 true，守卫失效）──

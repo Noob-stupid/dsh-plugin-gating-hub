@@ -552,6 +552,49 @@ check('★ 清理失败时明确说"目录清不掉、多源重试无效"，而�
     JSON.stringify(PLUGIN_INJECT))
 }
 
+// ── ⑯ 框架升级「可选版本列表」（2026-09-23 用户要求：有的版本都加上，测试版也可以有列表）──
+// 面板原先只有一个升级目标（latest 优先，否则 next），用户想上某个 rc/alpha 只能手敲命令。
+// 这里把候选列表的规则钉死：只收比当前新的、按语义版本降序（保留完整 prerelease 语义）、标注渠道。
+{
+  const { frameworkUpgradeCandidates, pickFrameworkTarget } = await import('../lib/index.js')
+  const META = {
+    'dist-tags': { latest: '0.1.5-rc.3', next: '0.1.7-rc.1', alpha: '0.1.7-alpha.2' },
+    versions: {
+      '0.1.2-rc.1': {}, '0.1.5-rc.1': {}, '0.1.5-rc.2': {}, '0.1.5-rc.3': {},
+      '0.1.6-alpha.1': {}, '0.1.6-alpha.2': {}, '0.1.7-alpha.1': {}, '0.1.7-alpha.2': {}, '0.1.7-rc.1': {},
+    },
+  }
+  const c = frameworkUpgradeCandidates(META, '0.1.5-rc.2')
+  const list = c.versions.map((v) => v.version)
+  check('候选只收「比当前新」的版本（0.1.5-rc.2 → 6 个）', c.versions.length === 6, JSON.stringify(list))
+  check('比当前旧的绝不进列表', !list.includes('0.1.5-rc.1') && !list.includes('0.1.2-rc.1'))
+  check('按语义版本降序（rc 排在 alpha 之前）',
+    list.join(',') === '0.1.7-rc.1,0.1.7-alpha.2,0.1.7-alpha.1,0.1.6-alpha.2,0.1.6-alpha.1,0.1.5-rc.3', list.join(','))
+  check('渠道标注 next / alpha / latest 各自命中',
+    c.versions[0].channel === 'next' && c.versions[1].channel === 'alpha' && c.versions[5].channel === 'latest')
+  check('latest 标 isLatest（前端显示「稳定版」）', c.versions[5].isLatest === true && c.versions[0].isLatest === false)
+  check('tagDefault = latest（没选时默认仍升稳定版，老行为不变）', c.tagDefault === '0.1.5-rc.3', String(c.tagDefault))
+  check('已是最新时候选为空', frameworkUpgradeCandidates(META, '0.1.7-rc.1').versions.length === 0)
+  check('当前版本未知时不乱过滤（全部列出）', frameworkUpgradeCandidates(META, null).versions.length === 9)
+  const bad = frameworkUpgradeCandidates({ 'dist-tags': { latest: '1.0.0' }, versions: { '1.0.0': {}, 'not-a-version': {} } }, '0.1.5-rc.2')
+  check('非法版本号被跳过、空元数据不炸',
+    bad.versions.length === 1 && frameworkUpgradeCandidates(null, 'x').versions.length === 0)
+  const pickOk = pickFrameworkTarget({ current: '0.1.5-rc.2', latest: META['dist-tags'].latest, next: META['dist-tags'].next, wanted: '0.1.7-rc.1', candidates: c.versions })
+  check('用户自选合法版本 → target 就是它', pickOk.target === '0.1.7-rc.1' && pickOk.rejected === null, JSON.stringify(pickOk))
+  const pickBad = pickFrameworkTarget({ current: '0.1.5-rc.2', latest: META['dist-tags'].latest, next: META['dist-tags'].next, wanted: '0.1.5-rc.1', candidates: c.versions })
+  check('自选更旧/不存在的版本 → rejected（宿主端据此返回 400）', pickBad.target === null && pickBad.rejected === '0.1.5-rc.1', JSON.stringify(pickBad))
+  const pickDefault = pickFrameworkTarget({ current: '0.1.5-rc.2', latest: META['dist-tags'].latest, next: META['dist-tags'].next })
+  check('没选时沿用老行为（latest 优先）', pickDefault.target === '0.1.5-rc.3' && pickDefault.rejected === null)
+
+  // 客户端接线（只断"接上了没"，不锁文案/样式——后端算得再对，前端没接线＝用户点了没反应）
+  const clientSrc = readFileSync(join(ROOT, 'lib', 'client.js'), 'utf8')
+  check('客户端从 /framework-check 的 versions 渲染选择器',
+    clientSrc.includes('fwCheck.versions') && clientSrc.includes('setFwSelectedVersion'))
+  check('升级请求把选中版本带给宿主端（body.version）',
+    clientSrc.includes('/plugin-console/framework-upgrade", fwSelected ? { version: fwSelected }'))
+  check('未选择时默认回落到 tagDefault（老行为不变）', clientSrc.includes('fwCheck.tagDefault'))
+}
+
 server.close()
 console.log(failed === 0 ? '\nALL PASS' : `\n${failed} FAILED`)
 process.exit(failed === 0 ? 0 : 1)
