@@ -51,13 +51,13 @@ const callRoute = async (handler, body = {}) => {
 
 // ① 纯加法：默认托管
 const boot = readCompatMode()
-check('默认运行模式 = managed（没设置过的机器行为不变）', boot.mode === 'managed' && boot.source === 'default', JSON.stringify(boot))
+check('默认运行模式 = observer（用户 2026-09-24 定：默认只守门、不接管升级）', boot.mode === 'observer' && boot.source === 'default', JSON.stringify(boot))
 
 // ② 模式白名单 + 往返
-check('切到 observer 成功', writeCompatMode('observer').ok === true && readCompatMode().mode === 'observer')
+check('切到 managed 成功', writeCompatMode('managed').ok === true && readCompatMode().mode === 'managed')
 const rejected = writeCompatMode('god-mode')
-check('非法模式被拒、模式保持不变（不静默失效）', rejected.ok === false && typeof rejected.error === 'string' && readCompatMode().mode === 'observer', JSON.stringify(rejected))
-check('切回 managed 成功（可来回切换）', writeCompatMode('managed').ok === true && readCompatMode().mode === 'managed')
+check('非法模式被拒、模式保持不变（不静默失效）', rejected.ok === false && typeof rejected.error === 'string' && readCompatMode().mode === 'managed', JSON.stringify(rejected))
+check('切回 observer 成功（可来回切换）', writeCompatMode('observer').ok === true && readCompatMode().mode === 'observer')
 
 // ③ 指纹：计入框架树包数
 const treeA = fakeFrameworkTree(join(HOME, 'runtime-a'), 3)
