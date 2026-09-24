@@ -249,6 +249,7 @@ The floating "Sources" button (right of the title row, semi-transparent) opens t
 
 - [AI Empower 与服务器组件控制](docs/ai-empower.md)
 - [Framework upgrade safety & plugin adapt gate](docs/upgrade-safety-adapt-gate.md)
+- [**契约规则库 Upgrade contract rules**](docs/contracts/README.md) — 框架每次变更会打断什么、怎么发现、怎么修（数据在 `lib/contracts/rules.json`，**欢迎 PR 补充**：每个事故都应该变成一条规则）
 - [How it works](docs/how-it-works.md) · [Compatibility](docs/compatibility.md) · [Project layout](docs/project-layout.md)
 - [HTTP endpoints](docs/http-endpoints.md) · [Local AI fallback & consent](docs/ai-fallback.md)
 - [Framework patch (cordis.patch.yml)](docs/framework-patch.md) · [Security & disclaimer](docs/security-disclaimer.md)

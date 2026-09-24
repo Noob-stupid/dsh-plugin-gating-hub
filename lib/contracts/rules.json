@@ -1,0 +1,72 @@
+{
+  "version": 1,
+  "updatedAt": "2026-09-24",
+  "summary": "DSH 升级契约规则库：把「框架某次变更会打断什么」沉淀成数据。预检读它，因此规则库对任何来源的框架变更都生效（我们的升级器、官方桌面端自带升级器、手动 pnpm 都一样）。欢迎 PR 补充——每个事故都应该变成一条规则。",
+  "fields": {
+    "id": "稳定标识（小写连字符），被测试与文档引用，改名等于破坏兼容",
+    "since": "从哪个框架版本开始成立（用于判定「目标版本是否需要这条规则」）",
+    "kind": "contract-edge | dependency-api | config-schema | removed-api | loader-contract",
+    "severity": "blocker（不改就会炸）| warn（提示，不影响可用）",
+    "detect": "怎么发现（人话描述，便于 PR 评审与用户理解）",
+    "fix": "怎么修（能自动修的要写清楚改前备份策略）",
+    "implementedBy": "本控制台里承担检测的实现（模块名或探针 id）；留空表示「仅登记、尚未自动检测」",
+    "evidence": "真实报错原文或事故编号——没有证据的规则不收"
+  },
+  "rules": [
+    {
+      "id": "session-message-source-kind",
+      "since": "0.1.7-rc.1",
+      "kind": "contract-edge",
+      "severity": "blocker",
+      "title": "会话消息来源需要 producer-owned kind（V3 → V4）",
+      "detect": "扫描本地生产方（agent 预设 + 已装插件）里仍写 `kind: 'plugin'` 的 V3 包装形状；框架只迁移磁盘历史会话，运行期生产方不迁移",
+      "fix": "把 V3 包装改写成 producer-owned kind；本控制台可一键适配，逐文件备份 .bak-preflight-*，名单外文件拒绝写入",
+      "implementedBy": "domain/format-scan.js（planSourceKindRewrites）",
+      "evidence": "format v4 message requires a producer-owned source kind"
+    },
+    {
+      "id": "schemastery-volatile-api",
+      "since": "3.18.4",
+      "kind": "dependency-api",
+      "severity": "warn",
+      "title": "@deepseek-ai/schemastery 的 Schema.prototype.volatile()",
+      "detect": "插件源码调用 .volatile()，但它实际解析到的 schemastery 副本低于声明版本（常见于 profile 里被手工铺了陈旧真实副本）",
+      "fix": "把该副本对齐到声明版本即可，**不必改插件源码**（带依赖探针，修好后自动静默）",
+      "implementedBy": "domain/format-scan.js（KNOWN_BREAKAGES.probe = schemastery-volatile）",
+      "evidence": ".volatile is not a function（2026-09-24 实测 7 个插件导入失败）"
+    },
+    {
+      "id": "preset-persona-text-to-prefix",
+      "since": "0.1.5-rc.1",
+      "kind": "config-schema",
+      "severity": "blocker",
+      "title": "agent 预设 persona.text → persona.prefix",
+      "detect": "升级前扫描全部 agent 预设与 host 组合里的 persona.text 字段",
+      "fix": "就地改名并留 .bak 备份（v0.3.33 起内置；包级适配门扫不到预设，这是当时事故的真正短板）",
+      "implementedBy": "domain/presets.js（migrateAgentConfigsForUpgrade）",
+      "evidence": "issue #18（0.1.2-rc.1 → 0.1.5-rc.1 升级后服务起不来）"
+    },
+    {
+      "id": "dsh-settings-namespace-removed",
+      "since": "0.1.5-rc.1",
+      "kind": "removed-api",
+      "severity": "blocker",
+      "title": "dsh-settings 命名空间 API 被移除",
+      "detect": "扫描已装包源码里对已删除 API 的引用（要求标识符边界，并排除本地定义同行无引用的情况，避免误伤框架自带的 settings 控制器）",
+      "fix": "改用 ctx.get('名字') 读取或声明 inject；未 inject 的名字做属性式访问在真实 ctx 上会同步抛错",
+      "implementedBy": "domain/compat.js（checkPluginFrameworkCompat）",
+      "evidence": "0.3.59 注入缝缺陷（属性式读取未声明的名字 → 安装全灭）"
+    },
+    {
+      "id": "patch-overlay-toplevel-array",
+      "since": "0.1.5-rc.1",
+      "kind": "loader-contract",
+      "severity": "blocker",
+      "title": "cordis.patch.yml 必须是顶层 YAML 数组",
+      "detect": "解析 profile 与各 bundle 的补丁层，空文件/只有注释会解析成 null 而被拒",
+      "fix": "留 `[]` 占位（或写成 `- insert:` 列表）；本控制台的补丁写入已统一走该形态",
+      "implementedBy": "domain/patch.js（sanitizePatchText）",
+      "evidence": "overlay <path> must be a top-level YAML array of loader patch entries"
+    }
+  ]
+}
