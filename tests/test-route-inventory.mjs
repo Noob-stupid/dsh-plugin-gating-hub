@@ -70,6 +70,11 @@ const ROUTES = [
   '/github-open-login',
   '/framework-preflight',
   '/framework-preflight-patch',
+  // 门控常驻化（2026-09-24）：触发源从「我们的升级动作」换成「环境指纹变化」——
+  // 官方桌面端自带升级器 / 官方只发桌面端时，门控仍能守门
+  '/compat-status',
+  '/compat-mode',
+  '/compat-stamp',
 ]
 // 分层后路由可能写在 lib/server/routes/**（表项）或 index.js（内联分支）—— 两种写法都要认
 const walkSrc = (dir) => readdirSync(dir, { withFileTypes: true }).flatMap((e) => {
