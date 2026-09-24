@@ -154,6 +154,29 @@ Requires: DSH ≥ 0.1.0-rc.6 (web profile, with `dsh-client-modules` / `dsh-host
 
 ---
 
+## Screenshots · 界面一览
+
+> 入口挂在**官方插件管理页自己的插槽**（`plugins.bundle.config`，key = 包名）：装完之后它出现在
+> 「设置 → 插件 → 已安装」里我们这一条下面，用的是官方容器与官方风格 —— 不是 DOM 注入，官方更新也不怕。
+
+**1 · 已安装列表里的入口**（官方页，点开我们这条即见）
+
+![Entry inside the official plugins page](docs/images/official-plugins-page.png)
+
+**2 · 「升级安全」面板**（就地展开：运行模式 / 框架版本 / 回滚点 / 环境指纹 / 补声明 / 契约预检 / 各功能入口）
+
+![Upgrade safety panel expanded in place](docs/images/upgrade-safety-panel.png)
+
+**3 · 框架升级 / 回滚**（可选目标版本、常驻的升级进度、一键回滚上一版）
+
+![Framework upgrade and rollback panel](docs/images/framework-upgrade-rollback.png)
+
+**4 · 门控明细**（谁被隔离、为什么：升级预扫 or 启动失败隔离，附来源与时间）
+
+![Compatibility gate detail list](docs/images/compat-gate-detail.png)
+
+---
+
 ## Features
 
 ### Installed plugins (one-click toggle + details)
