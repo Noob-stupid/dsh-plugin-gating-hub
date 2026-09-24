@@ -593,6 +593,10 @@ check('★ 清理失败时明确说"目录清不掉、多源重试无效"，而�
   check('升级请求把选中版本带给宿主端（body.version）',
     clientSrc.includes('/plugin-console/framework-upgrade", fwSelected ? { version: fwSelected }'))
   check('未选择时默认回落到 tagDefault（老行为不变）', clientSrc.includes('fwCheck.tagDefault'))
+  // 2026-09-24 用户实测截图发现：升级按钮文字仍写死 fwCheck.target，选了版本后按钮不跟着变
+  //（选择器与真正发出去的请求都是对的，只有按钮文案没联动 —— 纯显示 bug，但用户一眼就看出不对）
+  check('升级按钮文字也用选中版本（不能只改选择器与请求）',
+    /frameworkUpgradeBtn"\)\s*\+\s*" → v"\s*\+\s*\(fwSelected \?\? fwCheck\.target\)/u.test(clientSrc))
 }
 
 server.close()
