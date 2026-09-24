@@ -28,12 +28,13 @@ if (process.env.DSH_TEST_SKIP_NETWORK === '1') {
 }
 
 // 兼容两种仓库结构：单体版函数都在 lib/index.js；分层版在 lib/server/**（按名字逐个找）
+// 注意：specs 里是**相对仓库根**的路径，而 ROOT 现在是 tests/（测试收进目录后），所以要走 '..'
 const entry = await import(pathToFileURL(join(ROOT, '..', 'lib', 'index.js')).href)
 const pick = async (name, specs) => {
   if (typeof entry[name] === 'function') return entry[name]
   for (const spec of specs) {
     try {
-      const mod = await import(pathToFileURL(join(ROOT, spec)).href)
+      const mod = await import(pathToFileURL(join(ROOT, '..', spec)).href)
       if (typeof mod[name] === 'function') return mod[name]
     } catch {}
   }
