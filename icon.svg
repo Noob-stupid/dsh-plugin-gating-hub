@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="dsh-plugin-gating-hub">
+  <!-- 占位图标（PLACEHOLDER）：等正式图替换。规格对齐 @linxin666/dsh-web-all/icon.svg：512 方形、单色 #4d6bfe -->
+  <path fill="#4d6bfe" fill-rule="evenodd" d="M256 40 L432 112 V272 C432 368 360 440 256 472 C152 440 80 368 80 272 V112 Z M256 96 L136 148 V272 C136 344 186 400 256 424 C326 400 376 344 376 272 V148 Z"/>
+  <path fill="#4d6bfe" d="M244 176 h24 v160 h-24 z"/>
+  <path fill="#4d6bfe" d="M180 244 h152 v24 h-152 z"/>
+</svg>
