@@ -2,6 +2,17 @@
 
 All notable changes to dsh-plugin-hub.
 
+## v0.5.12 — README 还原 + 顶部「Web & Desktop 双支持」小字（2026-09-25）
+
+用户在 GitHub 网页上误改了 README（提交 `7dd319a` "Update README.md"：顶部插入 `desktop:` / `web:` 标签行、
+并替换掉原有的官网截图行）。按用户要求：
+
+- **还原** `README.md` 到 `7dd319a` 之前的内容（恢复原截图行，移除插入的标签行）
+- **顶部新增小字**（两语各一行，`<sub>`）：
+  - `README.md`：`<sub><b>Web</b> & <b>Desktop</b> — both supported.</sub>`
+  - `README.zh.md`：`<sub>同时支持 <b>Web</b> 与 <b>Desktop</b> 两种形态。</sub>`
+
+仅 README + 版本号，代码零改动。
 ## v0.5.11 — 还原面板「运行模式」文案（语义只留在 README）（2026-09-25）
 
 0.5.10 把「启动失败隔离不受模式影响」那段说明拼进了面板「运行模式」行内，用户反馈**太长、影响美感**。

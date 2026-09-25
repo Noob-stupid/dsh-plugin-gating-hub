@@ -1,3 +1,5 @@
+<sub>同时支持 <b>Web</b> 与 <b>Desktop</b> 两种形态。</sub>
+
 > **English**: [README.md](README.md) | **中文**: [README.zh.md](README.zh.md)
 
 ---
