@@ -268,6 +268,14 @@ The floating "Sources" button (right of the title row, semi-transparent) opens t
 
 <img width="393" height="525" alt="56ccd0b3-f174-4365-848b-64013b27d604" src="https://github.com/user-attachments/assets/5a2816ce-12d9-4001-b895-1e422c11d423" />
 
+### Run mode (managed / observer)
+
+The mode decides **who leads framework upgrades** — nothing else:
+
+- **Observer (default)**: the console only preflights, gates, and guards the rollback point. It does not take over upgrades.
+- **Managed**: framework upgrade and rollback are owned by this console. It switches to managed automatically when you upgrade through this console, and records the reason.
+
+**Boot-failure quarantine is not affected by the mode.** When the service cannot start, the console locates the culprit from the boot log and disables it (broken presets are renamed to `.broken-*`; with no clear culprit it falls back to safe mode so the service can start). A console that cannot boot cannot gate anything — so this rescue path always runs.
 ## Framework compatibility
 
 Measured on isolated instances (fresh `DSH_HOME`, real HTTP probes) — **supported: framework ≥ `0.1.5-rc.2`**, no workarounds needed.
