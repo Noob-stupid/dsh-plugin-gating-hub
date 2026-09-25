@@ -2,6 +2,15 @@
 
 All notable changes to dsh-plugin-hub.
 
+## v0.5.5 — 专属图标（官方插件页显示自家标记）（2026-09-24）
+
+之前官方插件页里我们那一行显示的是 DSH 默认图标，而同为第三方的 `@linxin666/dsh-web-all` 显示自家标记。
+查清原因：官方页渲染 `row.meta?.icon`，而 web-all 在 `package.json` 顶层声明了 `icon: "icon.svg"` 并随包发出 —— **我们没声明**。
+
+- 新增包根 `icon.svg`（512 方形、单色 `#4d6bfe`、盾牌 + 闸门意象）
+- `package.json` 顶层新增 `"icon": "icon.svg"`（与 web-all 同写法）
+- `files` 白名单补 `icon.svg`（否则不随 npm 包发出；`npm pack` 预演已确认带上）
+- 25 套测试全绿
 ## v0.5.3 — 收起面板不再"自动弹回上次的面板" + README 界面一览（2026-09-24）
 
 - **修**：点「框架升级 / 回滚」（就地打开）→ 关掉弹窗 → 收起面板 → 再展开，弹窗又自己弹出来。
