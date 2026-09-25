@@ -1,8 +1,9 @@
 > **English**: [README.md](README.md) | **中文**: [README.zh.md](README.zh.md)
 
 ---
+desktop:
+![Entry inside the official plugins page](docs/images/official-plugins-page.png)
 
-<img width="1170" height="609" alt="image" src="https://github.com/user-attachments/assets/b802d606-14ba-4151-9956-ff642ed12b0a" />
 
 # DSH Plugin Gating Hub (dsh-plugin-gating-hub)
 
@@ -20,6 +21,8 @@
 [![GitHub Release](https://img.shields.io/github/v/release/Noob-stupid/dsh-plugin-gating-hub?style=flat-square)](https://github.com/Noob-stupid/dsh-plugin-gating-hub/releases)[![dsh.so security](https://www.dsh.so/badge/dsh-plugin-hub.svg)](https://www.dsh.so/artifact/dsh-plugin-hub)
 [![dsh.so install](https://www.dsh.so/badge/install/dsh-plugin-hub.svg)](https://www.dsh.so/artifact/dsh-plugin-hub)
 
+web:
+<img width="1170" height="609" alt="image" src="https://github.com/user-attachments/assets/b802d606-14ba-4151-9956-ff642ed12b0a" />
 > **Framework upgrade safety & plugin version gating for DeepSeek Harness (DSH)**: one-click
 > framework upgrade with **auto-rollback on failure** → **one-click rollback to the previous
 > version** after an upgrade → plugins the new framework cannot load are **auto-disabled** →
