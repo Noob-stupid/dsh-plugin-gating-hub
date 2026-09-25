@@ -210,6 +210,21 @@ git clone https://github.com/Noob-stupid/dsh-plugin-hub /tmp/dsh-plugin-console 
 
 ---
 
+## 框架兼容性
+
+在隔离实例（全新 `DSH_HOME` + 真实 HTTP 探针）实测：**支持框架 ≥ `0.1.5-rc.2`**，无需任何变通。
+
+| | 0.1.7-rc.2（当前） | 0.1.5-rc.2 / 0.1.2-rc.1 |
+|---|---|---|
+| 官方插件页（`@deepseek-ai/dsh-client-ui-plugin-manager`） | 有 | **框架根本没带这一页** |
+| 官方风格「升级安全」入口 | 显示（挂在那一页自己的 `plugins.bundle.config` 插槽） | 不显示 —— 载体页面都不存在 |
+| 原「插件」tab（`settings.plugins.tab`） | 显示 | **照样显示** |
+| 服务端功能（升级 / 回滚 / 门控 / 市场） | 全有 | **全有**（矩阵里每条路由都返回 200） |
+| 报错 | 无 | **无**（插槽注册静默降级） |
+
+也就是说：老框架上就是**老界面 + 完整功能** —— 新入口不是被隐藏，而是根本没有可挂的地方；不会白屏、不会抛错。
+
+验证矩阵、原始日志，以及一个**框架自身的坑**（`0.1.2-rc.1` 给没有 HMR 服务的 web 树配了 `patchReload: "live"` → 启动约 10 秒后 exit 1，与本插件无关）都记录在 `.testdir/fw-old-matrix/report.md`。
 ## 文档
 
 - [AI 赋能与服务器组件控制](docs/ai-empower.zh.md)

@@ -268,6 +268,21 @@ The floating "Sources" button (right of the title row, semi-transparent) opens t
 
 <img width="393" height="525" alt="56ccd0b3-f174-4365-848b-64013b27d604" src="https://github.com/user-attachments/assets/5a2816ce-12d9-4001-b895-1e422c11d423" />
 
+## Framework compatibility
+
+Measured on isolated instances (fresh `DSH_HOME`, real HTTP probes) — **supported: framework ≥ `0.1.5-rc.2`**, no workarounds needed.
+
+| | 0.1.7-rc.2 (current) | 0.1.5-rc.2 / 0.1.2-rc.1 |
+|---|---|---|
+| Official plugins page (`@deepseek-ai/dsh-client-ui-plugin-manager`) | present | **not shipped by the framework at all** |
+| The official-style **Upgrade safety** entry | shown (hosted in that page's own `plugins.bundle.config` slot) | not shown — there is no page to host it |
+| Classic **Plugins** tab (`settings.plugins.tab`) | shown | **shown** |
+| Server-side features (upgrade / rollback / gating / marketplace) | all available | **all available** (every route answered 200 in the matrix) |
+| Errors | none | **none** (the slot registration degrades silently) |
+
+So on an older framework the plugin is **the old UI with the full feature set** — the new entry simply has nowhere to live. It never white-screens and never throws.
+
+Verification matrix, raw logs and the one framework-side caveat (`0.1.2-rc.1` ships `patchReload: "live"` for a web tree without the HMR service → boot exits 1 after ~10s; unrelated to this plugin) are recorded in `.testdir/fw-old-matrix/report.md`.
 ## Documentation
 
 - [AI Empower 与服务器组件控制](docs/ai-empower.md)
