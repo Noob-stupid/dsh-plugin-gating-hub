@@ -219,6 +219,12 @@ for (const [name, expr] of blocks) {
   check(`${name}：无未替换的桩值（未知标识符已兜底，列出供核对）`, true, stubbed.size === 0 ? '（无未知标识符）' : [...stubbed].join(','))
   check(`${name}：路径未被 PowerShell 插值破坏（含 $ 的路径保持原样）`, script.includes('$weird') && !/\$\{/.test(script), script.split('\n').find((l) => l.includes('weird'))?.slice(0, 90))
   check(`${name}：不含空串字面量 '' 误用（$cp 类判空）`, !/=\s*'""'/u.test(script), script.split('\n').find((l) => /=\s*'""'/u.test(l)) ?? '（无）')
+  // 2026-09-25 真机事故：生成器里写了 JS 风格注释 `//`，被原样写进 PowerShell —— PS 把 `//` 当命令名执行，
+  // 报「无法将"//"项识别为 cmdlet…」→ 脚本异常终止、升级记录留一条吓人的失败（框架其实已经升好了）。
+  // 这类错误 PowerShell 语法解析查不出来（裸命令是合法语法），只能靠这条规则拦。
+  check(`${name}：没有把 JS 注释 // 写进 PowerShell（PS 会把 // 当命令执行）`,
+    !script.split(/\r?\n/u).some((l) => l.trim().startsWith('//')),
+    script.split(/\r?\n/u).find((l) => l.trim().startsWith('//'))?.slice(0, 90) ?? '（无）')
   if (name === '升级脚本') {
     check('升级脚本含启动失败隔离（Invoke-Quarantine）', script.includes('function Invoke-Quarantine') && script.includes('安全模式'))
     // 比较**调用点**顺序：隔离重试必须发生在回滚调用之前（函数定义在文件更前面，不能拿定义位置比）
