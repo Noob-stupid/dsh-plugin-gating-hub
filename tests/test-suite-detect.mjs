@@ -185,15 +185,16 @@ check('★ 汇总里带上 git 自己的话（stderr），而不是只有 Comman
   }]).includes('git 说：') === true)
 
 // 2026-09-20 本机实测：%TEMP% 下 rmSync 会**静默落空**（不抛错、目录仍在）。此时再换下一个源
-// 只会多出一条"目录非空"，把第一个源的真实错误一起搅浑 —— 所以 gitCloneRepo 改为清不掉就 break，
-// 并且必须在文案里说清"目录清不掉、多源重试无效、请手动删除"。
+// 只会多出一条"目录非空"，把第一个源的真实错误一起搅浑。
+// 2026-09-26 真机修正：清不掉**不再 break**（改用 .tryN 新目录继续试下一个源），
+// 文案也不再谎报"环境禁止删除"——如实说是"仍被 git 占用（已尝试结束进程）"并给出手动删除命令。
 const uncleanMsg = summarizeCloneErrors([
-  { url: 'https://ghproxy.net/https://github.com/o/r.git', message: 'Command failed: git clone u d' },
-  { url: 'https://github.com/o/r.git', message: '克隆目标目录无法清理（环境禁止删除）：C:/t/x', unclean: true },
+  { url: 'https://ghproxy.net/https://github.com/o/r.git', message: '克隆超时', timedOut: true },
+  { url: 'https://github.com/o/r.git', message: '克隆失败，且残留目录无法清理（可能仍被 git 占用）：C:/t/x.try2', unclean: true, dir: 'C:/t/x.try2' },
 ])
-check('★ 清理失败时明确说「目录清不掉、多源重试无效」并给出人工处理办法',
-  uncleanMsg.includes('（目标目录清不掉，未重试）') && uncleanMsg.includes('多源重试因此无效')
-  && uncleanMsg.includes('请手动删除该目录后重试'), uncleanMsg)
+check('★ 清理失败时如实说明「残留目录被占用」并给出手动处理办法',
+  uncleanMsg.includes('残留目录被占用，已跳过重试') && uncleanMsg.includes('Remove-Item -Recurse -Force')
+  && !uncleanMsg.includes('环境禁止删除') && uncleanMsg.includes('超时，进程已结束'), uncleanMsg)
 
 // ── ⑨ 删除必须核实：rmSync 在本机某些环境下会「静默落空」（不抛错、目录仍在） ──────────
 // 演练实测（2026-09-20）：同一个 rmSync 在 D:\dsh\repos 删得掉，在 C:\Users\<user>\.dsh\… 下
