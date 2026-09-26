@@ -150,7 +150,9 @@ function build(expr) {
 
 // 真实的 ps / relaunchPrelude 实现（用于下面的真机行为验证）
 const realPs = new Function(`${psImpl}; return ps;`)()
-const makePrelude = relaunchPreludeSrc === '' ? null : new Function('join', `${relaunchPreludeSrc}; return relaunchPrelude;`)(join)
+// 2026-09-26：relaunchPrelude 现在会自己判定宿主形态（外壳托管时生成"拒绝拉起"的脚本），
+// 抠出来的源码片段必须把 domain/framework.js#detectHostShape 作为依赖喂进去（本沙箱是纯 node，判为独立实例）。
+const makePrelude = relaunchPreludeSrc === '' ? null : new Function('join', 'detectHostShape', `${relaunchPreludeSrc}; return relaunchPrelude;`)(join, () => ({ hosted: false, kind: 'standalone', reasons: [], notice: null }))
 // with(scope) 里 has() 恒真：函数声明会被 scope 对象环境遮蔽，必须把真实实现挂到 scope 上
 if (makePrelude !== null) scope.relaunchPrelude = makePrelude
 // 2026-09-24：升级脚本数组里现在是 fwIntegrityCheck({...}) 的返回值，把真实实现挂进 scope；
