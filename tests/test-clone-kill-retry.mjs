@@ -2,7 +2,7 @@
 //   ghproxy 卡死 → 我们超时到了但**没杀 git 进程** → git/remote-https/index-pack 常驻占住 .git 里的文件
 //   → 目标目录删不掉 → 旧代码谎报「当前环境禁止删除」并**放弃后续源**（break）。
 // 本测试全部离线（注入 spawn/探活/删除/改名），断言四件事：
-//   ① 超时会调用 killTree（杀整棵进程树）
+//   ① 超时会调用 killTree（杀整棵进程树），且等不到退出会补杀一次（2026-09-26 加法）
 //   ② 每次尝试用**不同的**新目录（.try1 / .try2），残留不再连锁失效
 //   ③ 清理失败（unclean）后**仍然继续试下一个源**（旧代码会 break）
 //   ④ 错误信息给出真实原因 + 可复制的手动删除命令（不再谎报环境禁止删除）
@@ -62,7 +62,9 @@ const DEST = 'C:/tmp/whatever/dsh-suite-job-9'
     } catch (error) { return error }
   })()
   check('超时：两个源都被尝试', seen.length === 2, `spawn ${seen.length} 次`)
-  check('超时：每次都调用了 killTree（杀整棵进程树）', kills.length === 2, `killTree ${kills.length} 次：${kills.join(',')}`)
+  // 2026-09-26（本次）：杀树后要**等子进程真的退出**；这里假进程永不 close，所以每个源都走"两轮 kill+wait"
+  // → 每个源 2 次 killTree，合计 4 次。断言从"2 次"改成"4 次"，正是"杀不掉就补杀"的回归闸门。
+  check('超时：每次都调用了 killTree，且等不到退出会补杀一次（2 源 × 2 次）', kills.length === 4, `killTree ${kills.length} 次：${kills.join(',')}`)
   const tried = seen.map((s) => s.argv[s.argv.length - 1])
   check('每次尝试用不同新目录（残留不再连锁失效）', tried[0] !== tried[1] && /\.try1$/u.test(tried[0]) && /\.try2$/u.test(tried[1]), tried.join(' | '))
   check('错误信息标出「超时，进程已结束」', /超时，进程已结束/u.test(err?.message ?? ''), (err?.message ?? '').slice(0, 90))
