@@ -135,6 +135,38 @@ check('客户端 localStorage 关键键仍在', missingLs.length === 0, missingL
     /const remain = consentRemaining\(consentJob\)/u.test(clientSrc) && clientSrc.includes('consentTimeoutMinutes(consentJob)'))
 }
 
+// ── ⑦ 安装诊断三字段的前端接线（2026-09-26 加法）───────────────────────────────
+// 服务端 installJobView 已经下发 diagnosis / entryCheck / integrity（形状由 test-install-diagnose.mjs /
+// test-install-verify.mjs 钉死）。这里钉死前端**确实在渲染它们**，并钉死"面板只放短句"的实现方式：
+// 服务端的长文案（hint / problems / suggestions / note）只允许挂 title 悬浮提示，不许铺进面板正文。
+{
+  const DIAG_KEYS = [
+    'diagCardTitle', 'diagColon', 'diagSemi', 'diagDot',
+    'diagKindNetworkTimeout', 'diagKindAllowBuilds', 'diagKindMinimumReleaseAge', 'diagKindMissingTool',
+    'diagKindNotFound', 'diagKindLocked', 'diagKindOther', 'diagRetried', 'diagRetriedMark',
+    'diagEntryFail', 'diagEntryReasonEntry', 'diagEntryReasonPatch', 'diagEntryReasonBundle',
+    'diagEntryAdviceMirror', 'diagEntryAdvice',
+    'diagIntegrityOk', 'diagIntegrityNone', 'diagIntegrityMismatch', 'diagIntegritySkip',
+  ]
+  const countOf = (k) => [...clientSrc.matchAll(new RegExp(`\\b${k}\\s*:`, 'gu'))].length
+  const notBoth = DIAG_KEYS.filter((k) => countOf(k) !== 2) // 中文 + English 各一处
+  check(`安装诊断 i18n 键中英两套都在（${DIAG_KEYS.length} 个）`, notBoth.length === 0,
+    notBoth.length === 0 ? '全部命中两次（zh+en）' : notBoth.map((k) => `${k}:${countOf(k)}`).join(', '))
+  check('★ 三字段都接进渲染（diagnosis / entryCheck / integrity 各读一次 + 失败卡片 + 诊断卡）',
+    /view\.diagnosis \?\? null/u.test(clientSrc) && /view\.entryCheck \?\? null/u.test(clientSrc)
+    && /view\.integrity \?\? null/u.test(clientSrc)
+    && clientSrc.includes('...diagLines(job).map(diagLineEl)') && clientSrc.includes('map((job) => diagCardEl(job))')
+    && clientSrc.includes('diagMessage(data)'))
+  check('短句铁律：长文案只进 title，不进面板正文',
+    /title: problems\.length === 0 \? null : problems\.join/u.test(clientSrc)
+    && /title: typeof diagnosis\.hint === "string"/u.test(clientSrc)
+    && /title: typeof integrity\.note === "string"/u.test(clientSrc)
+    && !/el\("p"[^)]*diagnosis\.hint/u.test(clientSrc) && !/el\("p"[^)]*check\.problems\[0\]/u.test(clientSrc))
+  check('沿用既有样式约定渲染诊断行（styles.message + data-error / data-warn，无新徽章/按钮）',
+    clientSrc.includes('.pc_message[data-warn=true]') && /"data-warn": line\.level === "warn"/u.test(clientSrc)
+    && /"data-error": line\.level === "error"/u.test(clientSrc) && /const diagLineEl = \(line\) => el\("p"/u.test(clientSrc))
+}
+
 rmSync(HOME, { recursive: true, force: true })
 console.log(failed === 0 ? '\nALL PASS' : `\n${failed} FAILED`)
 process.exit(failed === 0 ? 0 : 1)
