@@ -63,8 +63,10 @@ function check(name, ok, info = '') {
     !bare.includes('--registry') && !bare.join(' ').includes('undefined'), bare.join(' '))
   check('pnpmAddArgs：fetchFlags=false 时只留原参数（降级用）',
     pnpmAddArgs('left-pad', 'https://r', { fetchFlags: false }).join(' ') === 'add left-pad --registry https://r')
-  check('unknownPnpmOption：认 pnpm 的真实报错文案',
+  check('unknownPnpmOption：认 pnpm 的真实报错文案（两代都要认）',
     unknownPnpmOption("[ERROR] Unknown options: 'fetch-timeout', 'fetch-retries'") === true
+    // pnpm 12（corepack 默认 12.6.0）：clap 风格文案 —— 2026-09-26 就是漏了这条，CI 真装真卸冒烟红
+    && unknownPnpmOption("error: unexpected argument '--fetch-timeout' found\n\nUsage: pnpm add --registry <REGISTRY> <PACKAGE_NAMES>...") === true
     && unknownPnpmOption('ERR_PNPM_FETCH_404') === false)
 }
 
@@ -94,6 +96,19 @@ function check(name, ok, info = '') {
   try { await pnpmInstall('C:/tmp/profile', 'left-pad', 'https://r', 1000, null, { run: pickyRun }) } catch (error) { downgradeError = error }
   check('加固选项不被支持时：去掉后重试一次并成功（加固不导致装不上）',
     downgradeError === null && downgrade.length === 2 && !downgrade[1].includes('--fetch-timeout'), downgrade.join(' || '))
+
+  // 同上，但用 pnpm 12 的真实文案（"unexpected argument"）：这条以前不触发降级 → 装不上
+  const downgrade12 = []
+  const pickyRun12 = async (args) => {
+    downgrade12.push(args.join(' '))
+    if (args.includes('--fetch-timeout=60000')) {
+      throw new Error("Command failed: pnpm add left-pad --fetch-timeout=60000\nerror: unexpected argument '--fetch-timeout' found\n\nUsage: pnpm add --registry <REGISTRY> <PACKAGE_NAMES>...\n\nFor more information, try '--help'.")
+    }
+  }
+  let downgrade12Error = null
+  try { await pnpmInstall('C:/tmp/profile', 'left-pad', 'https://r', 1000, null, { run: pickyRun12 }) } catch (error) { downgrade12Error = error }
+  check('★ pnpm 12 文案（unexpected argument）同样触发降级重试：去掉加固后装得上',
+    downgrade12Error === null && downgrade12.length === 2 && !downgrade12[1].includes('--fetch-timeout'), downgrade12.join(' || '))
 
   // 真实安装失败（非 Unknown option）→ 原样抛出，不重试（不改变既有失败语义）
   const realFail = []
