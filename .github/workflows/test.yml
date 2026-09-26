@@ -57,6 +57,8 @@ jobs:
           # 批次 A-②/③ 的真实验收：本机"只连不传"桩源 + **真 pnpm/git**，断言 git 预算到点停手、
           # 且展开出来的下一个候选照旧被尝试（15.6 秒收尾；不需要外网）
           node tests/test-real-git-budget.mjs
+          # 批次 A-③：懒惰展开的位置（registry 通道之后、git 通道之前）+ 根包 private 时禁 git
+          node tests/test-expand-order.mjs
 
       # 真装真卸冒烟：在 CI 的 Linux 宿主上跑（临时 DSH_HOME，不碰真实目录）。
       # 为什么单独一步且**不带** DSH_TEST_SKIP_NETWORK：环境相关测试"没 profile 就整体 SKIP"，
