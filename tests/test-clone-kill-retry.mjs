@@ -44,7 +44,7 @@ function fakeFailingSpawn(seen, code = 128, stderr = 'fatal: unable to access re
 
 const DEST = 'C:/tmp/whatever/dsh-suite-job-9'
 
-// ① + ② + ④：两个源都超时 → 杀树两次、用两个不同目录、报真实原因与手动删除命令
+// ① + ② + ④：两个源都超时 → 每个源「正常超时 + 更长超时重试一次」= 4 次尝试，杀树 8 次（每次 2 轮）
 {
   const seen = []
   const kills = []
@@ -57,18 +57,23 @@ const DEST = 'C:/tmp/whatever/dsh-suite-job-9'
         probe: async () => true,
         removeDir: (dir) => { dirs.push(dir); return { ok: true } },
         renameDir: () => {},
+        readMemo: () => '', writeMemo: () => {},
       })
       return null
     } catch (error) { return error }
   })()
-  check('超时：两个源都被尝试', seen.length === 2, `spawn ${seen.length} 次`)
-  // 2026-09-26（本次）：杀树后要**等子进程真的退出**；这里假进程永不 close，所以每个源都走"两轮 kill+wait"
-  // → 每个源 2 次 killTree，合计 4 次。断言从"2 次"改成"4 次"，正是"杀不掉就补杀"的回归闸门。
-  check('超时：每次都调用了 killTree，且等不到退出会补杀一次（2 源 × 2 次）', kills.length === 4, `killTree ${kills.length} 次：${kills.join(',')}`)
+  // 2026-09-26（本次）：同一个源超时后会用**更长超时重试一次**（源策略），所以 2 个源 = 4 次尝试
+  check('超时：两个源都被尝试，且各自同源重试一次（2 源 × 2 次 = 4）', seen.length === 4, `spawn ${seen.length} 次`)
+  check('超时：每次都调用了 killTree，且等不到退出会补杀一次（4 次尝试 × 2 = 8）', kills.length === 8, `killTree ${kills.length} 次`)
+  const timeoutPair = (err?.message ?? '').match(/克隆超时（(\d+)ms），改用 (\d+)ms 同源重试/u)
+  check('同源重试用的是更长超时（≥1.5 倍，真机 ghproxy 卡死场景）',
+    timeoutPair !== null && Number(timeoutPair[2]) >= Number(timeoutPair[1]) * 1.5,
+    timeoutPair === null ? '（文案里没有重试超时信息）' : `${timeoutPair[1]}ms → ${timeoutPair[2]}ms`)
   const tried = seen.map((s) => s.argv[s.argv.length - 1])
-  check('每次尝试用不同新目录（残留不再连锁失效）', tried[0] !== tried[1] && /\.try1$/u.test(tried[0]) && /\.try2$/u.test(tried[1]), tried.join(' | '))
-  check('错误信息标出「超时，进程已结束」', /超时，进程已结束/u.test(err?.message ?? ''), (err?.message ?? '').slice(0, 90))
+  check('每次尝试用不同的新目录（残留不再连锁失效）', new Set(tried).size === tried.length && /\.try1$/u.test(tried[0]) && /\.try2$/u.test(tried[1]), tried.join(' | '))
+  check('错误信息标出「超时，进程已结束」与「已改用更长超时重试」', /超时，进程已结束/u.test(err?.message ?? '') && /已改用更长超时重试/u.test(err?.message ?? ''), (err?.message ?? '').slice(0, 110))
   check('错误信息不再谎报「环境禁止删除」', !/环境禁止删除/u.test(err?.message ?? ''))
+  check('错误信息把「源数」与「尝试次数」分开报（4 次尝试 / 2 个源）', /已尝试 2 个源（共 4 次尝试）/u.test(err?.message ?? ''), (err?.message ?? '').slice(0, 80))
 }
 
 // ③：第一个源失败且**清理不掉**（残留被占用）→ 仍然继续试第二个源
@@ -104,6 +109,7 @@ const DEST = 'C:/tmp/whatever/dsh-suite-job-9'
         probe: async () => false,
         removeDir: () => ({ ok: true }),
         renameDir: () => {},
+        readMemo: () => '', writeMemo: () => {},
       })
       return null
     } catch (error) { return error }
@@ -125,6 +131,7 @@ const DEST = 'C:/tmp/whatever/dsh-suite-job-9'
     probe: async () => true,
     removeDir: () => ({ ok: true }),
     renameDir: (from, to) => { renames.push([from, to]) },
+    readMemo: () => '', writeMemo: () => {},
   })
   check('成功后把 .try1 落成目标目录并返回 dest', res?.dir === DEST && renames.length === 1 && renames[0][1] === DEST, JSON.stringify(renames))
 }
