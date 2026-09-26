@@ -33,8 +33,8 @@ for (const [name, files, env] of suites) {
     const ms = Date.now() - t
     const out = `${r.stdout ?? ''}${r.stderr ?? ''}`
     const tail = out.trim().split('\n').slice(-1)[0] ?? ''
-    // 失败判据：非零退出码，或输出里出现"FAIL <断言名>"、"N FAILED"、"N FAILED（…）"
-    const bad = r.status !== 0 || /^FAIL /mu.test(out) || /\d+ FAILED/mu.test(out) || /ALL PASS/u.test(out) === false
+    // 失败判据：非零退出码 或 输出里出现"FAIL <断言名>"、"N FAILED"（各套自报格式不一，退出码为准）
+    const bad = r.status !== 0 || /^FAIL /mu.test(out) || /\d+ FAILED/mu.test(out)
     if (bad) failed += 1
     console.log(`${bad ? '❌' : '✅'} ${f}  exit=${r.status}  ${(ms / 1000).toFixed(1)}s  ${tail.slice(0, 120)}`)
     if (bad) console.log(out.split('\n').filter((l) => /FAIL/u.test(l)).slice(0, 12).join('\n'))
