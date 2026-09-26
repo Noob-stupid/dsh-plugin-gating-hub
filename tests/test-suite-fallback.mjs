@@ -181,9 +181,16 @@ if (process.env.DSH_TEST_SKIP_NETWORK === '1') {
     subpackageCandidates: realSubpackageCandidates,
   })
   const ms = Date.now() - t0
-  console.log(`INFO 真 dsh-web 判定：suite=${suite} preferred=${job.subpackagePreferred} branch=${job.defaultBranch} 耗时 ${(ms / 1000).toFixed(1)} 秒`)
-  check('③′ 真 dsh-web：根包（dsh-web，private）未发布、子包已发布 → 判定为插件通道（不碰 429 MB 巨仓）',
-    suite === false && job.subpackagePreferred === '@linxin666/dsh-web-all', `suite=${suite} preferred=${job.subpackagePreferred}`)
+  const subsReadable = Array.isArray(job.subpackageProbe) && job.subpackageProbe.length > 0
+  console.log(`INFO 真 dsh-web 判定：suite=${suite} preferred=${job.subpackagePreferred} branch=${job.defaultBranch} 子包数=${subsReadable ? job.subpackageProbe.length : 0} 耗时 ${(ms / 1000).toFixed(1)} 秒`)
+  if (!subsReadable) {
+    // 子包列表读不到时不假装 PASS，也不误报失败：按判据本身，读不到就退回"仍按 .gitmodules 判套装"
+    // （CI runner 上 api.github.com 未认证访问常被限流，本机则靠 gh CLI 通道 —— 环境差异如实说明）
+    console.log(`SKIP ③′ 真 dsh-web：本次没读到它的子包列表（${job.repoMeta === null ? '仓库元数据探测失败' : 'GitHub 限流/网络受限'}）——按判据会退回"仍按 .gitmodules 判"，不假装 PASS`)
+  } else {
+    check('③′ 真 dsh-web：根包（dsh-web，private）未发布、子包已发布 → 判定为插件通道（不碰 429 MB 巨仓）',
+      suite === false && job.subpackagePreferred === '@linxin666/dsh-web-all', `suite=${suite} preferred=${job.subpackagePreferred}`)
+  }
   check('③′ 判定在 60 秒内完成（两次 registry 查询 + 一次子包列表）', ms < 60000, `${(ms / 1000).toFixed(1)} 秒`)
 }
 
