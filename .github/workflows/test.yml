@@ -49,6 +49,9 @@ jobs:
           node tests/test-install-verify.mjs
           node tests/test-upgrade-script-blocks.mjs
           node tests/test-lockfile-health.mjs
+          # 批次 A-①（2026-09-27）：git 克隆的停滞判据（-c http.lowSpeedLimit=1 -c http.lowSpeedTime=20）
+          # 含一段**真 git** 对着本机"只连不传"桩源的 ≈20 秒判死断言（不出外网，CI 可跑）
+          node tests/test-git-stall-guard.mjs
 
       # 真装真卸冒烟：在 CI 的 Linux 宿主上跑（临时 DSH_HOME，不碰真实目录）。
       # 为什么单独一步且**不带** DSH_TEST_SKIP_NETWORK：环境相关测试"没 profile 就整体 SKIP"，
