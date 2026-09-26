@@ -2,6 +2,117 @@
 
 All notable changes to dsh-plugin-hub.
 
+## v0.5.17 — pnpm 通道杀树后「等子进程真退出」+ 删不掉时 rename 降级成 `.trash-*`（改错 + 加法，内核零改动）（2026-09-27）
+
+本版是**两处健壮性补强**，都属「改错 + 加法」：安装/升级/门控的**成功判定与公开行为语义未变**
+（成功路径代码一字未动）；唯一有意变动的对外表述是**失败文案**——从「请手动删除」改成「已改名降级为
+`.trash-*`，稍后自动清理」（用户指定）。
+
+### 一、pnpm 通道：杀完树要**等它真的退出**才收尾（改错）
+
+**问题**（`lib/server/infra/exec.js#execFileWithKillTree`）：超时/中断时是
+`killTreeNow(); finish(killedError(…))` —— **同一个 tick** 完成，约 **+1ms** 就抛
+「已终止整棵进程树」，而整棵树实际还要一会儿才从进程表/句柄表消失：
+
+- POSIX：SIGKILL 的「投递 → 目标被调度死亡 → 被 init 收割」是**异步**的（CI run `36246293996` 实测约 120ms）；
+- 本机 Windows：`taskkill /F /T` 虽是同步等待，但**目录项/句柄释放仍晚一拍** —— 本次探针实测
+  `killTree` 同步耗时 228ms、目录第一次删得掉于 **+277ms**（此时 pid 早已消失）。
+
+于是调用方（`pnpmRemove` 后立刻删目录、install 失败清场、`.tryN` 残留清理）仍会撞「文件被占用」。
+**注意这是 pnpm 通道独有的缺口**：git 通道早在 `domain/repoland.js#waitChildExit` 里就等了。
+
+**修法**：杀完树后**有界等待**它真退出，然后才 resolve/reject。
+
+- 轮询 `processAlive(pid)`：上限 **2000ms**、间隔 **60ms**（`opts.killWaitMs` / `killWaitPollMs` 可调，
+  `killWaitMs=0` 即显式退回旧行为）；
+- 到点仍未退出**不阻塞**：照原路径收尾，并把 `waitedMs` / `exited` **如实**写在错误对象上
+  （`runPnpmWithFallback` 包装时一并保真，否则上层看不到）；
+- 收尾（超时/中断/超 maxBuffer 三条失败路径）等待期间 **close/error 不许抢答** —— 否则带
+  `pid/timedOut/exited` 的 `killedError` 会被一句 `code=null 的普通失败` 顶掉；
+- **成功路径零改动**：`{stdout,stderr}` 的 resolve 形状与既有字段一字未变（有回归断言钉死）。
+
+### 二、删不掉时 rename 降级成 `.trash-<ts>` + 后台清理（加法；不再要求手动删除）
+
+**问题**：`removeDirVerifiedWithRetry`（3 轮 × 250ms + `rmdir` 兜底）仍失败时，旧代码只能报错，并把
+「可手动删除后重试：`Remove-Item -Recurse -Force …`」/「当前环境可能禁止删除，请手动删除」甩给用户。
+
+**修法**：新增 `lib/server/infra/fsx.js#disposeDir(dir)` —— 先 `removeDirVerifiedWithRetry`，
+**仍失败就同父目录 rename** 成 `.trash-<时间戳>-<随机>`。rename 只改目录项、不动内容，所以
+「目录里有进程正在用的文件」这类占用通常挡不住它；改完原路径就空出来了，调用方可以继续
+（install 能落新包、`.tryN` 能重来、删除能收尾）。返回结构化结果
+`{ status:'removed'|'trashed'|'failed', removed, trashed, ok, path, trashPath, reason, attempts,
+rounds, method, lockFailure }`（`ok` 的含义是"**原路径已经让开**"）。
+
+调用点（grep 定位后逐个接）：`repoland.js` 的 `.tryN` 残留与 clone 前的 dest 清理、
+`install-job.js` 的失败清场（候选包目录 + pnpm `_tmp_` 半成品）、`routes/components.js`
+（落地失败清场 + `/repo-remove`）、`routes/skills.js`（技能删除）。面向前端短句统一由
+`disposeNote()` 生成：**「目录正被占用，已改名降级为 `.trash-*`，稍后自动清理」**，
+**任何分支都不再出现「请手动删除 / Remove-Item」**。
+
+**后台清理（加法、尽力而为、绝不阻塞主流程）**：`cleanupTrashDirs` / `startTrashCleanup` 在
+**插件启动钩子**与**每次安装开始前**各触发一次（即发即忘），扫 `tmpdir` / profile `node_modules` /
+`~/.dsh/skills` / repos 下的 `.trash-*`（深度 ≤2）：最多处理 **20 个**、单个最多等 **1s**（到点就
+不管它、留到下次），任何异常都吞掉只记日志，返回 `{ scanned, removed, kept, skipped, more, ms, dirs, error }`
+如实统计（不假装扫全、不假装成功）。
+
+### 三、借自哪两家（如实标注）
+
+- **② 的 `isLockFailure` + rename 降级**：借自 **2BingLing/dsh-market** ——
+  `plugin/core/src/installer.ts` 的 `isLockFailure()`（占用/权限类失败的判据正则**逐字沿用**：
+  `EPERM|EACCES|EBUSY|being used by another process|resource busy|in use by another|Access is denied|Cannot create file`）
+  与「目标已存在/setup 失败时先把目录 `renameSync` 成 `<dest>.bak-<ts>` 让开」的做法。
+  我们把 `.bak-` 换成 `.trash-<ts>-<rand>` 并**补了后台清理**（借来的做法只让开、不回收）。
+- **① 的「杀完树等它真退出」**：不是外部项目 —— 是**我们自己 git 通道已有**的
+  `waitChildExit` 思路搬进 `infra/exec.js`，让 pnpm 通道与 git 通道**共用同一份语义**
+  （同一类坑不各踩一次）。本次顺带把判据从"监听 close/exit"收紧为"轮询 `processAlive`"，
+  并新增 `waitedMs/exited` 两个可被上层读取的字段。
+
+### 四、验证
+
+- **CI 全绿（本版门禁，双 step）**：commit `8e55625` → run **`36253556394`**：
+  `Unit tests (hard gate)` ✅ + `Real install/uninstall smoke (temp DSH_HOME)` ✅
+  （另有 `Environment-dependent tests` ✅）。
+  此前同一批改动的 run `36253340149`（commit `e5e366a`）**红在 Unit tests**：CI（Ubuntu）抓到
+  **Linux 允许删除"活进程的 cwd"**（Windows 才会拦），我原来的"占用"夹具跨平台假设错了 ——
+  已按平台改夹具（POSIX 用只读子目录 = 删不掉但能改名；Windows 专属的滞后实测在 POSIX 上
+  **如实 SKIP 并写明原因**，不假装 PASS），见 commit `8e55625`。
+- **本机全量**：`node tests/test-*.mjs` **39 套逐条 exit=0**（原 37 套 + 本版新增 2 套）；
+  `node --check` 全绿；`.github/workflows/test.yml` 的硬门槛清单里加入了两个新测试。
+- **真实测试（真进程 / 真文件占用 / 隔离目录，原始输出见 commit 与测试文件）**：
+  - ① `tests/test-killtree-wait.mjs`（PASS 23 / FAIL 0）：注入桩钉死顺序
+    「先杀树 → 再轮询探活 → 最后才 settle」（含封顶、`killWaitMs=0`、close/error 抢答、包装保真）；
+    **真机**：故意超时 1500ms → 错误到手瞬间被杀 pid 已不存在、整棵树（父 + 孙）无残留、
+    **目录第 1 次尝试即删除成功（滞后 0ms）**；
+  - ② `tests/test-trash-fallback.mjs`（PASS 38 / FAIL 0）：注入桩覆盖
+    「删除永远失败 → 必须走 rename 且返回 `trashed`」「rename 也失败 → 明确双原因且文案无
+    『请手动删除』」「上限 / 单条超时 / 异常全吞 / 即发即忘入口永不 reject」；
+    **真机**：目录内有正在运行的 exe → 先验「真的删不掉」→ `disposeDir` 走 rename 成功
+    （耗时 110ms、占用进程仍在跑）、`.trash-*` 真存在且删不掉的那个文件跟着搬走 →
+    占用未解除时后台清理 `kept`（不谎报）→ 杀占用进程后后台清理 `removed=1`、`.trash-*` 消失。
+  - 另一条真机证据：`tests/test-install-smoke.mjs`（真 pnpm + 真 git + 真 registry，本机直连跑通）
+    **ALL PASS** —— pnpm 装/卸与 git 克隆两条真实通道都过了本次改动。
+
+### 未验证 / 不确定项（如实列出）
+
+- **① 的实战价值在 Windows 上有限**：本机 `taskkill /F /T` 本来就是同步等待，实测 `waitedMs` 多为 0；
+  这条修复的价值主要在 **POSIX**（SIGKILL 异步、实测约 120ms 窗口）**以及"保证"本身**
+  （不再出现"杀完立刻抛、以为句柄已释放"）。**没有**在 Linux 真机上测出"修复前 vs 修复后"的
+  前后对照（本机是 Windows），Linux 侧证据 = CI 跑绿 + 既有的有界等待断言。
+- **② rename 的边界（实测，未夸大）**：目录里有**正在运行的 exe** → 删不掉但**改名成功** ✅；
+  目录是**活进程的 cwd** → 改名 `EBUSY`；目录内有以 **share=None** 打开的**文件句柄** → 改名 `EPERM`
+  （父目录项被锁）。后两种改名也失败时如实返回 `status:'failed'`（不再让用户手动删除，后台会继续试）。
+- **`.trash-*` 里若是只读子目录（POSIX）**：`clearReadonly` 只清**文件**的只读位、不清目录位
+  （既有行为，本版**未改**），所以这类降级目录在被恢复权限前清不掉 —— 后台清理会 `kept` 留着下次。
+  它至少已经把原路径让开了（这就是降级的目的）。
+- **`routes/plugins.js` 的 `/clean-residuals` 未接 disposeDir**（仍是 `removeDirVerifiedAsync`）：
+  它是用户手动触发的清理界面，按项如实报告成功/失败、且文案里本就没有「请手动删除」；
+  改它需要同时改前端 i18n 文案（`count`/`removed` 计数口径），超出本版「改错 + 加法」范围。
+  它留下的 `.trash-*` 会被后台清理接手。
+- **两个 live profile 只做文件级同步 + spec/lock 行更新（未重启）**：新代码要等对应实例重启才生效；
+  本次**不重启**用户实例（3080 / 桌面端）。
+- 本次门禁 = **用户指定的 CI 双 step 全绿**；**未**另跑"全新实例 clean-install 门槛"。
+
+
 ## v0.5.16 — 修「装了 pnpm 12 就一个插件都装不上」（CI 抓到的真事故）+ POSIX 杀树按 /proc 兜底（改错，内核零改动）（2026-09-27）
 
 本版是**修错版**：把 CI 抓到的一个真事故修掉 —— **装了 pnpm 12 的机器走 pnpm 通道任何插件都装不上**，
