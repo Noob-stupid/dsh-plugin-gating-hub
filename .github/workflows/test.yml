@@ -87,6 +87,9 @@ jobs:
         run: |
           node tests/test-real-archive.mjs
           node tests/test-real-npmname-hint.mjs
+          # 0.5.19 套装链修复：根克隆失败必须回落普通通道 + 套装判定前先看根包（子包）是否已发布。
+          # ③′ 段真调 dsh-web 的判据：必须是「子包已发布 → 插件通道」，全程不碰 429 MB 巨仓。
+          node tests/test-suite-fallback.mjs
 
       - name: Environment-dependent tests (auto-SKIP without local profile)
         run: |
