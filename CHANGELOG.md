@@ -2,6 +2,25 @@
 
 All notable changes to dsh-plugin-hub.
 
+## v0.5.13 — 融合社区高星市场的安装健壮性（改错 + 加法，内核零改动）（2026-09-26）
+
+调研 GitHub 上星最多的 13 家 DSH 插件市场/管理器（详见报告），把它们的下载安装优点以**改错 + 加法**方式融合：
+
+- **超时/中断杀整棵进程树，覆盖全部通道**（借鉴 dsh-market / dsh-plugin-shop / Sanqi）：新增
+  `infra/exec.js#execFileWithKillTree`（spawn + 超时/中断/超 buffer 三条失败路径先杀树），pnpm 通道改用它；
+  git 通道复用同一份实现（此前两处各一份）。真机验证：真 pnpm 卡在假 registry 上 6.0s 被杀，父/孙进程均回收。
+- **pnpm 健壮性注入**（借鉴 Sanqi）：追加 `CI=true` 等 env，并为 `pnpm add` 注入 `--fetch-timeout/--fetch-retries`；
+  实测 **pnpm 11 不读同名 env**（只有 CLI 选项生效），且 `pnpm remove` 不认这些选项会报错 → 选项只加在 add，并带"不认就降级重试一次"。
+- **失败分类 → 定向重试一次**（借鉴 dsh-market）：新增 `domain/install-diagnose.js`，网络类超时用更长超时**只重试一次**，
+  其余分类只写 `job.diagnosis` 提示。**`allowBuilds` 只提示、绝不代写白名单**（与 dsh-plugin-shop 的安全取舍一致）。
+- **装后校验 + 下载物摘要校验**（借鉴 dsh-market 的"镜像不完整"诊断 + shop 的 sha256）：
+  新增 `domain/install-verify.js` —— 校验入口 main/exports 存在性、补丁行与包名一致、bundle 引用可解析，
+  失败给出「镜像可能未同步完整」+ 重装/换源建议；tarball 摘要校验（有摘要才校验，**只记录不拒装**，避免误杀镜像重打包源）。
+- **面板可见**：上述三字段接入控制台 UI（短句诊断 + 悬浮详情），中英双语。
+
+测试：新增 4 套（kill-tree / pnpm-env / diagnose / verify）→ **30 套全绿**；真实验收 4 项通过
+（pnpm 真装 + 摘要与 npmmirror 逐字符一致 / 真 pnpm 超时杀树无残留 / git 真克隆 + 故意超时无残留 git / 全量测试）。
+**未验证**：POSIX `kill(-pid)` 未在真 Linux/macOS 跑过；CI 未实际触发。
 ## v0.5.12 — README 还原 + 顶部「Web & Desktop 双支持」小字（2026-09-25）
 
 用户在 GitHub 网页上误改了 README（提交 `7dd319a` "Update README.md"：顶部插入 `desktop:` / `web:` 标签行、
