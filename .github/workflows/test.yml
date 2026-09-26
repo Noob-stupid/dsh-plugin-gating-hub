@@ -42,6 +42,7 @@ jobs:
           node tests/test-skill-toggle.mjs
           node tests/test-harness.mjs
           node tests/test-pnpm-kill-tree.mjs
+          node tests/test-pnpm-env.mjs
 
       # 真装真卸冒烟：在 CI 的 Linux 宿主上跑（临时 DSH_HOME，不碰真实目录）。
       # 为什么单独一步且**不带** DSH_TEST_SKIP_NETWORK：环境相关测试"没 profile 就整体 SKIP"，
