@@ -146,12 +146,13 @@ disposeDir(ROOTDIR)
     (err?.message ?? '').slice(-90))
 }
 
-// 探活失败 → 直接跳过，不启动 git
+// 探活失败 → **不再一次定生死**（2026-09-27 批次 B-⑦ 改错）：降级到最后一轮再试一次，
+// 而不是永久跳过（瞬时抖动会让唯一可用源彻底没机会；真挂掉的源只有一次克隆的代价）。
 {
   const seen = []
   const err = await (async () => {
     try {
-      await gitCloneRepo('a/b', DEST, 'github', 120, {
+      await gitCloneRepo('a/b', DEST2, 'github', 120, {
         spawnFn: fakeFailingSpawn(seen),
         killTree: () => true,
         probe: async () => false,
@@ -162,8 +163,10 @@ disposeDir(ROOTDIR)
       return null
     } catch (error) { return error }
   })()
-  check('源探活失败 → 完全不启动 git', seen.length === 0, `spawn ${seen.length} 次`)
-  check('探活失败在错误清单里标为「探活失败，已跳过」', /探活失败，已跳过/u.test(err?.message ?? ''))
+  check('★ 探活失败的源降级到本轮末尾**真的被尝试**（旧代码 0 次）', seen.length === 2, `spawn ${seen.length} 次`)
+  check('★ 汇总里标明"已降级到本轮末尾重试"（不再说"已跳过"）',
+    /探活失败，已降级到本轮末尾重试/u.test(err?.message ?? ''), (err?.message ?? '').slice(0, 140))
+  disposeDir(ROOTDIR)
 }
 
 // 成功路径：第一个源探活通过 + clone 成功 → try1 改名成 dest
@@ -191,7 +194,8 @@ disposeDir(ROOTDIR)
     { url: 'https://github.com/a/b.git', message: '克隆失败，且残留目录无法清理：C:/t/x.try2', unclean: true, dir: 'C:/t/x.try2' },
     { url: 'https://gitee.com/a/b.git', message: '连不上', skipped: true },
   ])
-  check('汇总：三种标注齐全', /超时，进程已结束/u.test(msg) && /残留目录被占用/u.test(msg) && /探活失败，已跳过/u.test(msg))
+  check('汇总：三种标注齐全（超时 / 残留被占用 / 探活失败已降级到本轮末尾）',
+    /超时，进程已结束/u.test(msg) && /残留目录被占用/u.test(msg) && /探活失败，已降级到本轮末尾重试/u.test(msg), msg.slice(0, 200))
   check('汇总：报第一个错误（真实原因）', /首个错误：克隆超时/u.test(msg), msg.slice(0, 70))
 }
 
