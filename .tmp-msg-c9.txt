@@ -1,0 +1,28 @@
+feat(archive): 新增 archive 通道 —— git 协议拉不动时改走 HTTP 压缩包（加法，C-⑨）
+
+动机（2026-09-27 真机实测）：**同一个 ghproxy.net 域名**下
+  · archive（普通 HTTP GET）能跑到 4 MB/s —— 429 MB / 105 秒下完；
+  · git 协议 0 B/s —— `git clone` 挂到停滞判据判死为止，一个字节都没传。
+于是"git 拉不动"不该等于"这个仓库装不上"。
+
+改法（纯加法，既有 git 路径一个字没改）：
+· 新增 domain/archive-source.js：archiveRepo = 下载（curl，-f -L --max-time）→ 解压
+  （tar -xzf --strip-components=1，另有 flattenSingleDir 兜底）→ `git init && git add -A && git commit`
+  → 落地；返回与 gitCloneRepo 同形的结果（source=archive:<源id>、archive:true、branch、bytes、gitNote），
+  上层无感。超时/杀树/等退出复用 infra/exec.js 的 execFileWithKillTree；半成品目录复用 disposeDir
+  （删不掉就 .trash-* 降级）；失败记录带"本次下载到多少字节"（与 git 通道同一套事实口径）。
+· 分支自动回退 main → master → dev（真机 dsh-web 默认分支是 dev、Hello-World 是 master）。
+· 成功判据是"解压出来有没有内容"，**不是**"有没有 package.json"（套装/技能/示例仓库都没有它）。
+· sources.js：DEFAULT_SOURCES.archiveSources（ghproxy 主 + codeload 备，模板与需求示例逐字一致）
+  + readSources 解析（{owner}/{repo} 必填、{branch} 可选）+ maskSources 下发；老配置没有该字段 →
+  用默认（行为不变）。routes/sources.js 增 add/edit/set-primary/remove-archive 四个动作；
+  client.js 增「软件源 → archive 源」分区（中英双语文案）。
+· repoland.js：git 源（含探活失败的降级轮之前）全部失败后自动接 archive 通道。
+
+验收：
+· tests/test-archive-channel.mjs（CI 硬门槛，全注入）：默认模板逐字核对；主备顺序；分支回退顺序；
+  成功路径（下载→解压→建仓三步、内容落地、返回形状）；超时/空目录失败路径与字节数文案；
+  disposeDir 降级；没有 package.json 但有内容必须算成功。
+· tests/test-real-archive.mjs（真网络，仅本机跑）：git 通道对着"只连不传"桩源全废 → archive 真下载
+  octocat/Hello-World（258 B，分支自动回退到 master）→ 落地并建仓成功（git rev-parse HEAD = 39006b0，
+  全程 9.1 秒）；超时路径 28.4 秒内结束、无 .archive* 残渣。
