@@ -2,6 +2,92 @@
 
 All notable changes to dsh-plugin-hub.
 
+## v0.5.19 — 套装链两处改错：根克隆失败必须回落普通通道 + 套装判定前先看根包（子包）是否已发布（内核零改动）（2026-09-27）
+
+本版**只做改错与加法**：不动内核结构、不删既有能力、不改公开行为语义。三处改动全部落在
+「选哪条通道 / 失败怎么回落」上，成功路径（真套装仓库照旧装配、已发布插件的普通安装）**行为不变**。
+
+### 背景：真机点装 `zhu1090093659/dsh-web`（429 MB 聚合仓）
+
+市场卡片点「添加到本地」时前端发的是 **`kind:'suite'`**：`lib/client.js#addLocal` 先判
+`item.hasSuite === true` 就直接 `startSuiteJob()`，而 enrich 的 `hasSuite` 只看仓库根目录
+`.gitmodules` 的**内容**（该仓库根目录确实有一份 508 B 的真 gitmodules）。本机 live 缓存实测
+`zhu1090093659/dsh-web@dev = {hasSuite:true}` —— 所以真机走的是 `routes/install.js` 直接调
+`runSuiteInstallJob` 这条路，**根本不经过 install-job 的候选循环**。
+
+于是套装第一步就 clone 整个仓库（429 MB），而真正能装上的子包 `@linxin666/dsh-web-all`
+（5.97 MB，npmmirror / npmjs 均 200）**没有任何机会被尝试**。旧代码让这条路必然失败且**没有回落**：
+`runSuiteInstallJob` 整个函数只有一个 try/catch，`notASuite`（把决定权交回普通通道）**只在
+"克隆成功但 `.gitmodules` 为空"时才返回** —— 克隆失败等于没有任何回落，用户只看到一个失败的任务。
+
+> ⚠️ 0.5.18 新增的 archive 通道让"克隆必败"**不再成立**：本机实测**同一个 ghproxy.net 域名**下
+> archive 7.2 MB/s、codeload 18.4 MB/s（15 秒实测下了 100~270 MB）—— 429 MB 会被真的拉下来，
+> 然后进入 22 个子模块的套装装配。所以本版不是"等它失败再兜"，而是**在克隆之前就把通道选对**。
+
+### 一、套装根克隆失败 → 回落普通通道，不再把作业判 failed（改错①）
+
+- `domain/suite.js#runSuiteInstallJob`：单独包住根克隆，失败即
+  `return { notASuite: true, reason: '套装仓库克隆失败（…），已自动回落普通插件安装' }`，
+  **不再置 `job.status='failed'`**；
+- `domain/install-job.js` 与 `routes/install.js` 的回落文案一律改用 `result.reason`
+  —— 克隆失败与"内容不符"是两回事，不能都报成后者（会把用户带偏）；
+- 顺带给根克隆留了 `deps.gitClone` 注入缝（沿用 `runInstallJob` 的 deps 风格，生产调用方不传第三个参数）。
+
+### 二、套装判定前先看根包是否已发布（改错②）
+
+`domain/suite.js` 新增唯一入口 `shouldRunSuiteInstall(job, probes)`，判据顺序（每一步只做"确认"、不做"猜测"）：
+
+1. 读根 `package.json`（结果缓存进 job，下游复用，不重复联网）→ 有 `name` 且 registry 上**确实存在**
+   → **插件通道**（不判套装、不克隆仓库）；
+2. 否则仍按 `.gitmodules` 的**内容**判是否套装（2026-09-19 假阳性事故的口径不变）；
+3. 判成套装后再问一句 registry：根包没发布、但**子包**已发布（真机 dsh-web 就是这种）→ **插件通道**
+   —— 仓库里有已发布的可安装单元时，按包名装才是"装得上 + 能随 lock 更新"的那条路；
+   子包也都没发布（子模块是纯 git 组件）→ **照旧走套装装配，能力一点没少**。
+
+「registry 上存在」只认**确定性命中**：404 / 超时 / 不可达一律当"查不到"——网络问题不能推翻 `.gitmodules` 判据
+（否则一次网络抖动就会把套装安装悄悄变成插件安装）。探测结果缓存在 `job.repoMeta` / `job.rootPkgProbe` /
+`job.subpackageProbe` 上，下游候选循环直接复用。
+
+### 三、套装作业入口的同一道判据（改错③：显式「安装套装」也要过）
+
+`runSuiteInstallJob` 入口再判一次（结论缓存在 `job.suiteDecision` 上，install-job 已判过时**零联网**直接复用）；
+`routes/install.js` 把真实探测（`fetchRepoPackageEx` / `subpackageCandidates` / `probeGitmodules`）传进去。
+判定为"插件通道"时**在克隆之前**返回 `notASuite`，由调用方**既有**的回落逻辑接管
+（路由的 `runSuiteThenFallback` → `runInstallJob`）。
+
+### 验收（真跑，非仅单测）
+
+- 新增 `tests/test-suite-fallback.mjs`（**已进 CI 硬门槛**，27 条断言；前两段纯离线，后两段真 git/pnpm
+  但源与 registry 都在本机 —— 不碰外网、不碰 live profile）：
+  - ① 注入桩让根克隆抛错 → 必须返回 `notASuite`、**不得**置 failed、reason 带错误原文；
+  - ② 克隆成功但 `.gitmodules` 为空 → 仍走原回落路径（不回归）；
+  - ③ 已发布根包 → 不进套装分支；无发布物 → 仍按 `.gitmodules` 判；有已发布子包 → 进插件通道；
+  - ③″ 显式套装请求（真机那条路）+ 有已发布子包 → **克隆之前**就回落，**一次 git 都没碰**（`cloneCalled === 0`）；
+    真套装（子包都没发布）→ 照旧克隆装配（能力没删）；
+  - ④ 真跑：根目录有 `.gitmodules` 但克隆必败（本机 RST 桩源）→ 真的回落普通通道，并按包名从本机
+    registry 桩**真装成功**（真 pnpm，`node_modules` 里确有该包 + 补丁行写入）；
+  - ⑤ 真跑对照：小仓库走 `file://` 裸仓库 git 克隆成功 → 套装装配照旧完成；
+  - ③′（需外网）：本机实测真 `zhu1090093659/dsh-web` → `suite=false`、`preferred=@linxin666/dsh-web-all`、
+    6.7 秒、**一次 git 都没碰**（本机 `api.github.com` 直连不可达，靠 gh CLI 通道读到 8 个子包）；
+    CI runner 上该接口的**未认证**访问会被限流 → 测试如实打印 SKIP 原因，不假装 PASS
+    （所以本套放在确定性的 Unit 硬门槛步，而不是需要外网的 smoke 步）。
+- 全量测试：**52 套失败 0 套**（unit 39 套 / 真网络冒烟 4 套 / env-dependent 9 套；本套在 CI 模式
+  `DSH_TEST_SKIP_NETWORK=1` 下 25/25 —— ③′ 打印 SKIP 原因、不假装 PASS；带外网时 27/27）。
+  CI：run 36270544741（unit / real install smoke / real channel smoke / env-dependent 四步全绿）。
+
+### 未验证 / 不确定项
+
+- **本机官方桌面端实例（19387）的真机 E2E 在本版发布后执行**：点市场卡片（前端 `hasSuite=true` 时实际发的是
+  `kind:'suite'`）→ 断言"不触发克隆、不拉 429 MB、最终装成 `@linxin666/dsh-web-all`"；结果随交付回报补记
+  （若与预期不符会另发修复版，不会只留在回报里）。
+- **显式套装通道的"拒绝"是判据触发，不是用户点不动**：前端只有在 `hasSuite === true` 时才发 `kind:'suite'`，
+  而新增的第三处判据会在"根包/子包已发布"时把这类请求改道插件通道 —— 对**子包已发布**的仓库这是有意的行为变化
+  （对纯 git 组件的真套装无影响）。若将来遇到"就是要装套装、但子包恰好也发过 npm"的仓库，需要新增一个显式覆盖开关。
+- archive 通道对超大仓库的下载仍**没有体积上限**（0.5.18 引入，本版未改）：对没有已发布子包的巨型套装仓库，
+  仍会走归档下载 + 逐子模块装配，耗时可能超出 8 分钟作业预算（作业预算目前只在候选循环里检查）。
+- `zhu1090093659/dsh-web` 的默认分支是 `dev`，子包列表由 `gh api` + raw 读取（本机 `api.github.com` 直连不可达，
+  靠 gh CLI 通道）；若某天 gh CLI 也不可用，则判据 ③ 会退回"读不到子包 → 仍按 .gitmodules 判套装"。
+
 ## v0.5.18 — 多源下载链路的七处「改错 + 加法」：git 停滞判据 / 通道预算 / 展开时机 / archive 通道 / npmName 首选候选（内核零改动）（2026-09-27）
 
 本版**只做改错与加法**：不动内核结构、不删既有能力、不改公开行为语义，**成功路径行为不变**
