@@ -67,6 +67,7 @@ async function cloneAndCatch(dest, bytes) {
     await gitCloneRepo('o/r', dest, 'github', 120, {
       spawnFn: hangingSpawnWithBytes(bytes),
       killTree: () => true,
+      archive: null, // 专测 git 路径：不让 archive 通道接上真网络
       probe: async () => true,
       removeDir: () => ({ ok: true, attempts: 1, rounds: 1 }),
       renameDir: () => {},

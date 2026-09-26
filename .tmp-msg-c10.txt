@@ -1,0 +1,18 @@
+feat(clone): 已落地仓库优先复用 —— 克隆前先看 <reposDir>/<owner>/<repo>（加法，C-⑩）
+
+动机：用户已经用「仓库落地」把仓库拉到本地（默认 ~/.dsh/repos），安装 / 套装装配时再上网拉一遍
+纯属浪费 —— 本机直连不通时更是"白等一场空"。
+
+改法（纯加法，未命中时行为与改动前一致）：
+· 新增纯函数 findLandedRepo(repo, deps)：在 listLandedRepos() 的落地清单里按 owner/name 匹配
+  （大小写不敏感、容忍 .git 后缀），命中还要求目录里**有 package.json** —— 没有它的多半是
+  半成品 / 纯技能仓库，交给正常通道更稳；listLandedRepos 抛异常时安全返回不命中。
+· gitCloneRepo 开头先复用：命中就 copyTree 到 dest（跳过 .git 是有意的，上层只要内容）并返回
+  `{ source:'landed', reused:true, from:<落地路径> }`，**一个网络请求都不发**；dest 恰好就是落地目录
+  本身时不复制、直接复用。
+
+验收：tests/test-landed-reuse.mjs（CI 硬门槛，全注入）
+· 命中判据六连：有/无 package.json、无记录、大小写与 .git 后缀、脏输入、listLandedRepos 抛异常
+· 复用：只发生一次 copy、不 spawn / 不探活，内容真的落到 dest，返回带 from（可追溯"用的本地那份"）
+· dest === 落地目录 → 不复制直接复用
+· 未命中 → 照旧走 git 通道（成功路径行为不变）

@@ -49,6 +49,7 @@ function spawnTimeoutThenSuccess(seen) {
   const res = await gitCloneRepo('octocat/Hello-World', DEST, 'github', 100, {
     spawnFn: spawnTimeoutThenSuccess(seen),
     killTree: () => true,
+    archive: null, // 专测 git 路径：不让 archive 通道接上真网络
     probe: async () => true,
     removeDir: () => ({ ok: true, attempts: 1, rounds: 1 }),
     renameDir: () => {},
@@ -82,6 +83,7 @@ function spawnTimeoutThenSuccess(seen) {
       await gitCloneRepo('a/b', DEST, 'github', 60, {
         spawnFn: (bin, argv) => { seen.push(argv); const h = {}; return { pid: 7000 + seen.length, stderr: { on() {} }, on(e, cb) { h[e] = cb } } },
         killTree: () => true,
+        archive: null, // 专测 git 路径：不让 archive 通道接上真网络
         probe: async (url) => { if (firstProbed === null) firstProbed = url; return true },
         removeDir: () => ({ ok: true, attempts: 1, rounds: 1 }),
         renameDir: () => {},

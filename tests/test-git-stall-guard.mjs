@@ -39,6 +39,7 @@ const git = (args, opts = {}) => execFileSync(gitBin(), args, { encoding: 'utf8'
       return { pid: 5150, stderr: { on() {} }, on(event, cb) { handlers[event] = cb } }
     },
     killTree: () => true,
+    archive: null, // 专测 git 路径：不让 archive 通道接上真网络
     probe: async () => true,
     removeDir: () => ({ ok: true, attempts: 1, rounds: 1 }),
     renameDir: () => {},

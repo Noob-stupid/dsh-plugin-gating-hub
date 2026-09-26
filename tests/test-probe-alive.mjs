@@ -88,6 +88,7 @@ const stub = (impl) => async () => impl()
     res = await gitCloneRepo('o/r', DEST, 'github', 50, {
       spawnFn: spawnOk,
       killTree: () => true,
+      archive: null, // 专测 git 路径：不让 archive 通道接上真网络
       probeDetail: async (url) => (Object.entries(probes).find(([k]) => url.startsWith(k))?.[1] === true
         ? { alive: true, kind: 'git', status: 200, note: '' }
         : { alive: false, kind: 'unreachable', status: null, note: '网络不可达（getaddrinfo ENOTFOUND）' }),
@@ -114,6 +115,7 @@ const stub = (impl) => async () => impl()
     await gitCloneRepo('o/r', DEST, 'github', 50, {
       spawnFn: spawnFail,
       killTree: () => true,
+      archive: null, // 专测 git 路径：不让 archive 通道接上真网络
       probeDetail: async () => ({ alive: false, kind: 'intercepted', status: null, note: '本地代理/证书拦截（unable to get local issuer certificate）—— 检测到本机加速器/代理，建议关闭后重试' }),
       removeDir: () => ({ ok: true, attempts: 1, rounds: 1 }),
       renameDir: () => {},
