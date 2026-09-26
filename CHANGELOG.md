@@ -2,6 +2,167 @@
 
 All notable changes to dsh-plugin-hub.
 
+## v0.5.18 — 多源下载链路的七处「改错 + 加法」：git 停滞判据 / 通道预算 / 展开时机 / archive 通道 / npmName 首选候选（内核零改动）（2026-09-27）
+
+本版**只做改错与加法**：不动内核结构、不删既有能力、不改公开行为语义，**成功路径行为不变**
+（新增能力都在失败/慢路径上接管，或用"索引给了答案就跳过探测"这类**更快**的方式替代原有步骤）。
+唯一有意的行为变化（改错）：`private: true`（未发布到 npm）的根包候选**不再尝试 git 克隆通道** ——
+真机证据是这一步会去 clone 一个 429 MB 的仓库且 ghproxy 上 git 协议 0 B/s，纯白等。
+
+### 一、git 通道：停滞判据 + 独立预算 + 只对「有进度」的源长超时重试（改错，A-①②⑧）
+
+**问题**（2026-09-27 真机实测，同一台机器同一个 ghproxy.net 域名）：
+
+| 传输 | 实测 |
+|---|---|
+| archive（普通 HTTP GET） | **4 MB/s** —— 429 MB / 105 秒下完 |
+| git 协议 | **0 B/s** —— `git clone` 挂满整个超时，一个字节都不传 |
+
+而旧代码有三处让这种源把整次安装拖死：
+
+1. `runGitClone` 没有任何停滞判据，只能等自己的超时（默认 180 秒）；
+2. git 通道**不封顶**：一个 git 源就能吃掉 8 分钟的作业预算，后面的候选与本来可用的通道再没机会试；
+3. 「同源 1.75 倍长超时重试」是**无条件**的 —— 0 B/s 的源再等一次只是把白等拉长。
+
+**修法**：
+
+- `domain/repoland.js`：给 git 传全局选项 `-c http.lowSpeedLimit=1 -c http.lowSpeedTime=20`
+  （必须排在子命令 `clone` 之前）→ 连续 20 秒 <1 B/s 由 **git 自己**中止并报
+  `Operation too slow. Less than 1 bytes/sec transferred the last 20 seconds`；
+- `infra/exec.js`：同一套判据的 **env 形式**（`GIT_HTTP_LOW_SPEED_LIMIT/TIME`）进 `gitEnv()` 与
+  `buildPnpmEnv()` —— `pnpm add git+https://…` 内部自己 spawn git，我们传不了命令行选项；
+  实测只带 env、不带 `-c`，git 同样 20.4 秒退出；
+- 首轮 `gitCloneRepo` 超时 **180 秒 → 60 秒**（停滞判据已经把"只连不传"提前到 ≈20 秒判死）；
+- 每个失败记录带上 `bytesReceived`（`.git/objects` 落盘字节数，即进度）：
+  **只有 >0 B 的源**才用 1.75 倍长超时重试；0 B 的源如实写「本次收到 0 B（无进度，不再用更长超时重试）」；
+- 新增 `domain/git-channel.js`：git 通道**独立预算**（默认 120 秒，`DSH_GIT_CHANNEL_BUDGET_MS` 可配，
+  夹在 15 秒~8 分钟），且**不得超过作业剩余预算**；单个 git 规格超时 = min(60 秒, 剩余)；
+  预算耗尽即停手，并在 `job.channelNotes` 留一条面板可见的原因。
+
+**验收（真跑，非仅单测）**：
+
+- `tests/test-git-stall-guard.mjs`（**已进 CI 硬门槛**）：真 git 对着本机"只连不传"的 TCP 桩源
+  **20.4 秒**退出并报 `Operation too slow`；走完整 `gitCloneRepo` 时主源 20.6 秒判死后**自动落到
+  备用源并克隆成功**（旧行为：每个源白等 60/180 秒）。
+- `tests/test-git-budget.mjs` + `tests/test-real-git-budget.mjs`（真 pnpm + 真 git）：git 预算 15 秒时
+  **15.6 秒收尾**，git 规格只真跑 1 次（拿到 14999ms 超时），随后展开出的下一个候选**照旧被尝试**
+  （日志顺序：`… git:…:14999 → race → pnpm:@probe/agg → curl → release`）。
+- `tests/test-clone-bytes.mjs`：0 B / 20480 B / 字段缺失三种文案；端到端 8192 B 触发长超时重试、
+  0 B 不触发。
+
+### 二、懒惰展开搬到 git 之前 + 根包未发布时禁 git（改错，A-③）
+
+**问题**（真机事故：点装 `zhu1090093659/dsh-web` 全家桶，★8032）：该仓库根包 `private`、未发布到 npm，
+旧顺序是"所有通道（含 git）都失败 → 才展开子包"，于是必然这样走：registry 404 → **直接进 git 通道
+clone 那个 429 MB 的巨仓**（ghproxy 0 B/s，白等且注定失败）→ 真正能装的聚合子包
+`@linxin666/dsh-web-all`（5.97 MiB）**连一次尝试机会都没有**。
+
+**修法**：懒惰展开搬进 `tryCandidateChannels` 的 **registry 类通道之后、git 通道之前**（展开实现由
+调用方注入，返回新增候选数；展开自身失败只记备注、绝不短路）；根包 `private === true` 时置
+`job.gitChannelBlocked`，对该仓库**禁用 git 克隆通道**并把原因写进 `channelNotes`。
+`expanded` 参数的既有语义一个字没改（触发展开的那一轮仍按旧语义试 git）。
+
+**验收**：`tests/test-expand-order.mjs`（CI 硬门槛）钉死事件序列
+`race → pnpm → curl → release → expand → git`（展开严格早于第一个 git 规格）、展开抛错不短路且留痕、
+`gitChannelBlocked` 时 git 一次都不试而 registry 类通道照旧按包名施工。
+
+### 三、通道 0 异常不再短路 + release 预算跳过必须可见（改错，A-④⑤）
+
+- **A-④**：并行竞速那段（含其后紧跟的 `backfillMissingDeps`）旧代码不设防 —— 竞速实现抛一次异常
+  （abort 竞态、curl 摘要计算、`_tmp_` 清理）就把作业判 failed，**后面的串行通道一个都不再试**。
+  现在整段包 `try/catch`，异常记进 `lastError` + `channelNotes` 后继续往下走；另有细分：
+  "curl 赢了但依赖补齐失败"只影响提示，**绝不把已经装好的包判成失败**。
+- **A-⑤**：release 通道因候选预算被跳过时，旧代码只在 `lastError === null` 时才写一句 ——
+  而最常见的情形（curl/pnpm 也失败）面板上完全看不出"release 通道根本没试"。现在原因**总是**
+  写进 `job.channelNotes`（`installJobView` 已下发）；`lastError` 仍保留旧语义不覆盖真实错误。
+
+**验收**：`tests/test-channel-robustness.mjs`（CI 硬门槛）。
+
+### 四、读子包不再写死分支（改错，B-⑥）
+
+真机 `dsh-web` 的默认分支是 **dev**（不是 main），而旧代码在懒惰展开里写死
+`fetchSubpackageNames(repo, 'main')`（读不到再手工换 `master`）；meta 探测在黑洞期失败时 `branch`
+恒为 main → 子包永远读不到 → 又是「未发现子包」的假失败。
+
+**修法**：`market.js` 新增纯函数 `subpackageBranchOrder(branch)` —— 以**已拿到的** `meta.default_branch`
+打头，再回退 main / master（去重保序；拿不到分支时与旧代码一致）；`fetchSubpackageNames` 接受单个分支名
+或分支数组，解析逻辑原样抽成 `fetchSubpackageNamesOnBranch` 并支持 `deps` 注入。
+
+**验收**：`tests/test-subpackage-branch.mjs`（CI 硬门槛）覆盖 dev-only / main-only / master-only
+三分支与静态断言（install-job 里不再有写死 main 的读子包调用）。
+
+### 五、探活判据换成 GET info/refs + 探活失败降级到最后一轮 + 归因文案（改错，B-⑦）
+
+三个缺口：① 探活失败的源被判**永久跳过**（一次瞬时抖动就让唯一可用源再没机会）；
+② 探活用 `HEAD /` 只验"域名活着"，200 的错误页/登录页/根本不是 git 服务的镜像照样算活；
+③ 报错不区分"网络不可达"与"本地代理/证书拦截" —— 装了 Steam++ 这类加速器时用户看到的是
+`unable to get local issuer certificate`，重试永远没用。
+
+**修法**：`probeSourceAliveDetail` → `GET <url>/info/refs?service=git-upload-pack`，2xx 时校验响应首行是
+pkt-line（`^[0-9a-f]{4}# service=git-upload-pack`）；403/405 仍按活着处理、响应体读不到时保守按活着处理、
+`file://` 本地裸仓库直接算活着（旧代码一律判死 → 完全离线/内网共享盘场景永远用不上）；
+`classifyProbeFailure` 把证书/代理类归为「本地代理/证书拦截（…）—— 检测到本机加速器/代理，建议关闭后重试」；
+探活失败的源**降级到最后一轮**再试一次。
+
+**验收**：`tests/test-probe-alive.mjs`（CI 硬门槛）+ 实网探针（ghproxy 的 info/refs = 存活、直连 github = 不可达）。
+
+### 六、新增 archive 通道：git 协议拉不动时改走 HTTP 压缩包（加法，C-⑨）
+
+**修法**：`domain/archive-source.js` —— 下载（curl `-f -L --max-time`）→ 解压
+（`tar -xzf --strip-components=1`，另有 `flattenSingleDir` 兜底）→ `git init && git add -A && git commit`
+→ 落地，返回与 `gitCloneRepo` 同形的结果（`source=archive:<源id>`、`archive:true`、`branch`、`bytes`、`gitNote`），
+**上层无感**。超时/杀树/等退出一律复用 `infra/exec.js#execFileWithKillTree`；半成品目录复用
+`infra/fsx.js#disposeDir`（删不掉就 `.trash-*` 降级）；失败记录带"本次下载到多少字节"。
+分支自动回退 main → master → dev；成功判据是"解压出来有没有内容"（**不是**有没有 package.json ——
+套装/技能/示例仓库都没有它）。`DEFAULT_SOURCES.archiveSources` 两条默认源（ghproxy 主 + codeload 备），
+可在「软件源 → archive 源」增删/设主源（中英双语界面）。
+
+**验收**：
+- `tests/test-archive-channel.mjs`（CI 硬门槛）：默认模板逐字核对、主备顺序、分支回退、成功路径三步
+  （下载→解压→建仓）、超时/空目录失败路径与字节数文案、`disposeDir` 降级、无 package.json 但有内容必须成功。
+- `tests/test-real-archive.mjs`（**真网络**，CI 真实通道冒烟步骤）：git 通道对着"只连不传"桩源全废 →
+  archive 真下载 `octocat/Hello-World`（258 B，分支自动回退到 master）→ 落地并建仓成功
+  （`git rev-parse HEAD` 可读，全程 **9.1 秒**）；超时路径 28.4 秒内结束、无 `.archive*` 残渣。
+
+### 七、已落地仓库优先复用（加法，C-⑩）
+
+**修法**：`findLandedRepo(repo)` 在 `listLandedRepos()` 的落地清单里按 owner/name 匹配
+（大小写不敏感、容忍 `.git` 后缀），命中还要求目录里**有 package.json**（没有它的多半是半成品/技能仓库）；
+`gitCloneRepo` 开头先复用：命中就 `copyTree` 到 dest 并返回 `{ source:'landed', reused:true, from }`，
+**一个网络请求都不发**。
+
+**验收**：`tests/test-landed-reuse.mjs`（CI 硬门槛）。
+
+### 八、市场索引加 `npmName` 字段 + hub 侧当首选候选（加法，C-⑪）
+
+**修法**：新增 `marketplace/npm-name-hints.json`（人工核对过的 仓库→包名 映射；当前 1 条：
+`zhu1090093659/dsh-web → @linxin666/dsh-web-all`）；`scripts/build-index.cjs` 生成索引时补 `npmName`，
+`scripts/apply-npm-names.cjs` 可就地给已提交的 `index.json` 补（完全离线）；`marketplace/index.json 的索引条目现在带 `npmName`；hub 侧 `market.js#npmNameHintForRepo` 读**与 /market-index 同源**的落盘索引缓存，
+命中时 `runInstallJob` 直接**只用它**作候选并跳过"读根 package.json → 展开子包"一整轮 + 禁 git 通道。
+兼容旧索引：没有该字段 → 行为与改动前完全一致；索引是外部数据，包名要过合法性校验。
+
+**验收**：`tests/test-real-npmname-hint.mjs`
+- 离线：缓存命中/大小写/未收录/老索引无字段/缓存损坏/非法包名 六连；
+  hint 路径下 **GitHub 探测一次都没被调用**、**没有任何 git 调用**、第一跳 pnpm 规格即聚合包本身；
+- 真网络（npmmirror）：hub 的 curl 通道真装 `@linxin666/dsh-web-all@0.4.3` —— **0.7 秒**，
+  落地 6,259,500 B vs registry 声明 `unpackedSize` 6,259,487 B（**5.97 MiB**，sha512 摘要校验通过）。
+
+### 工程约束与未验证项
+
+- `lib/server/**` 单文件 ≤ 600 行、架构守卫（domain 不吃 ctx、静态 import、无自由标识符、行数棘轮）
+  全绿；为此把「失败清场 + 授权文案」原样搬进 `domain/install-cleanup.js`、把 git 通道策略搬进
+  `domain/git-channel.js`（install-job.js 继续 re-export，调用点与测试的 import 面未变）。
+- 新测试全部进 `.github/workflows/test.yml` 硬门槛；真网络的两套（archive / npmName）单独成
+  「Real channel smoke」步骤。
+- **未验证 / 已知边界**：
+  - archive 通道只接在**克隆路径**（`gitCloneRepo` → 套装装配 / 仓库落地）上；install-job 的
+    "git 通道"仍是 `pnpm add git+…`（pnpm 自己 spawn git），**未**改造成"先 archive 落地再本地装"。
+  - `privateRoot` 禁 git 后，若某仓库的根包虽然 private 但**本身**就是可装插件，将失去 git 兜底
+    （仍可从「仓库落地」或命令行 `dsh plugin add github:…` 安装）——这是按需求刻意取舍。
+  - `npmName` 目前只有 1 条人工核对映射；其余仓库仍走"探测 + 展开"，行为不变。
+  - archive 建仓（`git init/add/commit`）失败时**不算失败**：内容可用即返回，失败原因写进 `gitNote`
+    （429 MB 这类大仓库的首个 commit 可能很慢）。
+
 ## v0.5.17 — pnpm 通道杀树后「等子进程真退出」+ 删不掉时 rename 降级成 `.trash-*`（改错 + 加法，内核零改动）（2026-09-27）
 
 本版是**两处健壮性补强**，都属「改错 + 加法」：安装/升级/门控的**成功判定与公开行为语义未变**

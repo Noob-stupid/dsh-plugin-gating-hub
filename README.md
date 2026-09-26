@@ -236,6 +236,22 @@ Requires: DSH ≥ 0.1.0-rc.6 (web profile, with `dsh-client-modules` / `dsh-host
   with a client-side fallback;
 - **Type badges**: 官方 / 聚合 / 技能 (repo contains SKILL.md) recognized automatically.
 
+> **Network environment notes (why a multi-source setup can look "all dead")**
+> - **Accelerators/proxies that rewrite hosts kill the direct sources**: tools like Steam++ often point
+>   `github.com` at `127.0.0.1`, so the GitHub direct source, `raw.githubusercontent.com` and
+>   `api.github.com` all become unreachable — the plugin is not broken. The console now reports this
+>   honestly as "local proxy / certificate interception (…) — an accelerator or proxy was detected,
+>   turn it off and retry" instead of a vague "network unreachable".
+> - **Free mirrors are unreliable for the git protocol on large packs, while archive/raw are usually
+>   fast**: measured on the same ghproxy.net host, archive (plain HTTP) ran at **4 MB/s** while the git
+>   protocol moved **0 B/s**. Since this version the git channel has a stall criterion (switch source
+>   after 20 s below 1 B/s) plus its own budget, and falls back to the **archive channel** (download the
+>   tarball, extract, create the repo — equivalent to a clone) when all git sources fail. No manual
+>   source switching needed.
+> - To reorder transports, use **Source Manager**: **git sources**, **archive sources** and **index
+>   sources** all support primary→backup plus self-hosted mirrors (internal Gitea/GitLab, local
+>   `file://` bare repos).
+
 ### Static index market (plugin & skill tabs)
 
 > **Hybrid architecture**: browsing uses the static index (instant, zero GitHub API calls),

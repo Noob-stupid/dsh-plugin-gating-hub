@@ -180,6 +180,18 @@ git clone https://github.com/Noob-stupid/dsh-plugin-hub /tmp/dsh-plugin-console 
 - **类型徽标**：官方 / 聚合 / 技能（仓库含 SKILL.md）自动识别；
 - 「添加到本地」= 按当前源安装（registry 失败自动回退 git 通道）+ 写入启用条目，HMR 生效。
 
+> **网络环境提醒（多源为什么有时"看起来都失效"）**
+> - **加速器/代理改 hosts 会让"直连源"失效**：Steam++ 这类工具常把 `github.com` 指到 `127.0.0.1`，
+>   于是 GitHub 直连源、`raw.githubusercontent.com`、`api.github.com` 全部不可达 —— 这不是插件坏了。
+>   本控制台会把这类失败**如实报成**「本地代理/证书拦截（…）—— 检测到本机加速器/代理，建议关闭后重试」，
+>   而不是笼统的"网络不可达"。
+> - **免费镜像的 git 协议对大 pack 不可靠，archive / raw 通常很快**：真机实测同一个 ghproxy.net 域名下
+>   archive（普通 HTTP 下载）**4 MB/s**、git 协议 **0 B/s**。所以本版起 git 通道有停滞判据
+>   （连续 20 秒 <1 B/s 就换源）与独立预算，并在 git 全部失败后**自动改走 archive 通道**
+>   （下载压缩包再解压建仓，结果与 clone 等价）—— 你不需要手动换源。
+> - 想让某条通道优先，去「软件源」里调整顺序：**Git 源**、**archive 源**、**索引源** 都支持主→备与
+>   自建镜像（内网 Gitea/GitLab、本地 `file://` 裸仓库均可）。
+
 ### 静态索引市场（插件 / 技能双 tab）
 
 > **混合架构**：浏览走静态索引（秒开、零 API 调用），搜索走实时通道（GitHub 搜索 API / 多源并行）——
