@@ -2,6 +2,17 @@
 
 All notable changes to dsh-plugin-hub.
 
+## v0.5.14 — 补齐其余 git clone 调用点的杀树（改错，内核零改动）（2026-09-26）
+
+延续 0.5.13：把"超时只杀直接子进程 → git 孙进程占住 .git 文件 → 目录删不掉 + 误导报错"这一类问题清干净。
+
+- `ai-run.js`（AI 赋能克隆仓库，超时 120s）与 `skills.js`（技能安装克隆，120s）改用 `execFileWithKillTree`
+- `components.js` 经核实**没有 git clone**（仅 taskkill），未改 —— 不做无意义改动
+- **未改**：curl 通道（自带 `-m 60` 自终止）与 Release 通道（`gh release download`，单进程、不派生孙进程）
+  —— 经代码核实这两条**不会**出现该故障形态；其超时仍有 job 级失败分类兜底
+- 新增静态护栏 `tests/test-git-clone-killtree-guard.mjs`（若有 git clone 必须走杀树版 + 杀树实现单一化）
+
+验证：**31 套测试全绿**；真实测试 REAL-3（真克隆 + 故意超时）通过、`git.exe` 残留 **0**。
 ## v0.5.13 — 融合社区高星市场的安装健壮性（改错 + 加法，内核零改动）（2026-09-26）
 
 调研 GitHub 上星最多的 13 家 DSH 插件市场/管理器（详见报告），把它们的下载安装优点以**改错 + 加法**方式融合：
