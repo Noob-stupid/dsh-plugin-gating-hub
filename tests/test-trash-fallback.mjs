@@ -13,7 +13,7 @@
 //   Ⅱ. **真机**（真进程占用）：用真进程占住目录（Windows=目录内有正在运行的 exe；POSIX=目录是活进程的
 //      cwd）→ 真删不掉 → disposeDir 走 rename 成功、不阻塞、`.trash-*` 真存在 → 占用进程退出后
 //      后台清理真的把它删掉。
-import { mkdtempSync, mkdirSync, writeFileSync, existsSync, readdirSync, renameSync, rmSync, copyFileSync, statSync } from 'node:fs'
+import { mkdtempSync, mkdirSync, writeFileSync, existsSync, readdirSync, renameSync, rmSync, copyFileSync, statSync, chmodSync } from 'node:fs'
 import { spawn } from 'node:child_process'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
@@ -173,24 +173,31 @@ try {
     for (const d of [scanRoot, bigRoot, stuckRoot, slowRoot]) { try { rmSync(d, { recursive: true, force: true }) } catch {} }
   }
 
-  // ── Ⅱ 真机：真进程占住目录 → 真删不掉 → rename 降级 → 占用解除后后台清理 ────
+  // ── Ⅱ 真机：真占用 → 真删不掉 → rename 降级 → 占用解除后后台清理 ────────────
   {
     const dir = join(ROOT, 'real-locked')
     mkdirSync(dir, { recursive: true })
     writeFileSync(join(dir, 'keep.txt'), 'x', 'utf8')
-    // 占用形态（2026-09-26 本机实测，两种平台各选一种"删不掉但能改名"的）：
+    // 占用形态（2026-09-26 实测，各平台选一种"删不掉但能改名"的）：
     //   Windows：目录内有**正在运行的 exe**（句柄带 FILE_SHARE_DELETE → 删不掉，但父目录改名成功）
-    //   POSIX  ：目录是活进程的 **cwd**（rmdir EBUSY；POSIX 允许改 cwd 的名字）
+    //   POSIX  ：目录内有**只读子目录**（chmod 0o500 → 里面的文件 unlink 不了 → 整棵树删不掉；
+    //            而 rename 只需要父目录可写 → 改名成功）。注：Linux 上"活进程的 cwd"**不**阻止删除
+    //            （CI run 36253340149 实测），所以这里不能用进程占用当判据。
+    const inner = join(dir, 'inner')
     if (IS_WIN) {
       const exe = join(dir, 'node-copy.exe')
       copyFileSync(process.execPath, exe)
       holder = spawn(exe, ['-e', 'setInterval(()=>{},1000)'], { windowsHide: true, stdio: 'ignore' })
+      for (let i = 0; i < 60 && !processAlive(holder.pid); i += 1) await sleep(50)
+      await sleep(500)
+      check('真机：占用进程已在跑（断言不靠 if 静默跳过）', processAlive(holder.pid) === true, `holder pid=${holder.pid} 形态=目录内运行中的 exe`)
     } else {
-      holder = spawn(process.execPath, ['-e', 'setInterval(()=>{},1000)'], { cwd: dir, stdio: 'ignore' })
+      mkdirSync(inner, { recursive: true })
+      writeFileSync(join(inner, 'locked.txt'), 'x', 'utf8')
+      chmodSync(inner, 0o500)
+      check('真机：只读子目录占用已布好（断言不靠 if 静默跳过）',
+        (statSync(inner).mode & 0o200) === 0 && existsSync(join(inner, 'locked.txt')), `inner mode=${(statSync(inner).mode & 0o777).toString(8)}`)
     }
-    for (let i = 0; i < 60 && !processAlive(holder.pid); i += 1) await sleep(50)
-    await sleep(500)
-    check('真机：占用进程已在跑（断言不靠 if 静默跳过）', processAlive(holder.pid) === true, `holder pid=${holder.pid} 形态=${IS_WIN ? '目录内运行中的 exe' : 'cwd 占用'}`)
     const direct = removeDirVerifiedWithRetry(dir, { attempts: 1, pollMs: 20 })
     check('★ 真机先验：占用中该目录**真的删不掉**（否则后面的降级断言没有牙齿）',
       direct.ok === false && existsSync(dir), JSON.stringify(direct))
@@ -200,20 +207,28 @@ try {
     check('★ 真机：disposeDir 走了 rename 降级（status=trashed、原路径已让开、.trash-* 真存在）',
       result.status === 'trashed' && result.ok === true && !existsSync(dir) && existsSync(result.trashPath) && TRASH_RE.test(result.trashPath.split(/[\\/]/u).pop()),
       `status=${result.status} trash=${result.trashPath} 原路径还在=${existsSync(dir)}`)
-    check('★ 真机：不阻塞（有界返回，实测耗时在秒级以内），且占用进程仍在跑（我们没杀它）',
-      elapsed < 15000 && processAlive(holder.pid) === true, `disposeDir 耗时=${elapsed}ms，holder 仍在=${processAlive(holder.pid)}`)
+    check('★ 真机：不阻塞（有界返回，实测耗时在秒级以内）',
+      elapsed < 15000 && (IS_WIN ? processAlive(holder.pid) === true : true),
+      `disposeDir 耗时=${elapsed}ms${IS_WIN ? `，holder 仍在=${processAlive(holder.pid)}（我们没杀它）` : ''}`)
     check('真机：降级是"改名"而不是"删除"（**真正删不掉的那个东西**跟着目录一起被搬走）',
-      existsSync(result.trashPath) && (IS_WIN ? existsSync(join(result.trashPath, 'node-copy.exe')) : true),
-      `降级目录内容=${readdirSync(result.trashPath).join(',') || '（空目录：内容已删掉，只剩删不掉的目录本身）'}`)
-    check('真机：前台短句如实（正被占用 + 已改名降级 + 稍后自动清理，无「请手动删除」）',
-      /目录正被占用/u.test(disposeNote(result)) && /稍后自动清理/u.test(disposeNote(result)) && !/请手动删除|手动删除/u.test(disposeNote(result)), disposeNote(result))
+      existsSync(result.trashPath) && (IS_WIN ? existsSync(join(result.trashPath, 'node-copy.exe')) : existsSync(join(result.trashPath, 'inner', 'locked.txt'))),
+      `降级目录内容=${readdirSync(result.trashPath).join(',') || '（空）'}`)
+    check('真机：前台短句如实（说清为什么删不掉 + 已改名降级 + 稍后自动清理，无「请手动删除」）',
+      (IS_WIN ? /目录正被占用/u.test(disposeNote(result)) : true) && /已改名降级为/u.test(disposeNote(result))
+      && /\.trash-\*/u.test(disposeNote(result)) && /稍后自动清理/u.test(disposeNote(result))
+      && !/请手动删除|手动删除/u.test(disposeNote(result)), disposeNote(result))
     // 占用还在 → 后台清理清了不（应当留着，留给下次）；占用解除 → 必须清掉
     const whileBusy = await cleanupTrashDirs({ roots: [ROOT], limit: 5, perItemMs: 3000 })
     check('真机：占用未解除时后台清理**不谎报成功**（kept，留着下次）',
       existsSync(result.trashPath) && whileBusy.kept >= 1, `removed=${whileBusy.removed} kept=${whileBusy.kept}`)
-    killProcessTree(holder.pid)
-    for (let i = 0; i < 100 && processAlive(holder.pid); i += 1) await sleep(50)
-    check('真机：占用进程已按测试需要退出（后台清理前提）', processAlive(holder.pid) === false, `holder pid=${holder.pid}`)
+    if (IS_WIN) {
+      killProcessTree(holder.pid)
+      for (let i = 0; i < 100 && processAlive(holder.pid); i += 1) await sleep(50)
+      check('真机：占用进程已按测试需要退出（后台清理前提）', processAlive(holder.pid) === false, `holder pid=${holder.pid}`)
+    } else {
+      chmodSync(join(result.trashPath, 'inner'), 0o700) // 模拟占用解除（恢复写权限）
+      check('真机：占用已解除（只读子目录恢复写权限，后台清理前提）', (statSync(join(result.trashPath, 'inner')).mode & 0o200) !== 0)
+    }
     const after = await cleanupTrashDirs({ roots: [ROOT], limit: 5, perItemMs: 4000 })
     check('★ 真机：占用解除后**后台清理真的把它删掉**（.trash-* 消失）',
       !existsSync(result.trashPath) && after.removed >= 1 && findTrashDirs([ROOT]).length === 0,
@@ -223,6 +238,10 @@ try {
   try { if (holder !== null) killProcessTree(holder.pid) } catch {}
   await sleep(200)
   try {
+    // POSIX 真机段留下的只读子目录：先恢复写权限再清（否则连临时目录都留着）
+    for (const p of [join(ROOT, 'real-locked', 'inner'), ...findTrashDirs([ROOT], { maxDepth: 2 }).map((d) => join(d, 'inner'))]) {
+      try { if (existsSync(p)) chmodSync(p, 0o700) } catch {}
+    }
     const left = findTrashDirs([ROOT], { maxDepth: 2 })
     if (left.length > 0) await cleanupTrashDirs({ roots: [ROOT], limit: 20, perItemMs: 4000 })
     const still = findTrashDirs([ROOT], { maxDepth: 2 })

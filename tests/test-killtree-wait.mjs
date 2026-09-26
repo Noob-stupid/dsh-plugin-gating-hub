@@ -228,7 +228,11 @@ try {
     `父=${parentGone ? '已退出' : '仍在'} 孙=${grandchildGone ? '已退出' : '仍在'}（有界等待 ${Date.now() - deadStart}ms）`)
 
   // 附：占用先验 + 滞后实测 —— "活进程占着的目录删不掉"与"killTree 返回 ≠ 句柄/目录项已释放"（所以必须等）
-  {
+  // ⚠️ 只在 Windows 上有意义：Linux 允许删除"活进程的 cwd"（内核不阻止，CI run 36253340149 实测），
+  //    所以那边的滞后证据由 tests/test-pnpm-kill-tree.mjs 的 POSIX 有界等待断言覆盖；这里如实 SKIP，不假装 PASS。
+  if (!IS_WIN) {
+    console.log('SKIP 占用先验 + 滞后实测（Windows 专属：taskkill 同步返回但句柄释放晚一拍；Linux 上 cwd 不阻止删除）')
+  } else {
     const DIR2 = join(ROOT, 'lagdir')
     mkdirSync(DIR2, { recursive: true })
     const child = spawn(process.execPath, ['-e', 'setInterval(()=>{},1000)'], { cwd: DIR2, windowsHide: true, stdio: 'ignore' })
