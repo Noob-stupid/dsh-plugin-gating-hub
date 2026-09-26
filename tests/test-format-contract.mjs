@@ -144,6 +144,8 @@ check('客户端 localStorage 关键键仍在', missingLs.length === 0, missingL
     'diagCardTitle', 'diagColon', 'diagSemi', 'diagDot',
     'diagKindNetworkTimeout', 'diagKindAllowBuilds', 'diagKindMinimumReleaseAge', 'diagKindMissingTool',
     'diagKindNotFound', 'diagKindLocked', 'diagKindOther', 'diagRetried', 'diagRetriedMark',
+    // 2026-09-27 加法：三个新分类的短句（中英各一份，缺一边即红）
+    'diagKindFetch404', 'diagKindLockfileOutdated', 'diagKindSupplyChainAge',
     'diagEntryFail', 'diagEntryReasonEntry', 'diagEntryReasonPatch', 'diagEntryReasonBundle',
     'diagEntryAdviceMirror', 'diagEntryAdvice',
     'diagIntegrityOk', 'diagIntegrityNone', 'diagIntegrityMismatch', 'diagIntegritySkip',
@@ -165,6 +167,30 @@ check('客户端 localStorage 关键键仍在', missingLs.length === 0, missingL
   check('沿用既有样式约定渲染诊断行（styles.message + data-error / data-warn，无新徽章/按钮）',
     clientSrc.includes('.pc_message[data-warn=true]') && /"data-warn": line\.level === "warn"/u.test(clientSrc)
     && /"data-error": line\.level === "error"/u.test(clientSrc) && /const diagLineEl = \(line\) => el\("p"/u.test(clientSrc))
+}
+
+// ── ⑧ 依赖锁体检 / 重建的前端接线（2026-09-27 加法）──────────────────────────────
+// 服务端有两条路由（/lockfile-check 只读、/lockfile-repair 显式触发），前端必须真的能触发它们，
+// 且新分类要接进既有的安装诊断短句链（否则服务端分类了、面板仍显示"未归类"）。
+{
+  const LOCK_KEYS = [
+    'safetyLockTitle', 'safetyLockDesc', 'safetyLockOk', 'safetyLockBad', 'safetyLockBlocked',
+    'safetyLockRepaired', 'safetyLockRepairPartial', 'safetyLockNoRebuild', 'safetyLockCheckBtn', 'safetyLockRepairBtn',
+  ]
+  const countOf = (k) => [...clientSrc.matchAll(new RegExp(`\\b${k}\\s*:`, 'gu'))].length
+  const notBoth = LOCK_KEYS.filter((k) => countOf(k) !== 2)
+  check(`依赖锁 i18n 键中英两套都在（${LOCK_KEYS.length} 个）`, notBoth.length === 0,
+    notBoth.length === 0 ? '全部命中两次（zh+en）' : notBoth.map((k) => `${k}:${countOf(k)}`).join(', '))
+  check('★ 前端真的能触发两条路由（体检只读 / 重建显式）',
+    clientSrc.includes('"/plugin-console/lockfile-check"') && clientSrc.includes('"/plugin-console/lockfile-repair"')
+    && /const lockCheck = async \(\) =>/u.test(clientSrc) && /const lockRepair = async \(\) =>/u.test(clientSrc))
+  check('★ 重建按钮只在服务端说 applicable=true 时才出现（用户显式触发，不自动跑）',
+    /lockFix\.repair\?\.applicable === true/u.test(clientSrc) && clientSrc.includes('t("safetyLockRepairBtn")'))
+  check('★ 三个新分类接进安装诊断短句链（服务端分类 → 面板短句）',
+    clientSrc.includes('diagnosis.kind === "fetch-404"') && clientSrc.includes('diagnosis.kind === "lockfile-outdated"')
+    && clientSrc.includes('diagnosis.kind === "supply-chain-age"'))
+  check('依赖锁体检结论用短句进面板、长 hint 只挂 title（与安装诊断同一约定）',
+    /title: lockFix\.repair\?\.command/u.test(clientSrc) && /p\.hint\)\.join\("\\n"\)/u.test(clientSrc))
 }
 
 rmSync(HOME, { recursive: true, force: true })

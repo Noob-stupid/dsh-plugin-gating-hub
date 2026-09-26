@@ -2,6 +2,86 @@
 
 All notable changes to dsh-plugin-hub.
 
+## v0.5.15 — 依赖锁体检/重建 + 测试目录的两个既有问题收尾（改错 + 加法，内核零改动）（2026-09-27）
+
+本版把 3 个**已改完但未发布**的修复一起发出来，并新增「依赖锁体检 / 显式重建」能力。全部改动都是
+「改错 + 加法」：既有安装/升级/门控路径的判定语义与公开行为未变（新分类只改**失败文案的定性**，
+不改成功判定、不改重试上限）。
+
+### 一、随本版一起发布的 3 个既有修复
+
+- **宿主形态（`c112c75`）**：桌面端外壳托管的实例**禁止** kill + relaunch —— 桌面端 App 自己管进程，
+  控制台再拉一次会变成"双实例抢端口"。判据来自 `domain/framework.js#detectHostShape`，
+  `/framework-upgrade` 与 `/framework-rollback` 共用同一份 `shellHostedRefusal`（回滚路由过去漏了这个守卫）。
+- **克隆清理（`e86afdf`）**：杀进程树之后**先等进程真的退出**，再按轮核实删除；`rmSync` 静默落空时
+  用外部 `rmdir` 兜底，仍失败就如实报"被占用"（不谎报成功）。真机复现过"目录非空导致 clone 重试全灭"。
+- **git 源策略（`2b57c48`）**：同源用更长超时重试，并**记住上次成功的源**（源顺序从"每次从头试"变成
+  "上次成功的先试"）；仍保持"报首个真实错误 + 尝试清单"的既有语义。
+
+### 二、测试目录的两个既有问题（本轮修）
+
+- **`tests/diag-blocks.mjs` 长期红（全量 35/36）**：它是一个**诊断脚本**（只打印、无断言），读的
+  `lib/server/domain/framework-install-script.js` **从未入库**（生成器现在在
+  `lib/server/infra/fw-integrity-check.js`），于是每次运行抛 ENOENT。
+  - **删除**它（诊断脚本不占测试名额）：同样的诊断能力移到 `scripts/diag-blocks.mjs`，
+    读不到文件时**明确打印 `SKIP <来源> —— 原因`**，不再崩、也不假装成功；
+  - **新增真测试** `tests/test-upgrade-script-blocks.mjs`：把抽取器的前提变成硬断言 ——
+    ① 四个源文件必须真实存在；② 每个结束标记必须配对到开始标记（配不上 = 脚本块被静默丢弃）；
+    ③ 升级脚本 / 一键回滚脚本 / 结构校验生成器 / 重启脚本四类块各就各位；
+    ④ **通用护栏**：`tests/*.mjs` 里静态引用的仓库文件必须存在（正是这次事故的机制化拦网）。
+  - 目标是"绿得有意义"：没有删断言、没有把失败改成永远 PASS，也没有补一个空壳文件骗绿。
+- **live profile 的 lockfile 阻塞（真问题，隔离环境已复现）**：web profile 的 `plugin remove` / 任何 pnpm
+  全量解析都失败，三条独立原因叠加：① 声明的 `dsh-github-login@0.1.0` 在 npmmirror 与 npmjs **双双 404**；
+  ② `pnpm-lock.yaml` 陈旧残缺（importers 写 0.5.4、manifest 写 0.5.14，7 个依赖缺 4 个）；
+  ③ pnpm 供应链闸 `ERR_PNPM_MINIMUM_RELEASE_AGE_VIOLATION`（新发版本不足 24h）。本版**只新增诊断与修复能力**，
+  **不替用户改 profile**（用户环境修复另行确认）。
+
+### 三、新增能力（加法）
+
+- **失败分类新增三个分支**（`domain/install-diagnose.js`，纯函数）：
+  - `fetch-404`：registry 抓取 404，**能点名具体包名**（从 pnpm 报错的 URL 还原，含 `@scope%2fname` 编码形态）；
+    文案明写"本控制台**不会**为了让 lock 重建成功而静默丢弃你的依赖"。
+  - `lockfile-outdated`：`ERR_PNPM_OUTDATED_LOCKFILE` / `ERR_PNPM_LOCKFILE_MISSING_DEPENDENCY` —— 定性为
+    "不是网络问题，是 lock 与清单对不上"，并指向下面两条路由。
+  - `supply-chain-age`：`ERR_PNPM_MINIMUM_RELEASE_AGE_VIOLATION` —— **只提示**"可用
+    `--config.minimumReleaseAge=0` 显式绕过（有安全代价）"，retry 保持 `later`，**绝不自动绕过**。
+  - 另外给诊断结果加了 `packages` 字段（面板能显示"是哪个依赖"），`not-found` 保留用于非 registry 解析的 404。
+- **新模块 `domain/lockfile-health.js`**（L1 domain，纯函数 + 注入 IO）：
+  `readManifestDeps` / `parseLockImporters` / `diffLockfile`（清单 vs lock vs 磁盘三方对账）/
+  `freshReleases`（发布时间判定）/ `probeVerdict` / `repairArgsFor` / `runLockfileCheck` / `runLockfileRepair`。
+- **两条新路由**（`routes/lockfile.js`，已进 `tests/test-route-inventory.mjs` 的 57 条清单与字段契约）：
+  - `POST /plugin-console/lockfile-check`：**纯只读**体检（不写文件、不跑 pnpm），返回 ①②③ 的判定与清单；
+  - `POST /plugin-console/lockfile-repair`：**必须用户显式调用**。先只读体检，遇到 404 依赖就
+    **停下并点名**（`action: 'blocked'`，一个文件都不写）；否则跑一次
+    `pnpm install --lockfile-only --no-frozen-lockfile --registry <主源>`（argv 由 `repairArgsFor` 唯一产出，
+    **永远不含**绕过供应链闸的开关），跑完**复检** lock 与清单是否真的对齐才报成功。
+- **面板与 i18n**：「升级安全」面板新增「依赖锁体检」一行（体检按钮 + 仅在服务端判 `applicable` 时出现的
+  「重建 lock（显式）」按钮），短句进面板、长 hint 挂 title；三个新分类的短句中英各一份（`diagKindFetch404` /
+  `diagKindLockfileOutdated` / `diagKindSupplyChainAge`），并由 `test-format-contract.mjs` 钉死中英各一处。
+
+### 四、验证
+
+- **全量 38 套测试全绿**（原 36 套：删 1 套无断言的诊断脚本 + 新增 3 套）；
+- 新增离线单测 `tests/test-lockfile-health.mjs`（纯函数 + 注入 IO：只读性、404 阻塞、argv 无绕过开关、
+  复检才报成功、真 fs 逐字节只读）；新增 `tests/test-upgrade-script-blocks.mjs`；
+- **隔离 profile 真实环境验证** `tests/test-lockfile-repair.mjs`（真 registry + 真 pnpm，DSH_HOME 指向临时目录）：
+  ① 体检点名真 404 依赖（npmmirror 实测 404）；② 重建在 404 依赖上 `action=blocked` + 给出包名 + 清单与 lock
+  逐字节未变；③ 去掉假依赖后重建成功、lock 与清单对齐、`package.json` 未被改动；④ 随后控制台自己的
+  pnpm 通道 `add` / `remove` 跑通（包真落到磁盘、lock 里也记下、remove 后目录与清单都干净）。
+
+### 未验证 / 不确定项（如实列出）
+
+- **用户真实 profile 未做任何修复**：本轮只在隔离 profile 验证能力。live web profile 里那个 404 依赖
+  （`dsh-github-login@0.1.0`）仍需用户自己决定（该包源码在本地 `D:\dsh\dsh-github-login`，是否修好再发版由用户定）。
+- **两个 live profile 只做了文件同步（未重启）**：服务端路由与客户端 i18n 要等用户重启对应实例才生效；
+  浏览器里的实际像素（新面板那一行、按钮点击）未人工验证。
+- `minimumReleaseAge` 的判定口径是"registry 的 `dist-tags.latest` 发布时间 < 24h"（pnpm 自身策略更复杂，
+  含依赖树的传递版本）；镜像不返回 `time` 字段时**不判定**（不猜）。
+- 重建只跑 `pnpm install --lockfile-only`：不写 node_modules、不改 `package.json`；**未验证**在 pnpm 6/7
+  （lockfileVersion 5/6）上的重建表现（本机 pnpm 10/11 + lockfileVersion 9 实测）。
+- CI 未实际触发（workflow 里已加新测试，Linux 上真实 registry 部分会自动打印 SKIP + 原因）。
+
+
 ## v0.5.14 — 补齐其余 git clone 调用点的杀树（改错，内核零改动）（2026-09-26）
 
 延续 0.5.13：把"超时只杀直接子进程 → git 孙进程占住 .git 文件 → 目录删不掉 + 误导报错"这一类问题清干净。

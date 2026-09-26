@@ -1,12 +1,15 @@
-// ③ 安装失败分类 → 定向重试一次（2026-09-26）
+// ③ 安装失败分类 → 定向重试一次（2026-09-26；2026-09-27 追加三个分类）
 //
-// 交付两件事（都是加法）：
-//   ① 纯函数 classifyInstallFailure(text) → { kind, hint, retry }：覆盖 minimumReleaseAge /
-//      allowBuilds / missing-tool / not-found / locked / network-timeout / other；
+// 交付（都是加法）：
+//   ① 纯函数 classifyInstallFailure(text) → { kind, hint, retry, packages }：覆盖 minimumReleaseAge /
+//      allowBuilds / missing-tool / not-found / locked / network-timeout / other，以及 2026-09-27 新增的
+//      **fetch-404**（registry 抓取 404，要点名是哪个依赖）/ **lockfile-outdated**（陈旧残缺的 pnpm-lock.yaml）/
+//      **supply-chain-age**（pnpm 供应链年龄闸真的拦下时的专用错误码）；
 //   ② 安装失败路径接线：只有 network-timeout（retry='longer-timeout'）会用**更长超时**自动重试**一次**，
 //      其余分类只把 hint 写进 job.diagnosis（installJobView 下发），不新增任何自动重试。
 // 安全边界（本用例钉死）：allowBuilds / ignored build scripts **只提示**，绝不自动写用户的
-// allowBuilds / 构建白名单 —— 用例会在临时 DSH_HOME 里搜 "allowBuilds" 字样确认没有任何落盘。
+// allowBuilds / 构建白名单；supply-chain-age 同样**只提示**（可用 `--config.minimumReleaseAge=0` 显式绕过，
+// 代价自负），retry 保持 'later'（绝不自动绕过）—— 用例会在临时 DSH_HOME 里搜 "allowBuilds" 字样确认没有任何落盘。
 //
 // 全部离线：DSH_HOME 指向临时目录，安装通道用 strictCtx 注入桩（与 test-suite-install.mjs 同款替身）。
 import { mkdirSync, writeFileSync, readFileSync, existsSync, readdirSync } from 'node:fs'
@@ -29,7 +32,7 @@ mkdirSync(profileDir, { recursive: true })
 writeFileSync(join(profileDir, 'package.json'), JSON.stringify({ name: 'dsh-profile-web', private: true }, null, 2), 'utf8')
 writeFileSync(join(profileDir, 'cordis.patch.yml'), '# diagnose test\n', 'utf8')
 
-const { classifyInstallFailure, longerTimeoutFor, diagnosisText } = await import(new URL('../lib/server/domain/install-diagnose.js', import.meta.url).href)
+const { classifyInstallFailure, longerTimeoutFor, diagnosisText, missingPackagesFrom, DIAGNOSIS_RULES } = await import(new URL('../lib/server/domain/install-diagnose.js', import.meta.url).href)
 const { runInstallJob } = await import(new URL('../lib/server/domain/install-job.js', import.meta.url).href)
 const { installJobView } = await import(new URL('../lib/server/domain/install.js', import.meta.url).href)
 const mod = await import(new URL('../lib/index.js', import.meta.url).href)
@@ -39,11 +42,22 @@ const mod = await import(new URL('../lib/index.js', import.meta.url).href)
   const cases = [
     ['minimumReleaseAge', 'ERR_PNPM_MINIMUM_RELEASE_AGE The version 1.2.3 was published too recently (minimumReleaseAge)'],
     ['minimumReleaseAge', 'minimum release age: 1440 minutes (发布年龄未满)'],
+    // 2026-09-27 新增：pnpm 供应链闸真的拦下时的专用错误码（与上面泛化文本分开，带安全边界文案）
+    ['supply-chain-age', 'ERR_PNPM_MINIMUM_RELEASE_AGE_VIOLATION  The version 0.5.15 was published too recently (minimumReleaseAge is 1440 minutes)'],
     ['allowBuilds', 'Ignored build scripts: sharp, esbuild. Run "pnpm approve-builds" to pick which dependencies should be allowed to run scripts.'],
     ['allowBuilds', 'ERR_PNPM_IGNORED_BUILDS  The following packages have build scripts that were ignored: sharp'],
     ['missing-tool', 'spawn git.exe ENOENT'],
     ['missing-tool', "Error: Cannot find module '/usr/local/bin/node_modules/corepack/dist/corepack.js'"],
-    ['not-found', "ERR_PNPM_FETCH_404  GET https://registry.npmmirror.com/dsh-nope: Not Found - 404"],
+    // 2026-09-27 新增：registry 抓取 404（要点名依赖）——旧版这类文本归在泛化的 not-found
+    ['fetch-404', "ERR_PNPM_FETCH_404  GET https://registry.npmmirror.com/dsh-nope: Not Found - 404"],
+    ['fetch-404', '404 Not Found - GET https://registry.npmjs.org/@scope%2fmissing-pkg - Not found'],
+    ['fetch-404', 'ERR_PNPM_FETCH_404  GET https://registry.npmmirror.com/dsh-github-login: Not Found - 404'],
+    // 2026-09-27 新增：陈旧/残缺 lock（frozen-lockfile 下的确定性报错；旧版落进 other）
+    ['lockfile-outdated', 'ERR_PNPM_OUTDATED_LOCKFILE  Cannot install with "frozen-lockfile" because pnpm-lock.yaml is not up to date with package.json'],
+    ['lockfile-outdated', 'ERR_PNPM_LOCKFILE_MISSING_DEPENDENCY  Broken lockfile: no entry for dsh-whale-widget'],
+    // 泛化 not-found 仍覆盖"非 registry 依赖解析"的 404（GitHub release 资源、npm E404 文本等）
+    ['not-found', 'GitHub release 资源不存在：HTTP 404 Not Found'],
+    ['not-found', 'npm ERR! code E404 for dsh-nope@1.0.0'],
     ['locked', 'EPERM: operation not permitted, rename node_modules/left-pad_tmp_1234'],
     ['locked', 'EBUSY: resource busy or locked, unlink node_modules/.pnpm/x'],
     ['network-timeout', 'request to https://registry.npmmirror.com/left-pad failed, reason: connect ETIMEDOUT 104.16.0.1:443'],
@@ -77,6 +91,37 @@ const mod = await import(new URL('../lib/index.js', import.meta.url).href)
   check('diagnosisText：一行文案含分类与"已自动重试"',
     /失败分类：network-timeout（已自动重试一次：更长超时）/u.test(diagnosisText({ kind: 'network-timeout', hint: 'h', retry: 'longer-timeout', retried: true }))
     && diagnosisText(null) === null)
+
+  // ── 2026-09-27 加法：三个新分类的文案与安全边界 ─────────────────────────────
+  check('fetch-404 → retry=null（404 不是抖动，绝不自动重试）',
+    classifyInstallFailure('ERR_PNPM_FETCH_404').retry === null)
+  const p404 = classifyInstallFailure('ERR_PNPM_FETCH_404  GET https://registry.npmmirror.com/dsh-github-login: Not Found - 404')
+  check('★ fetch-404 能**点名**是哪个依赖（从 pnpm 的 URL 里还原包名）',
+    JSON.stringify(p404.packages) === JSON.stringify(['dsh-github-login']), JSON.stringify(p404.packages))
+  check('★ fetch-404 的 hint 把包名念给用户（面板上一眼看到是哪个依赖）',
+    p404.hint.includes('dsh-github-login') && p404.hint.includes('404'), p404.hint)
+  check('★ fetch-404 明写"不会为了让 lock 重建成功而静默丢弃依赖"（安全边界进面向用户的文案）',
+    /不会.*静默丢弃你的依赖/u.test(p404.hint), p404.hint)
+  check('★ missingPackagesFrom：scoped 包名（含 %2f 编码形态）也能还原，去重、不吃 tarball 文件名',
+    JSON.stringify(missingPackagesFrom('404 Not Found - GET https://registry.npmjs.org/@scope%2fmissing-pkg - Not found')) === JSON.stringify(['@scope/missing-pkg'])
+    && JSON.stringify(missingPackagesFrom('GET https://registry.npmjs.org/a/-/a-1.0.0.tgz 404')) === JSON.stringify(['a'])
+    && JSON.stringify(missingPackagesFrom('https://r.example/x https://r.example/x')) === JSON.stringify(['x'])
+    && JSON.stringify(missingPackagesFrom('no url here')) === JSON.stringify([]),
+    JSON.stringify(missingPackagesFrom('404 Not Found - GET https://registry.npmjs.org/@scope%2fmissing-pkg - Not found')))
+  const age = classifyInstallFailure('ERR_PNPM_MINIMUM_RELEASE_AGE_VIOLATION  The version 0.5.15 was published too recently')
+  check('★ supply-chain-age → retry=later（提示稍后再试，**绝不**自动绕过供应链闸）', age.retry === 'later', String(age.retry))
+  check('★ supply-chain-age 的 hint 只给"可自行显式绕过（有安全代价）"，并明写本控制台不代劳',
+    age.hint.includes('--config.minimumReleaseAge=0') && /绝不替你绕过/u.test(age.hint) && /安全代价/u.test(age.hint),
+    age.hint)
+  check('supply-chain-age 与泛化的 minimumReleaseAge 是两个分类（专用错误码走新分类，泛化文本不受影响）',
+    classifyInstallFailure('ERR_PNPM_MINIMUM_RELEASE_AGE').kind === 'minimumReleaseAge' && age.kind === 'supply-chain-age')
+  const stale = classifyInstallFailure('ERR_PNPM_OUTDATED_LOCKFILE  Cannot install with "frozen-lockfile" because pnpm-lock.yaml is not up to date with package.json')
+  check('★ lockfile-outdated：定性为"不是网络问题"，并指向显式体检/重建',
+    stale.kind === 'lockfile-outdated' && stale.retry === null && /显式/u.test(stale.hint) && /lock/u.test(stale.hint), stale.hint)
+  check('每个分类的 hint 都是短句（面板只放短句：≤ 200 字，长解释不进正文）',
+    DIAGNOSIS_RULES.every((r) => r.hint.length <= 200), String(Math.max(...DIAGNOSIS_RULES.map((r) => r.hint.length))))
+  check('诊断一行文案带上点名的依赖（diagnosisText 加法字段）',
+    diagnosisText(p404).includes('dsh-github-login'), diagnosisText(p404))
 }
 
 // ── ②③ 安装失败路径接线（真跑 runInstallJob，通道打桩，DSH_HOME 在临时目录）──
@@ -144,15 +189,18 @@ async function runScenario(label, pnpmMessage) {
     a.calls.some((c) => c.startsWith('race:')) && a.calls.some((c) => c.startsWith('curl:')) && a.calls.some((c) => c.startsWith('release:'))
     && a.calls.some((c) => c.startsWith('pnpm:git+')), a.calls.join(' → ').slice(0, 180))
 
-  // 场景 B：404 → 不自动重试，只提示
+  // 场景 B：404 → 不自动重试，只提示（2026-09-27 起归到更具体的 fetch-404，并点名依赖）
   const b = await runScenario('b', 'ERR_PNPM_FETCH_404  GET https://registry.npmmirror.com/dsh-diagnose-probe: Not Found - 404')
   const pnpmOfPkgB = b.calls.filter((c) => c.startsWith(`pnpm:${PKG}:`))
   check('B 404 → 没有任何定向重试（只有既有的逐源尝试）',
     pnpmOfPkgB.every((c) => !c.endsWith(':180000')) && pnpmOfPkgB.length >= 1, pnpmOfPkgB.join(' | '))
-  check('B job.diagnosis.kind=not-found 且 retry=null，无 retried 标记',
-    b.job.diagnosis?.kind === 'not-found' && b.job.diagnosis?.retry === null && b.job.diagnosis?.retried === undefined,
+  check('B job.diagnosis.kind=fetch-404 且 retry=null，无 retried 标记',
+    b.job.diagnosis?.kind === 'fetch-404' && b.job.diagnosis?.retry === null && b.job.diagnosis?.retried === undefined,
     JSON.stringify(b.job.diagnosis))
-  check('B hint 指向"核对包名/镜像未同步"', /镜像未同步/u.test(b.job.diagnosis?.hint ?? ''))
+  check('B 点名的依赖就是失败的那个包（packages 字段带到面板）',
+    JSON.stringify(b.job.diagnosis?.packages) === JSON.stringify([PKG]), JSON.stringify(b.job.diagnosis?.packages))
+  check('B hint 指向"核对包名/镜像未同步"且明写不会静默丢弃依赖',
+    /镜像未同步/u.test(b.job.diagnosis?.hint ?? '') && /静默丢弃/u.test(b.job.diagnosis?.hint ?? ''))
 
   // 场景 C：allowBuilds → 只提示、绝不自动写白名单、绝不重试
   const c = await runScenario('c', 'Ignored build scripts: sharp, esbuild. Run "pnpm approve-builds" to allow them.')

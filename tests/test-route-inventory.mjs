@@ -77,6 +77,9 @@ const ROUTES = [
   '/compat-mode',
   '/compat-stamp',
   '/declare-installed',
+  // 依赖锁体检 / 重建（2026-09-27 加法）：check 只读，repair 必须显式调用
+  '/lockfile-check',
+  '/lockfile-repair',
 ]
 // 分层后路由可能写在 lib/server/routes/**（表项）或 index.js（内联分支）—— 两种写法都要认
 const walkSrc = (dir) => readdirSync(dir, { withFileTypes: true }).flatMap((e) => {
@@ -107,6 +110,9 @@ const SCHEMAS = [
   ['POST', '/plugin-console/install-status', {}, 404, ['error', 'ok']],
   ['POST', '/plugin-console/repo-list', {}, 200, ['dir', 'ok', 'repos']],
   ['POST', '/plugin-console/components', {}, 200, ['components', 'ok']],
+  // 依赖锁体检（2026-09-27 加法）：夹具 profile 没有 package.json / pnpm-lock.yaml，
+  // 因此这条**不打 registry**（清单里没有依赖要探测），响应是确定性的。字段逐字段钉死。
+  ['POST', '/plugin-console/lockfile-check', {}, 200, ['checkedAt', 'hint', 'lockfile', 'manifestDeps', 'ok', 'outdated', 'packages404', 'problems', 'profileDir', 'registry', 'repair', 'supplyChainAge']],
   // github-login 只测"形状不合法"这条不触网的路径：合法 token 会真的打 GitHub，测试不能依赖网络
   ['POST', '/plugin-console/github-login', { token: '' }, 400, ['error', 'ok']],
   // github-open-login 不能进这张表：它的响应随环境分两种形状（成功 {ok,started,status} / 不可用
@@ -120,6 +126,30 @@ for (const [method, path, body, wantStatus, wantKeys] of SCHEMAS) {
   const keys = r.json === null ? [] : Object.keys(r.json).sort()
   const same = r.status === wantStatus && JSON.stringify(keys) === JSON.stringify([...wantKeys].sort())
   check(`响应契约 ${method} ${path.replace('/plugin-console', '')}`, same, `status=${r.status} keys=${keys.join(',')}`)
+}
+
+// ── ②a-0 依赖锁体检必须是**只读**的（2026-09-27 加法）─────────────────────────────
+// 契约字段已在上面钉死；这里钉住行为边界：体检报告"lock 不在/与清单对不上"，
+// 但**不创建 pnpm-lock.yaml、不碰 package.json**（写盘只允许由用户显式调 /lockfile-repair 触发）。
+{
+  const lockPath = join(profileDir, 'pnpm-lock.yaml')
+  const manifestPath = join(profileDir, 'package.json')
+  const manifestBefore = existsSync(manifestPath) ? readFileSync(manifestPath, 'utf8') : null
+  const r = await call('POST', '/plugin-console/lockfile-check', {})
+  check('★ lockfile-check 报告 lock 缺失（夹具里确实没有 pnpm-lock.yaml）',
+    r.json?.lockfile?.present === false && r.json?.outdated?.lockfileMissing === true && r.json?.ok === false,
+    `lockfile=${JSON.stringify(r.json?.lockfile)} outdated=${JSON.stringify(r.json?.outdated)?.slice(0, 80)}`)
+  check('★ lockfile-check 认为可以重建（无 fetch-404 / 不可达依赖时 applicable=true）',
+    r.json?.repair?.applicable === true && r.json?.repair?.blockedBy?.length === 0
+    && String(r.json?.repair?.command).startsWith('install --lockfile-only'),
+    JSON.stringify(r.json?.repair))
+  check('★ lockfile-check 是只读的：没有写出 pnpm-lock.yaml、没有改 package.json',
+    !existsSync(lockPath) && (existsSync(manifestPath) ? readFileSync(manifestPath, 'utf8') : null) === manifestBefore,
+    `lock=${existsSync(lockPath)}`)
+  check('lockfile-check 的问题清单带分类与短句 hint（面板只放短句）',
+    Array.isArray(r.json?.problems) && r.json.problems.length > 0
+    && r.json.problems.every((p) => typeof p.kind === 'string' && typeof p.hint === 'string' && p.hint.length > 10 && Array.isArray(p.packages)),
+    JSON.stringify((r.json?.problems ?? []).map((p) => p.kind)))
 }
 
 // ── ①b 门控面板必须能看到「具体是哪些插件」（2026-09-24 用户要求）─────────────
