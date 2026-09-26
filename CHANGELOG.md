@@ -2,6 +2,93 @@
 
 All notable changes to dsh-plugin-hub.
 
+## v0.5.16 — 修「装了 pnpm 12 就一个插件都装不上」（CI 抓到的真事故）+ POSIX 杀树按 /proc 兜底（改错，内核零改动）（2026-09-27）
+
+本版是**修错版**：把 CI 抓到的一个真事故修掉 —— **装了 pnpm 12 的机器走 pnpm 通道任何插件都装不上**，
+而这失败恰恰是我们自己在 0.5.13 为「加固」加的参数造成的。另带一个已在 CI 验证的 POSIX 杀树兜底
+（孙进程不再必然残留）与两处测试自身的问题。安装/升级/门控的**成功判定与公开行为未变**。
+
+### 一、pnpm 12 装不上（本版核心，CI 抓到的真事故）
+
+**事故**：CI 的 corepack 在 Linux runner 上解析到 **pnpm 12.6.0**，而 pnpm 12 的 `add` **不认**
+0.5.13 为加固加的 `--fetch-timeout/--fetch-retries`：
+
+```
+error: unexpected argument '--fetch-timeout' found
+
+Usage: pnpm add --registry <REGISTRY> <PACKAGE_NAMES>...
+（exit code 2）
+```
+
+0.5.13 的兜底判据 `unknownPnpmOption()` **只认 pnpm 11 的文案**
+（`[ERROR] Unknown options: 'fetch-timeout', 'fetch-retries'`）。pnpm 12 把这段换成了 clap 风格后，
+「去掉加固选项重试一次」的降级分支**永不触发**：第一跳直接 exit 2 →
+**装了 pnpm 12 的机器走 pnpm 通道任何插件都装不上**。加固的本质是"让安装更稳"，
+**绝不允许变成"装不上"**，这是本次事故最严重的地方（不是 CI 的环境问题，是产品缺陷）。
+
+**修法**（`lib/server/infra/exec.js`，判据一行）：`/Unknown option|unexpected argument/iu` ——
+**两代文案都认**；调用方（`runPnpmAdd`）看到这个错误就跑一次
+`pnpmAddArgs(..., { fetchFlags: false })` 去掉加固选项重试。pnpm 11 / pnpm 12 两代真实文案各补断言
+（`tests/test-pnpm-env.mjs`），并新增一条端到端降级断言：**用 pnpm 12 的真实文案喂进去，必须触发降级、
+且第二跳真的不带加固选项**（正是过去不触发的那条路）。
+
+**顺带修掉"排查时看不见真因"**：`tests/test-install-smoke.mjs` 里失败信息用
+`error.message.split('\n')[0]` 截取，恰好把真实原因切掉 —— pnpm 的话在 message 的**第二行起**
+（`Command failed: <命令行>\n<stderr>`），于是 CI 只留下「Command failed: <命令行>」，
+当次谁也看不出为什么。现在原样带出 `code=` + 压平空白后的前 500 字符（③④⑥ 三处）。
+
+### 二、POSIX 杀树兜底：按 /proc 逐个 SIGKILL（`9bfe686`）
+
+**问题**：POSIX 分支的兜底过去是「成组 kill 失败就直接 `kill(pid)`」，那等于**承认孙进程必然残留** ——
+pnpm 派生的 git / tar / node-gyp / 子 pnpm 会变成孤儿继续跑，占着 `node_modules` 与 `.git` 里的文件。
+
+**改动**（`lib/server/infra/exec.js`）：新增 `posixDescendants()` —— 读 `/proc/<pid>/stat` 的 `ppid` 建索引
++ BFS 找出整棵子树（**纯读、任何一步读不到就返回 `[]`、绝不抛**）；成组 kill 失败时按**叶子到根**
+逐个 `SIGKILL`。
+
+- **为什么不用 `pkill -P`**：slim 容器 / 最小镜像未必装了 procps，而 `/proc` 是内核接口；
+- **macOS**（无 `/proc`）→ 返回 `[]`，退化成「只杀直接子进程」，**不比旧行为差**；
+- **返回值语义不变**（仍是"有没有成功发出过 kill"）；**Windows 分支一字未动**；
+- `deps` 注入点（`platform/kill/procDir/readdir/readFile`）只为单测，生产调用不传。
+
+### 三、测试自身：瞬时采样改有界等待（`9bfe686`）
+
+CI（run `36246293996`）只红一条：`④ 链路父子进程同样已被回收`。同一 run 的 ①③ 链路父子探活都 PASS，
+而 ④ 是**瞬时采样**：超时错误产生于 `07.3133s`，它在 `07.3155s`（**+2.25ms**）就判了「还活着」。
+根因是**测试自己抢跑** —— SIGKILL 的「投递 → 目标被调度死亡 → 被父/init 收割」是异步的
+（直接子进程此时常常还是未被 node 收割的僵尸），**不是生产代码没杀掉进程**。
+
+改动（`tests/test-pnpm-kill-tree.mjs`）：④ 与 ①③ 统一用 `waitUntil` **有界等待**（8s，父与孙都必须死，
+**真残留照样 FAIL**），并把实测等待时长打进断言信息（下次能一眼区分「慢」与「永远不死」）；
+`缺 PID_FILE.2 就 if 静默跳过` 改成**硬断言**；新增 ⑦ 节 POSIX 分支桩测（本机 Windows 跑不到那条路）：
+`spawn` 必须 `detached` / 成组成功只发一次 `kill(-pid)` / 成组失败后按 `/proc` ppid 链杀孙进程 /
+无关进程不误杀 / 一个都杀不掉才返回 `false` / 抖动回归 + 负向对照（旧实现「只 `kill(pid)`」必须被判「没杀干净」）。
+
+### 四、验证
+
+- **CI 全绿（本版门禁）**：main 上 run `36251545628`（merge commit `9fc3bf6`）
+  —— `Unit tests (hard gate)` ✅ + `Real install/uninstall smoke (temp DSH_HOME)` ✅；
+  此前 main **连续三次红**（`36237465134` / `36246293996` / `36250604784`）都是本节第一条那个原因。
+  CI 的真装真卸冒烟正是"pnpm 12 + corepack"的真机现场，**这条修好才算真修好**。
+- **本机**：`node --check`（lib + 全部 `tests/test-*.mjs`）通过；CI 的 19 条 Unit tests 逐条本地跑过
+  全部通过；`tests/test-pnpm-env.mjs` = PASS 18 / FAIL 0（含新增的 pnpm 12 降级断言）。
+- 覆盖面：pnpm 11（本机 11.21.0 文案）与 pnpm 12（CI 真实文案）**两代都有断言**，
+  且**不改变**「真实安装失败不重试、原样抛出」的既有语义（有断言钉死）。
+
+### 未验证 / 不确定项（如实列出）
+
+- **本机没有 pnpm 12 真机做真装真卸**：pnpm 12 的覆盖 = CI 的真装真卸冒烟步（真 pnpm 12.6.0 + 真 registry）
+  + 注入 pnpm 12 真实文案的离线单测；本机（Windows，pnpm 11.21.0）只覆盖了 pnpm 11 的真实路径。
+- **未做"版本感知加固"**：曾考虑先探测 `pnpm --version` 再决定带不带 `--fetch-timeout/--fetch-retries`
+  （`>=12` 不带 / `<=11` 带 / 探测失败不带）。本版**没做**，理由：探测要落在所有安装通道的唯一入口上，
+  而 runner 解析（`resolvePnpmRunners`）本身是**多候选按序回退**的（corepack 三种布局 + PATH 兜底），
+  一次探测未必等于真正执行安装的那个 pnpm；corepack 冷启动还可能要现下载 pnpm，给安装热路径加一个
+  网络相关的子进程并不可取。现有文案匹配的代价只是 pnpm 12 上**多一次瞬失败的 `pnpm add`**
+  （参数解析即 exit 2，不走网络），随后降级重试即可装上 —— 收益太小、风险在"所有插件安装"的热路径上，故不做。
+- **macOS「无 /proc」的退化路径只有桩测**（返回 `[]` 且不抛）；POSIX 兜底的真 Linux 证据 = 本次 CI 跑绿。
+- **两个 live profile 只做了文件同步（未重启）**：新代码要等对应实例重启才生效；本次**不重启**用户实例。
+- 本次门禁 = **main CI 全绿**（用户指定），**未**另跑"全新实例 clean-install 门槛"。
+
 ## v0.5.15 — 依赖锁体检/重建 + 测试目录的两个既有问题收尾（改错 + 加法，内核零改动）（2026-09-27）
 
 本版把 3 个**已改完但未发布**的修复一起发出来，并新增「依赖锁体检 / 显式重建」能力。全部改动都是
