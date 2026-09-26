@@ -20,13 +20,21 @@ function check(name, ok, info = '') {
   if (ok) { pass += 1; console.log(`PASS ${name}${info === '' ? '' : ` — ${info}`}`) } else { fail += 1; console.log(`FAIL ${name}${info === '' ? '' : ` — ${info}`}`) }
 }
 
-const DEST = join(tmpdir(), 'dsh-git-source-probe', 'x')
+const DEST = join(tmpdir(), `dsh-git-source-probe-${process.pid}`, 'x')
 const noMemo = { readMemo: () => '', writeMemo: () => {} }
 
-/** 假 git：第 1 次卡死（超时），第 2 次成功；用于验证"同源更长超时重试后成功"。 */
+/** 假 git：第 1 次卡死（超时），第 2 次成功；用于验证"同源更长超时重试后成功"。
+ *  2026-09-27：只对**有进度**的源重试，所以第 1 次要在目标目录写下 .git/objects 字节。 */
 function spawnTimeoutThenSuccess(seen) {
   return (bin, argv) => {
     seen.push(argv)
+    if (seen.length === 1) {
+      const part = argv[argv.length - 1]
+      try {
+        mkdirSync(join(part, '.git', 'objects', 'pack'), { recursive: true })
+        writeFileSync(join(part, '.git', 'objects', 'pack', 'tmp_pack_x'), 'x'.repeat(2048))
+      } catch {}
+    }
     const handlers = {}
     const child = { pid: 6000 + seen.length, stderr: { on() {} }, on(event, cb) { handlers[event] = cb }, handlers }
     if (seen.length > 1) setImmediate(() => handlers.close?.(0))

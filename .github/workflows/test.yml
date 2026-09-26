@@ -52,6 +52,11 @@ jobs:
           # 批次 A-①（2026-09-27）：git 克隆的停滞判据（-c http.lowSpeedLimit=1 -c http.lowSpeedTime=20）
           # 含一段**真 git** 对着本机"只连不传"桩源的 ≈20 秒判死断言（不出外网，CI 可跑）
           node tests/test-git-stall-guard.mjs
+          # 批次 A-②（2026-09-27）：git 通道独立预算（默认 120 秒、可配、不得超过作业剩余预算）
+          node tests/test-git-budget.mjs
+          # 批次 A-②/③ 的真实验收：本机"只连不传"桩源 + **真 pnpm/git**，断言 git 预算到点停手、
+          # 且展开出来的下一个候选照旧被尝试（15.6 秒收尾；不需要外网）
+          node tests/test-real-git-budget.mjs
 
       # 真装真卸冒烟：在 CI 的 Linux 宿主上跑（临时 DSH_HOME，不碰真实目录）。
       # 为什么单独一步且**不带** DSH_TEST_SKIP_NETWORK：环境相关测试"没 profile 就整体 SKIP"，

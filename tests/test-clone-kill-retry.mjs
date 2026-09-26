@@ -8,7 +8,11 @@
 //   ④ 错误信息给出真实原因 + 可复制的手动删除命令（不再谎报环境禁止删除）
 
 import { strict as assert } from 'node:assert'
+import { mkdirSync, writeFileSync } from 'node:fs'
+import { join } from 'node:path'
+import { tmpdir } from 'node:os'
 import { gitCloneRepo, summarizeCloneErrors } from '../lib/server/domain/repoland.js'
+import { disposeDir } from '../lib/server/infra/fsx.js'
 
 let pass = 0
 let fail = 0
@@ -16,10 +20,18 @@ function check(name, ok, info = '') {
   if (ok) { pass += 1; console.log(`PASS ${name}${info === '' ? '' : ` — ${info}`}`) } else { fail += 1; console.log(`FAIL ${name}${info === '' ? '' : ` — ${info}`}`) }
 }
 
-/** 假 git 进程：永不 close（模拟卡死），但可被 killTree 观测到。 */
-function fakeHangingSpawn(seen) {
+/** 假 git 进程：永不 close（模拟卡死），但可被 killTree 观测到。
+ *  2026-09-27：可选写入 `.git/objects` 字节 —— 有进度才配"同源更长超时重试"（见 repoland 的停滞/进度判据）。 */
+function fakeHangingSpawn(seen, progressBytes = 0) {
   return (bin, argv, opts) => {
     seen.push({ bin, argv, opts })
+    if (progressBytes > 0) {
+      const part = argv[argv.length - 1]
+      try {
+        mkdirSync(join(part, '.git', 'objects', 'pack'), { recursive: true })
+        writeFileSync(join(part, '.git', 'objects', 'pack', 'tmp_pack_x'), 'x'.repeat(progressBytes))
+      } catch {}
+    }
     return {
       pid: 4242 + seen.length,
       stderr: { on() {} },
@@ -42,9 +54,15 @@ function fakeFailingSpawn(seen, code = 128, stderr = 'fatal: unable to access re
   }
 }
 
-const DEST = 'C:/tmp/whatever/dsh-suite-job-9'
+// 临时目录清理必须走 disposeDir：本机 %TEMP% 下 `rmSync` 会**静默落空**（不抛错、目录还在），
+// 用 rmSync 清理会让"上一块的 `.try1` 残留"污染下一块的进度判据（2026-09-27 本测试实测）。
+const ROOTDIR = join(tmpdir(), `dsh-clone-kill-retry-${process.pid}`)
+const DEST = join(ROOTDIR, 'dsh-suite-job-9')
+const DEST2 = join(ROOTDIR, 'dsh-suite-job-9-noprogress')
+disposeDir(ROOTDIR)
 
-// ① + ② + ④：两个源都超时 → 每个源「正常超时 + 更长超时重试一次」= 4 次尝试，杀树 8 次（每次 2 轮）
+// ① + ② + ④：两个源都超时 —— **有进度**的源才会"同源更长超时重试一次"（2026-09-27 判据），
+//    所以这里让假 git 写入 .git/objects 字节（模拟"慢但在传"），期望 2 源 × 2 次 = 4 次尝试。
 {
   const seen = []
   const kills = []
@@ -52,7 +70,7 @@ const DEST = 'C:/tmp/whatever/dsh-suite-job-9'
   const err = await (async () => {
     try {
       await gitCloneRepo('zhu1090093659/dsh-web', DEST, 'github', 120, {
-        spawnFn: fakeHangingSpawn(seen),
+        spawnFn: fakeHangingSpawn(seen, 4096),
         killTree: (pid) => { kills.push(pid); return true },
         probe: async () => true,
         removeDir: (dir) => { dirs.push(dir); return { ok: true } },
@@ -62,18 +80,44 @@ const DEST = 'C:/tmp/whatever/dsh-suite-job-9'
       return null
     } catch (error) { return error }
   })()
-  // 2026-09-26（本次）：同一个源超时后会用**更长超时重试一次**（源策略），所以 2 个源 = 4 次尝试
+  // 2026-09-26：同一个源超时后会用**更长超时重试一次**（源策略），所以 2 个源 = 4 次尝试
   check('超时：两个源都被尝试，且各自同源重试一次（2 源 × 2 次 = 4）', seen.length === 4, `spawn ${seen.length} 次`)
   check('超时：每次都调用了 killTree，且等不到退出会补杀一次（4 次尝试 × 2 = 8）', kills.length === 8, `killTree ${kills.length} 次`)
-  const timeoutPair = (err?.message ?? '').match(/克隆超时（(\d+)ms），改用 (\d+)ms 同源重试/u)
-  check('同源重试用的是更长超时（≥1.5 倍，真机 ghproxy 卡死场景）',
-    timeoutPair !== null && Number(timeoutPair[2]) >= Number(timeoutPair[1]) * 1.5,
-    timeoutPair === null ? '（文案里没有重试超时信息）' : `${timeoutPair[1]}ms → ${timeoutPair[2]}ms`)
+  const timeoutPair = (err?.message ?? '').match(/克隆超时（(\d+)ms，本次已收到 (\d+) B），改用 (\d+)ms 同源重试/u)
+  check('同源重试用的是更长超时（≥1.5 倍，真机"慢但在传"场景）',
+    timeoutPair !== null && Number(timeoutPair[3]) >= Number(timeoutPair[1]) * 1.5,
+    timeoutPair === null ? '（文案里没有重试超时信息）' : `${timeoutPair[1]}ms → ${timeoutPair[3]}ms`)
+  check('★ 重试文案带上"本次已收到多少字节"（有进度才重试的事实依据）',
+    timeoutPair !== null && Number(timeoutPair[2]) >= 4096, timeoutPair === null ? '（无）' : `${timeoutPair[2]} B`)
   const tried = seen.map((s) => s.argv[s.argv.length - 1])
   check('每次尝试用不同的新目录（残留不再连锁失效）', new Set(tried).size === tried.length && /\.try1$/u.test(tried[0]) && /\.try2$/u.test(tried[1]), tried.join(' | '))
-  check('错误信息标出「超时，进程已结束」与「已改用更长超时重试」', /超时，进程已结束/u.test(err?.message ?? '') && /已改用更长超时重试/u.test(err?.message ?? ''), (err?.message ?? '').slice(0, 110))
+  check('错误信息标出「超时，进程已结束」与「已改用更长超时重试」', /超时，进程已结束/u.test(err?.message ?? '') && /已改用更长超时重试/u.test(err?.message ?? ''), (err?.message ?? '').slice(0, 130))
   check('错误信息不再谎报「环境禁止删除」', !/环境禁止删除/u.test(err?.message ?? ''))
   check('错误信息把「源数」与「尝试次数」分开报（4 次尝试 / 2 个源）', /已尝试 2 个源（共 4 次尝试）/u.test(err?.message ?? ''), (err?.message ?? '').slice(0, 80))
+  disposeDir(DEST)
+}
+
+// ①-b（2026-09-27 加法）：**0 B 的源不做长超时重试** —— 真机 ghproxy 卡死就是 0 B/s，
+// 再用 1.75 倍超时重试只是把白等从 60 秒拉长到 105 秒。同一个源只试一次，把时间留给下一个源。
+{
+  const seen = []
+  const err = await (async () => {
+    try {
+      await gitCloneRepo('zhu1090093659/dsh-web', DEST2, 'github', 120, {
+        spawnFn: fakeHangingSpawn(seen, 0), // 一个字节都不写 = 0 进度
+        killTree: () => true,
+        probe: async () => true,
+        removeDir: () => ({ ok: true }),
+        renameDir: () => {},
+        readMemo: () => '', writeMemo: () => {},
+      })
+      return null
+    } catch (error) { return error }
+  })()
+  check('★ 0 B（无进度）的源：2 个源各只试 1 次（不再无条件长超时重试）', seen.length === 2, `spawn ${seen.length} 次`)
+  check('★ 文案如实说明"本次收到 0 B（无进度，不再用更长超时重试）"',
+    /本次收到 0 B（无进度，不再用更长超时重试）/u.test(err?.message ?? ''), (err?.message ?? '').slice(0, 130))
+  disposeDir(ROOTDIR)
 }
 
 // ③：第一个源失败且**清理不掉**（残留被占用）→ 仍然继续试第二个源
