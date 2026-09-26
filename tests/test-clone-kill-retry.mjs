@@ -95,7 +95,11 @@ const DEST = 'C:/tmp/whatever/dsh-suite-job-9'
   })()
   check('清理失败后仍继续试下一个源（旧代码会 break）', seen.length === 2, `spawn ${seen.length} 次 / removeDir ${removeCalls} 次`)
   check('错误信息含「残留目录被占用，已跳过重试」与实际原因', /残留目录被占用/u.test(err?.message ?? '') && !/环境禁止删除/u.test(err?.message ?? ''))
-  check('错误信息给出可复制的手动删除命令', /Remove-Item -Recurse -Force/u.test(err?.message ?? ''), (err?.message ?? '').slice(0, 60))
+  // 2026-09-26（本次改错）：不再给手动删除命令 —— 删不掉的残留由 disposeDir 改名降级成 `.trash-*`，
+  // 连改名都失败时也只说"控制台会在后台自动重试清理"。
+  check('错误信息不再要求用户手动删除（改说后台自动重试清理）',
+    !/Remove-Item/u.test(err?.message ?? '') && !/请手动删除/u.test(err?.message ?? '') && /控制台会在后台自动重试清理/u.test(err?.message ?? ''),
+    (err?.message ?? '').slice(-90))
 }
 
 // 探活失败 → 直接跳过，不启动 git
