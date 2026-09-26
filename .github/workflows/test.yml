@@ -80,6 +80,14 @@ jobs:
           DSH_TEST_SKIP_NETWORK: ''
         run: node tests/test-install-smoke.mjs
 
+      # 真实通道冒烟：archive 通道真下载 + npmName 首选候选真装（隔离 DSH_HOME；需要外网）
+      - name: Real channel smoke (ghproxy / npmmirror)
+        env:
+          DSH_TEST_SKIP_NETWORK: ''
+        run: |
+          node tests/test-real-archive.mjs
+          node tests/test-real-npmname-hint.mjs
+
       - name: Environment-dependent tests (auto-SKIP without local profile)
         run: |
           node tests/test-framework-upgrade.mjs

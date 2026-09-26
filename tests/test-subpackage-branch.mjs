@@ -75,12 +75,18 @@ async function read({ branch, subpackagesOn }) {
 
 // ── ④ 默认分支从 meta 来：install-job 会把 meta.default_branch 记进 job.defaultBranch ──
 {
+  // 2026-09-27：懒惰展开的实现搬进 market.js（install-job.js 触到 600 行硬顶），
+  // 所以这里断言的是"install-job 把 job.defaultBranch 交给了展开那一步"，而不是具体函数名。
   const src = readFileSync(fileURLToPath(new URL('../lib/server/domain/install-job.js', import.meta.url)), 'utf8')
+  const marketSrc = readFileSync(fileURLToPath(new URL('../lib/server/domain/market.js', import.meta.url)), 'utf8')
   check('★ install-job 记录 job.defaultBranch 并把它交给读子包的那一步',
     /job\.defaultBranch = branch/u.test(src)
-    && /fetchSubpackageNames\(job\.repo, job\.defaultBranch \?\? 'main'/u.test(src)
+    && /branch: job\.defaultBranch \?\? 'main'/u.test(src)
     && !/fetchSubpackageNames\(job\.repo, 'main'/u.test(src),
-    `defaultBranch=${/job\.defaultBranch = branch/u.test(src)} / 写死 main=${/fetchSubpackageNames\(job\.repo, 'main'/u.test(src)}`)
+    `defaultBranch=${/job\.defaultBranch = branch/u.test(src)} / 传给展开=${/branch: job\.defaultBranch/u.test(src)} / 写死 main=${/fetchSubpackageNames\(job\.repo, 'main'/u.test(src)}`)
+  check('★ 展开实现自己不再写死分支（market.js 里分支完全由调用方给）',
+    /async function expandSubpackageCandidates\(\{ repo, branch = 'main'/u.test(marketSrc)
+    && !/fetchSubpackageNames\(repo, 'main'/u.test(marketSrc), 'market.js 里没有写死 main 的调用')
 }
 
 assert.ok(pass > 0)

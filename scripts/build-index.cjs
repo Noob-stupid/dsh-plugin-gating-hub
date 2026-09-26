@@ -72,6 +72,40 @@ function readExisting(file) {
   }
 }
 
+/**
+ * 仓库 → npm 包名（批次 C-⑪）：市场索引的 npmName 字段。
+ * 为什么需要：有些仓库的根包没有发布到 npm（private），真正该装的产物是某个子包/聚合包
+ * （真机：zhu1090093659/dsh-web → @linxin666/dsh-web-all，5.97 MB，而仓库本体 429 MB、
+ * git 协议 0 B/s）。把这个映射写进索引后，hub 侧可以**直接按包名走 registry 安装**，
+ * 省掉"先探测根 package.json、再展开子包"的一整轮（本机 github 不可达时那条路根本走不通）。
+ * 只收录**能确定**的（人工核对过的映射文件）；不能确定就省略 —— 老索引没有这个字段，
+ * hub 侧行为与改动前完全一致。
+ */
+function readNpmNameHints(explicitFile) {
+  const file = explicitFile ?? path.join(__dirname, '..', 'marketplace', 'npm-name-hints.json')
+  try {
+    const raw = JSON.parse(fs.readFileSync(file, 'utf8'))
+    const hints = raw && typeof raw.hints === 'object' && raw.hints !== null ? raw.hints : {}
+    const out = {}
+    for (const [repo, npmName] of Object.entries(hints)) {
+      if (typeof repo !== 'string' || repo.trim() === '') continue
+      if (typeof npmName !== 'string' || !/^(?:@[a-z0-9-~][a-z0-9-._~]*\/)?[a-z0-9-~][a-z0-9-._~]*$/u.test(npmName.trim())) continue
+      out[repo.trim().toLowerCase()] = npmName.trim()
+    }
+    return out
+  } catch {
+    return {}
+  }
+}
+
+/** 给归一化后的条目补 npmName（能确定时）。纯函数，便于单测。 */
+function withNpmNames(items, hints) {
+  return items.map((item) => {
+    const hit = hints[String(item.fullName).toLowerCase()]
+    return hit === undefined ? item : { ...item, npmName: hit }
+  })
+}
+
 async function main() {
   const skillsMode = process.argv.includes('--skills')
   const limitArg = process.argv.find((a) => a.startsWith('--limit='))
@@ -129,6 +163,10 @@ async function main() {
   }
 
   const existing = readExisting(file)
+  // 批次 C-⑪：给能确定的条目补 npmName（--hints=<file> 可覆盖映射文件）
+  const hintsArg = process.argv.find((a) => a.startsWith('--hints='))
+  const hints = readNpmNameHints(hintsArg ? hintsArg.split('=')[1] : undefined)
+  const named = withNpmNames(normalized, hints)
   const out = {
     generatedAt: new Date().toISOString(),
     count: existing.count ?? 0,
@@ -136,14 +174,17 @@ async function main() {
     skills: existing.skills ?? [],
   }
   if (skillsMode) {
-    out.skills = normalized
-    out.skillCount = normalized.length
+    out.skills = named
+    out.skillCount = named.length
   } else {
-    out.items = normalized
-    out.count = normalized.length
+    out.items = named
+    out.count = named.length
   }
   fs.writeFileSync(file, JSON.stringify(out, null, 2) + '\n', 'utf8')
-  console.log(`已更新 ${file}：${skillsMode ? '技能 ' + normalized.length : '插件 ' + normalized.length}（限制 ${limit}）`)
+  const hinted = named.filter((it) => typeof it.npmName === 'string').length
+  console.log(`已更新 ${file}：${skillsMode ? '技能 ' + named.length : '插件 ' + named.length}（限制 ${limit}${hinted > 0 ? `；其中 ${hinted} 条带 npmName` : ''}）`)
 }
 
-main().catch((error) => { console.error(error); process.exit(1) })
+if (require.main === module) main().catch((error) => { console.error(error); process.exit(1) })
+
+module.exports = { normalizeRepo, readNpmNameHints, withNpmNames }

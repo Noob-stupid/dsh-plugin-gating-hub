@@ -1,0 +1,7 @@
+{
+  "_comment": "仓库 → npm 包名的确定性映射（批次 C-⑪）。只收录『已确认』的：仓库根包未发布到 npm、真正该装的是某个子包/聚合包的情况。build-index.cjs 与 scripts/apply-npm-names.cjs 都会读它，给市场索引条目补 npmName 字段；hub 侧把 npmName 当**首选候选**直接走 registry 安装，省掉『先探测再展开』的一整轮。",
+  "_verifiedAt": "2026-09-27",
+  "hints": {
+    "zhu1090093659/dsh-web": "@linxin666/dsh-web-all"
+  }
+}

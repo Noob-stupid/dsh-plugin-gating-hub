@@ -476,7 +476,8 @@
         "dsh-plugin",
         "dsh-web",
         "dsh-web-ui"
-      ]
+      ],
+      "npmName": "@linxin666/dsh-web-all"
     },
     {
       "fullName": "YaoApp/yao",
