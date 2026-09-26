@@ -88,7 +88,11 @@ try {
       installed = true
       workedRegistry = registry
       break
-    } catch (error) { lastErr = `${registry} → ${error.message.split('\n')[0]}` }
+    // 2026-09-26：这里以前是 `error.message.split('\n')[0]` —— 恰好把真实原因切掉了：
+    // pnpm 的话在 message 的第二行起（`Command failed: <cmd>\n<stderr>｜真实输出：…`），
+    // 于是 CI 只留下「Command failed: <命令行>」，排查时谁也看不出为什么（当次真因是
+    // pnpm 12 的 `error: unexpected argument '--fetch-timeout' found`）。现在原样带出来。
+    } catch (error) { lastErr = `${registry} → code=${error.code}｜${String(error.message).replace(/\s+/gu, ' ').slice(0, 500)}` }
   }
   check(`③ pnpm 通道真装上 ${PKG}`, installed, installed ? 'ok' : lastErr)
   const pkgJson = join(profileDir, 'node_modules', PKG, 'package.json')
@@ -99,7 +103,7 @@ try {
   // ④ 真卸载（pnpm remove 走同一套跨平台定位）
   let removed = false
   let removeErr = ''
-  try { await pnpmRemove(profileDir, PKG); removed = true } catch (error) { removeErr = error.message.split('\n')[0] }
+  try { await pnpmRemove(profileDir, PKG); removed = true } catch (error) { removeErr = `${String(error.message).replace(/\s+/gu, ' ').slice(0, 500)}` }
   check('④ pnpm 卸载通道执行成功', removed, removed ? 'ok' : removeErr)
   check(`④ ${PKG} 目录已移除`, !existsSync(join(profileDir, 'node_modules', PKG)))
 
@@ -115,7 +119,7 @@ try {
     let reinstalled = false
     let retryErr = ''
     for (const registry of [workedRegistry]) {
-      try { await pnpmInstall(profileDir, PKG, registry, 180000); reinstalled = true } catch (error) { retryErr = error.message.split('\n')[0] }
+      try { await pnpmInstall(profileDir, PKG, registry, 180000); reinstalled = true } catch (error) { retryErr = `${String(error.message).replace(/\s+/gu, ' ').slice(0, 500)}` }
     }
     check(`⑥ 重新装上 ${PKG}（作为"已安装但未生效"的现场）`, reinstalled, reinstalled ? 'ok' : retryErr)
     if (jobs !== null && reinstalled) {
