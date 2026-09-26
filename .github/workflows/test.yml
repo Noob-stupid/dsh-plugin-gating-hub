@@ -65,6 +65,8 @@ jobs:
           node tests/test-subpackage-branch.mjs
           # 批次 B-⑦：探活判据（GET info/refs + pkt-line 校验）+ 探活失败降级到最后一轮 + 加速器归因
           node tests/test-probe-alive.mjs
+          # 批次 B-⑧：报错带上「本次收到多少字节」（0 B = 只连不传；有字节 = 慢但在传）
+          node tests/test-clone-bytes.mjs
 
       # 真装真卸冒烟：在 CI 的 Linux 宿主上跑（临时 DSH_HOME，不碰真实目录）。
       # 为什么单独一步且**不带** DSH_TEST_SKIP_NETWORK：环境相关测试"没 profile 就整体 SKIP"，
