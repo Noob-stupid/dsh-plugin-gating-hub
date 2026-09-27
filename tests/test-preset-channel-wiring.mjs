@@ -197,6 +197,135 @@ const PRESET_NAME = 'dsh-router-standard'
     !existsSync(join(PROFILE, 'node_modules', PRESET_NAME)))
 }
 
+// ── ③b 真机验证发现的**第二个根因**（批次 D-⑤）：用户明确点的那一件必须排最前 ──────────────
+// 卡片"子包"列表的每件按钮发 `{repo, packageName: <该子包>}`。旧代码在"根包 private → 自动展开子包"那一步
+// 把展开出来的子包**统统排在它前面** → 第一件装成（或"已检测到本地已安装"）就 break：
+// 用户点第三件、装的却是第一件 —— 这正是真机"三件套只装到两件"里"第三件点了也装不上"的直接原因。
+{
+  const presetsRoot = join(HOME, 'presets-explicit')
+  const calls = []
+  const job = {
+    id: 'job-explicit', repo: REPO, source: 'github', packageName: PRESET_NAME,
+    status: 'installing', stage: 'preparing', error: null, startedAt: Date.now(), finishedAt: null,
+    entryId: null, bundle: false, ai: false, aiNote: null, subpackages: null, lastError: null, update: false, kind: 'plugin',
+  }
+  const ch = {
+    raceInstallChannels: async (dir, name) => { calls.push(`race:${name}`); return null },
+    pnpmInstall: async (dir, spec) => { calls.push(`pnpm:${spec}`); throw new Error('桩：registry 404') },
+    curlManualInstall: async (dir, name) => { calls.push(`curl:${name}`); throw new Error('桩：curl 404') },
+    githubReleaseInstall: async (dir, repo, name) => { calls.push(`release:${name}`); throw new Error('桩：release 无资产') },
+    backfillMissingDeps: async () => [],
+  }
+  await runInstallJob(job, { ...ports, get: (key) => (key === 'installChannels' ? ch : undefined) }, {
+    jobBudgetMs: 60000,
+    aiConsentTimeoutMs: 300,
+    marketProbes: {
+      fetchRepoPackageEx: async () => ({ pkg: { name: '@dsh-external/dsh-super-injector', private: true }, reason: 'ok' }),
+      fetchRepoPackage: async () => ({ name: '@dsh-external/dsh-super-injector', private: true }),
+      // 展开出来的子包顺序故意把"别的两件"排在点名的那件之前（真机就是这个顺序）
+      subpackageCandidates: async () => ['@probe/stub-graded-mode', '@probe/stub-super-injector', PRESET_NAME],
+      fetchSubpackageNames: async () => [],
+      expandSubpackages: async () => [],
+      namePublished: async () => false,
+      probeGitmodules: async () => null,
+    },
+    sourceDeps: { sizeDeps: { probe: async () => ({ state: 'known', sizeKb: 1334 }) }, fetchDeps: { cloneOpts }, presetsRoot, now: () => 7 },
+  })
+  console.log(`INFO ③b 候选调用顺序：${calls.join(' → ')}`)
+  check('★★③b 点名的包被**第一个**尝试（不再被自动展开的子包挤到后面）',
+    calls.length > 0 && calls[0] === `race:${PRESET_NAME}`, calls.slice(0, 4).join(' → '))
+  check('★★③b 最终装上的就是点名的那一件（packageName 不再被第一件覆盖）',
+    job.packageName === PRESET_NAME && job.status === 'done', `packageName=${job.packageName} status=${job.status}`)
+  check('★③b 预设真的落盘（点第三件 → 第三件装成）',
+    existsSync(join(presetsRoot, 'router-standard', 'agent.cordis.yml')), presetsRoot)
+  check('③b 自动展开的子包仍写进 job.subpackages（面板可见，能力没少）',
+    Array.isArray(job.subpackages) && job.subpackages.length === 3, JSON.stringify(job.subpackages))
+  check('③b 点名的那件没被"已安装的别的包"短路（curlNote 不是"已检测到本地已安装 …"）',
+    !/已检测到本地已安装/u.test(String(job.curlNote ?? '')), String(job.curlNote ?? ''))
+
+  // 反例（保住既有语义）：没给包名时（卡片本体按钮）照旧按子包列表顺序走，第一件优先
+  const calls2 = []
+  const job2 = {
+    id: 'job-implicit', repo: REPO, source: 'github', packageName: null,
+    status: 'installing', stage: 'preparing', error: null, startedAt: Date.now(), finishedAt: null,
+    entryId: null, bundle: false, ai: false, aiNote: null, subpackages: null, lastError: null, update: false, kind: 'plugin',
+  }
+  const ch2 = {
+    raceInstallChannels: async (dir, name) => { calls2.push(`race:${name}`); return name === '@probe/stub-graded-mode' ? { channel: 'pnpm' } : null },
+    pnpmInstall: async () => { throw new Error('桩') },
+    curlManualInstall: async () => { throw new Error('桩') },
+    githubReleaseInstall: async () => { throw new Error('桩') },
+    backfillMissingDeps: async () => [],
+  }
+  await runInstallJob(job2, { ...ports, get: (key) => (key === 'installChannels' ? ch2 : undefined) }, {
+    jobBudgetMs: 30000,
+    aiConsentTimeoutMs: 300,
+    marketProbes: {
+      fetchRepoPackageEx: async () => ({ pkg: { name: '@dsh-external/dsh-super-injector', private: true }, reason: 'ok' }),
+      fetchRepoPackage: async () => ({ name: '@dsh-external/dsh-super-injector', private: true }),
+      subpackageCandidates: async () => ['@probe/stub-graded-mode', PRESET_NAME],
+      fetchSubpackageNames: async () => [],
+      expandSubpackages: async () => [],
+      namePublished: async () => false,
+      probeGitmodules: async () => null,
+    },
+    sourceDeps: { sizeDeps: { probe: async () => ({ state: 'known', sizeKb: 1334 }) }, fetchDeps: { cloneOpts }, presetsRoot: join(HOME, 'presets-implicit'), now: () => 7 },
+  })
+  check('★③b 反例：没给包名时仍按子包列表顺序（第一件优先）—— 既有语义没被改坏',
+    calls2[0] === 'race:@probe/stub-graded-mode' && job2.status === 'done', calls2.slice(0, 3).join(' → '))
+}
+
+// ── ③c F1 的"第一件已安装就 break"语义：点名的那件已装 → 如实报"已安装"，不误报成功装了别的 ──────────
+// 判据边界（旧代码在这里会骗人）：`alreadyInstalledTarget` 命中时 `tryCandidateChannels` 直接返回成功、
+// 候选循环随即 break。若"已安装的自动展开子包"排在用户点的那件**前面**，就会出现
+// 「面板报成功、job.packageName 却是别的包、用户点的那件根本没被尝试」。
+// 修法（候选顺序）之后：点名的永远是第一个候选，命中"已安装"时那个名字**就是它自己**。
+{
+  const job = {
+    id: 'job-already', repo: REPO, source: 'github', packageName: PRESET_NAME,
+    status: 'installing', stage: 'preparing', error: null, startedAt: Date.now(), finishedAt: null,
+    entryId: null, bundle: false, ai: false, aiNote: null, subpackages: null, lastError: null, update: false, kind: 'plugin',
+  }
+  // 点名的那件**真的装在本地**（node_modules/<name>/package.json 且 name 一致）
+  const profileDir = join(HOME, 'profiles', 'web')
+  mkdirSync(join(profileDir, 'node_modules', 'dsh-router-standard'), { recursive: true })
+  writeFileSync(join(profileDir, 'node_modules', 'dsh-router-standard', 'package.json'),
+    JSON.stringify({ name: 'dsh-router-standard', version: '0.3.0' }), 'utf8')
+  let channelsCalled = 0
+  const ch = {
+    raceInstallChannels: async () => { channelsCalled += 1; return null },
+    pnpmInstall: async () => { channelsCalled += 1; throw new Error('不该被调用') },
+    curlManualInstall: async () => { channelsCalled += 1; throw new Error('不该被调用') },
+    githubReleaseInstall: async () => { channelsCalled += 1; throw new Error('不该被调用') },
+    backfillMissingDeps: async () => [],
+  }
+  await runInstallJob(job, { ...ports, get: (key) => (key === 'installChannels' ? ch : undefined) }, {
+    jobBudgetMs: 30000,
+    aiConsentTimeoutMs: 300,
+    marketProbes: {
+      fetchRepoPackageEx: async () => ({ pkg: { name: '@dsh-external/dsh-super-injector', private: true }, reason: 'ok' }),
+      fetchRepoPackage: async () => ({ name: '@dsh-external/dsh-super-injector', private: true }),
+      // 自动展开出来的"别的两件"排在点名的那件前面（真机就是这个顺序）
+      subpackageCandidates: async () => ['@probe/stub-graded-mode', '@probe/stub-super-injector', PRESET_NAME],
+      fetchSubpackageNames: async () => [],
+      expandSubpackages: async () => [],
+      namePublished: async () => false,
+      probeGitmodules: async () => null,
+    },
+    sourceDeps: { sizeDeps: { probe: async () => ({ state: 'known', sizeKb: 1334 }) }, fetchDeps: { cloneOpts }, presetsRoot: join(HOME, 'presets-already'), now: () => 7 },
+  })
+  check('★★③c 点名的那件已在本地 → 如实报「已安装」而不是"成功装了别的"',
+    job.status === 'done' && job.packageName === PRESET_NAME, `packageName=${job.packageName}`)
+  check('★★③c job.curlNote 是「已检测到本地已安装 <点名的那件>」——名字必须对得上',
+    new RegExp(`已检测到本地已安装 ${PRESET_NAME.replace(/[/\\]/gu, '\\$&')}@`, 'u').test(String(job.curlNote ?? '')), String(job.curlNote ?? ''))
+  check('★③c 一个安装通道都没被调用（"已安装"判定发生在通道之前，命中即收口）',
+    channelsCalled === 0, `channelsCalled=${channelsCalled}`)
+  check('★③c 自动展开的另外两件**没有**被当成成功项写进 packageName（旧代码正是这样骗人的）',
+    job.packageName !== '@probe/stub-graded-mode' && job.packageName !== '@probe/stub-super-injector', String(job.packageName))
+  // 收尾：把本次塞进共享 PROFILE 的"已安装"夹具清掉 —— 否则后面的用例会被 alreadyInstalledTarget 抢先命中
+  try { disposeDir(join(profileDir, 'node_modules')) } catch {}
+}
+
 // ── ④ 面板契约（加法）：服务端字段 + 客户端文案（中英两套）+ 失败不笼统 ────────────────
 {
   const { installJobView } = await import('../lib/server/domain/install.js')

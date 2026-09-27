@@ -133,6 +133,57 @@ if (process.platform === 'win32') {
   chmodSync(readOnlyParent, 0o700)
 }
 
+// ── 0.5.26 改错（F7，预存在缺陷）：shell 兜底对**文件**必须用 `del /f /q`，不能对文件用 `rmdir` ──────
+// 真机场景：`clean-residuals` 清的陈旧 `fw-quarantine.json.applied-*` 是**文件**；`rmSync` 一次瞬时失败
+// 之后走进 shell 兜底，旧代码一律 `rmdir /s /q <path>` —— rmdir 只能删目录，对文件返回
+// `exit=267 The directory name is invalid`，于是"其实删得掉的文件"被报成**用户可见的「有 1 项没能删除」**。
+{
+  const { shellDeleteCommand, removeViaShell, removeViaShellSync } = await import('../lib/server/infra/fsx.js')
+
+  // 判据（唯一真源）：文件 → del；目录 → rmdir；已经不在了 → 视为已达成（不是失败）
+  const fileTarget = join(HOME, 'residual-file.json.applied-123')
+  writeFileSync(fileTarget, '{}', 'utf8')
+  const dirTarget = join(HOME, 'residual-dir')
+  mkdirSync(join(dirTarget, 'inner'), { recursive: true })
+  const filePlan = shellDeleteCommand(fileTarget)
+  const dirPlan = shellDeleteCommand(dirTarget)
+  const gonePlan = shellDeleteCommand(join(HOME, 'never-existed'))
+  check('★F7 判据：**文件** → `del /f /q`（不再对文件用 rmdir）',
+    filePlan.kind === 'file' && filePlan.argv[0] === 'del' && filePlan.argv.includes('/f') && filePlan.argv.includes('/q') && filePlan.argv[filePlan.argv.length - 1] === fileTarget,
+    JSON.stringify(filePlan))
+  check('★F7 判据：**目录** → 仍用 `rmdir /s /q`（既有能力没被改坏）',
+    dirPlan.kind === 'dir' && dirPlan.argv[0] === 'rmdir' && dirPlan.argv.includes('/s') && dirPlan.argv.includes('/q') && dirPlan.method === 'rmdir',
+    JSON.stringify(dirPlan))
+  check('★F7 判据：目标已不存在 → kind=gone（视为已达成，不报失败）',
+    gonePlan.kind === 'gone' && gonePlan.argv === null, JSON.stringify(gonePlan))
+
+  // 真删（本机真 cmd.exe）：文件与目录都必须真的消失，且回报**用的哪条命令**
+  if (process.platform === 'win32') {
+    const fileGone = await removeViaShell(fileTarget)
+    check('★F7 真删文件：ok=true 且 method=del、文件真的消失（旧代码这里是 exit=267 + 假失败）',
+      fileGone.ok === true && fileGone.method === 'del' && !existsSync(fileTarget), JSON.stringify(fileGone))
+    const dirGone = await removeViaShell(dirTarget)
+    check('★F7 真删目录：ok=true 且 method=rmdir、目录真的消失（回归）',
+      dirGone.ok === true && dirGone.method === 'rmdir' && !existsSync(dirTarget), JSON.stringify(dirGone))
+    const file2 = join(HOME, 'residual-file-2.json.applied-456')
+    writeFileSync(file2, '{}', 'utf8')
+    const syncGone = removeViaShellSync(file2)
+    check('★F7 同步兜底同样按类型选命令（文件 → del）', syncGone.ok === true && syncGone.method === 'del' && !existsSync(file2), JSON.stringify(syncGone))
+    const already = await removeViaShell(join(HOME, 'never-existed'))
+    check('★F7 目标已不在 → ok=true / method=already-gone（**不是**失败）', already.ok === true && already.method === 'already-gone', JSON.stringify(already))
+  } else {
+    console.log('SKIP F7 的真删断言（非 win32；判据断言已在上方覆盖）')
+  }
+
+  // 端到端：陈旧快照（文件）被清掉且 clean-residuals 不报失败 —— 走的就是上面这条兜底路径
+  const snapFile = join(consoleDataDir, 'fw-quarantine.json.applied-100')
+  writeFileSync(snapFile, '{}', 'utf8')
+  writeFileSync(join(consoleDataDir, 'fw-quarantine.json.applied-200'), '{}', 'utf8')
+  const third = await call('POST', '/plugin-console/clean-residuals', {})
+  check('★F7 端到端：陈旧快照（文件）真被清掉、failed 为空',
+    (third.json?.failed ?? []).length === 0 && !existsSync(snapFile), `failed=${JSON.stringify(third.json?.failed ?? [])} removed=${JSON.stringify((third.json?.removed ?? []).map((r) => r.name))}`)
+}
+
 rmSync(HOME, { recursive: true, force: true })
 console.log(failed === 0 ? '\nALL PASS' : `\n${failed} FAILED`)
 process.exit(failed === 0 ? 0 : 1)

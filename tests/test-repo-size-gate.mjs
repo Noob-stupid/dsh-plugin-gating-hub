@@ -5,6 +5,7 @@
 // 于是 preset/（= dsh-router-standard 预设，只存在于仓库源码里）连一次机会都没有。
 // 本用例把新判据的全部边界钉死（全离线、零网络）：
 //   ① 纯判据 sourceChannelGate：小/大/未知 × 阈值边界（恰好等于 / 多 1 KB）× 0 字节仓库
+//      ×（0.5.26 改错）known 但 sizeKb 不是有限数 → 绝不放行
 //   ② env 配置 DSH_GIT_MAX_REPO_MB 的夹取（1 MB ~ 4096 MB）
 //   ③ 探测 fetchRepoSize：成功 / 404 / 超时 / 异常 → state；**成功才落缓存**、缓存命中不再探测
 //   ④ 门禁落到 job（gatePrivateRoot）：放行/禁止/未知三种结局 + note 必须含尺寸、原因与出路
@@ -51,6 +52,23 @@ const HUGE = 429 * 1024         // dsh-web 真实元数据（429 MB）
   check('① 边界：0 KB（空仓库）→ 放行', zero.allow === true, JSON.stringify(zero))
   const bogus = sourceChannelGate({ state: 'known', sizeKb: Number.NaN }, 20)
   check('① 边界：sizeKb 非数字 → 当"未知"处理（禁 + 不沉默）', bogus.allow === false && bogus.state === 'unknown', JSON.stringify(bogus))
+  // ★ 0.5.26 改错：`known` 但 sizeKb 不是有限数 → **不放行**（判据必须落在**原始值**上）。
+  // 旧代码写成 `const kb = Number(sizeKb); Number.isFinite(kb) && kb >= 0` ——
+  // `Number(null) === 0`、`Number('') === 0`、`Number(false) === 0`、`Number([]) === 0`，
+  // 于是"尺寸读不到"被当成"0 MB 的空仓库"**放行源码通道**（真会去拉一个可能几百 MB 的仓库）。
+  // 0 KB 的合法含义只有一个：sizeKb **真的是数字 0**（空仓库，见上一条断言）。
+  for (const [label, value] of [['null', null], ['undefined', undefined], ['NaN', Number.NaN], ['abc', 'abc'], ['（空串）', ''], ['Infinity', Number.POSITIVE_INFINITY], ['false', false]]) {
+    const g = sourceChannelGate({ state: 'known', sizeKb: value }, 20)
+    check(`★① known 但 sizeKb=${label} → **不放行**（不许被当成 0 MB 放行）`,
+      g.allow === false && g.state === 'unknown' && g.sizeKb === null, JSON.stringify(g))
+    // note 必须说清"读到的是什么"：`sizeKb=<原值>`（null / undefined（未提供）/ NaN / false / 空串 都分得开）
+    check(`★① sizeKb=${label} 的 note 非空且说清"读到的是什么"`,
+      typeof g.note === 'string' && g.note !== '' && g.note.includes(`sizeKb=${String(value)}`) && g.note.includes('不是有效数字'), g.note)
+  }
+  const zeroStillOk = sourceChannelGate({ state: 'known', sizeKb: 0 }, 20)
+  check('★① 反例：数字 0（真空仓库）**仍照旧放行** —— 改错没有把它一起禁掉', zeroStillOk.allow === true, JSON.stringify(zeroStillOk))
+  const stateKnownNoSize = sourceChannelGate({ state: 'known' }, 20)
+  check("★① 反例：漏传 sizeKb（= undefined）同样不放行", stateKnownNoSize.allow === false, JSON.stringify(stateKnownNoSize))
   const badLimit = sourceChannelGate({ state: 'known', sizeKb: 5 * KB }, 0)
   check('① 边界：阈值非法（0）→ 回落到默认 20 MB 而不是"全部禁止"', badLimit.allow === true && badLimit.limitMb === GIT_MAX_REPO_MB, JSON.stringify(badLimit))
   check('① 默认阈值常量就是 20 MB', GIT_MAX_REPO_MB === 20, String(GIT_MAX_REPO_MB))

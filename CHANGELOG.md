@@ -60,6 +60,15 @@ release 无资产 —— 它只存在于仓库源码里**。而 0.5.18 的批次
 
 ### 4. 一并修掉的缺陷（过程中发现）
 
+- **★ 用户点名的那一件被"自动展开的子包"挤到后面（真机验证时发现的第二个根因，批次 D-⑤）**：
+  市场卡片上"子包"列表里每件的「添加并启用」按钮发的是 `{repo, packageName: <该子包>}`，而
+  `install-job.js` 在"根包 private → 自动展开子包"那一步把展开出来的子包**统统排在它前面**
+  （`candidates = [...subs, ...candidates]`）→ 第一件装成、或"已检测到本地已安装"就 `break`：
+  **用户点第三件，装的却是第一件**。真机实测复现（桌面端 0.5.24/0.5.25 实例，
+  `POST /install {repo:'yjh051108/dsh-routing-suite', packageName:'dsh-router-standard'}` →
+  `packageName` 变成 `@dsh-external/dsh-graded-mode`、`status=done`、预设一个字节都没落盘）。
+  修法：用户明确点名的包**排最前**，自动展开出来的子包追加在后；"聚合包优先"只对"没给包名"的
+  情形保留（那条路走 `candidates = subs`，不受影响）。反例断言：不指定包名时仍按子包列表顺序。
 - **git 规格装成"别的包名"被当成成功**：`git+<repo>` 装的是**仓库根包**，候选是子包时名字根本不同
   （真机 dsh-routing-suite：根包 private、名字 `@dsh-external/dsh-super-injector`，候选是 `dsh-router-standard`）。
   旧代码无条件把 `installedName` 记成候选名 → 补丁行指向不存在的模块 → 启动崩溃。
@@ -91,8 +100,9 @@ release 无资产 —— 它只存在于仓库源码里**。而 0.5.18 的批次
   （含与 `suite.js` 的 re-export 同一性）、`assemblePreset` 的备份+合并+用户独有文件保留+越权目录名拒绝、
   真 git 稀疏取源码（`graded/`、`injector/` 必须缺席）、**稀疏不可用的两条降级路径**、
   `tryPresetSourceChannel` 全流程与"不是预设型"的如实报错、git 装成别的包名被识破。
-- `tests/test-preset-channel-wiring.mjs`（新增，25 断言）：通道顺序（… release → 展开 → **预设装配**；
+- `tests/test-preset-channel-wiring.mjs`（新增，31 断言）：通道顺序（… release → 展开 → **预设装配**；
   预设成功时 git 一次都不调）、`runInstallJob` 全链路**绝不写补丁行/绝不声明依赖** + 预设真的落盘、
+  **点名的那一件排最前**（第二个根因的回归断言 + "没给包名时仍第一件优先"的反例）、
   反例（名字不像预设 → 零副作用、git 照旧被尝试）、面板契约（服务端字段 + 客户端中英文案 + 失败路径
   显示 channelNotes + 预设通道失败时 lastError 是具体原因）。
 - `tests/test-real-preset-e2e.mjs`（新增，22 断言，真网络）：真打 `yjh051108/dsh-routing-suite` →
@@ -108,6 +118,10 @@ release 无资产 —— 它只存在于仓库源码里**。而 0.5.18 的批次
 通道 0 不短路、release 预算可见、子包分支、探活降级、报错带字节数、archive、落地复用、npmName 首选、
 套装回落、`link:` 写回 + lock 对账、体检 sourceLinked、动作负例 400、runner 转义 + 桌面端 pnpm、
 ignored-builds 分类、allow-builds 显式动作）。
+
+此外，真机（官方桌面端实例，`POST /install {repo:'yjh051108/dsh-routing-suite', packageName:'dsh-router-standard'}`）
+验证时还**复现并修掉了第二个根因**：点名的那一件被自动展开的子包挤到后面（见 §4 第一条）——
+修前该调用装成的是 `@dsh-external/dsh-graded-mode`、预设一个字节都没落盘。
 
 ### 未验证项
 
