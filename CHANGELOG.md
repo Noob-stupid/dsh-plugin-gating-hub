@@ -2,6 +2,39 @@
 
 All notable changes to dsh-plugin-hub.
 
+## v0.5.21 — 依赖锁体检不再把来源型依赖（`link:` / `file:` / URL / git）当"解析不到"（改错，2026-09-27）
+
+0.5.20 的写回规则把 registry 上查无此包的依赖钉成 `link:<DSH_HOME>/plugin-src/<包名>` 之后，
+**依赖锁体检**仍按**包名**去 registry 探这些依赖，于是：
+
+- 真机实测（桌面端实例，desktop profile，体检接口原样输出）：
+  `packages404 = @dsh-external/dsh-super-injector, @dsh-external/dsh-graded-mode` →
+  `problems=[fetch-404, lockfile-outdated, supply-chain-age]` → `repair.applicable=false, blockedBy=[fetch-404]`
+  —— 明明 lock 与清单完全一致，用户却被告知"有依赖解析不到"、而且**重建按钮被永久挡住**；
+- `lockfile-outdated` 同样是假阳性：`drift` 拿盘上的版本号（`0.0.1-rc1`）去比 lock 里的
+  `version: link:../../plugin-src/…`，两者形态不同必然"漂移"。
+
+改错（`domain/lockfile-health.js`，纯函数，唯一真源 `isSourceSpec`）：
+
+- 体检**跳过**来源型 spec 的 registry 探测（它们本来就不经 registry 解析），并在响应里**单列**出来
+  （新增字段 `sourceLinked`，说明"为什么没探测它"，不是静默跳过）；
+- `diffLockfile` 的两个方向都判来源（spec 是来源、或 lock 解析是来源）→ 不再计入 `drift`；
+- `specSatisfiedBy` 与体检探测共用同一份 `isSourceSpec` 判据（消灭两处各写一条正则的老问题）。
+
+改错后的真机实测（同一个 desktop profile）：体检不再报 `fetch-404`／`lockfile-outdated`，
+点「重建 lock」得到 `noop`（当前不需要重建）而不是 `blocked`；供应链闸提示照旧**只提示**、不绕过。
+
+同批加法（一路顺带，只有两处，都不改语义）：动作执行结果在 `!run.ok` 时**总是**带一句
+"pnpm 那一步没跑成（exitCode=…）"，执行框的悬浮 `title` 里也带上 `exitCode` ——
+真机桌面端实例实测：该进程里 corepack 解析不到（`cmd /d /s /c "corepack" "pnpm" …` 的引号被转义成
+`\"corepack\"`，见 `infra/exec.js#resolvePnpmRunners` 的 `cmd-corepack` 分支），pnpm 那一步会失败，
+而"清单 + lock 已是 link:"这个**目标状态**仍会达成 —— 两种事实都要用户看得见。
+（该 runner 问题**先于本版存在**，影响该实例里所有走 pnpm 的功能；本版只做如实回报，未改 runner 选择逻辑。）
+
+验收：新增/扩展断言在 `tests/test-lockfile-health.mjs`（不探来源型依赖、不进 `packages404`、
+不算漂移、`sourceLinked` 列出、重建得到 `noop`），`tests/test-route-inventory.mjs` 的
+`/lockfile-check` 契约加上 `sourceLinked` 字段；本机全量 **55 套全绿**，CI `tests` 双 step 全绿。
+
 ## v0.5.20 — 非 registry 包一律按 `link:` 写回（清单/lock/文案三处一致）+ 可执行的「建议动作」执行框（2026-09-27）
 
 本版**只做改错与加法**：不动内核结构、不删既有能力；registry 可解析的包**行为逐条不变**（有回归断言）。

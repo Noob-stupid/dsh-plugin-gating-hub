@@ -17,7 +17,7 @@ import { mkdirSync, writeFileSync, readFileSync, rmSync, existsSync } from 'node
 import { join, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import {
-  DEFAULT_REGISTRY, diffLockfile, exactVersionOf, freshReleases, parseLockImporters, probeVerdict,
+  DEFAULT_REGISTRY, diffLockfile, exactVersionOf, freshReleases, isSourceSpec, parseLockImporters, probeVerdict,
   readManifestDeps, repairArgsFor, runLockfileCheck, runLockfileRepair, specSatisfiedBy, summarizeCheck,
 } from '../lib/server/domain/lockfile-health.js'
 
@@ -185,6 +185,61 @@ const probeStub = (map) => async (name) => map[name] ?? { resolvable: true, hasV
   check('★ 体检是只读的：一次写入都没有', fs.writes.length === 0, fs.writes.join(','))
   check('体检结论带一句话短句（面板用）', typeof view.hint === 'string' && view.hint.includes('dsh-github-login'), view.hint)
   check('summarizeCheck：健康时给"无需处理"短句', summarizeCheck({ ok: true }) === '依赖锁与清单一致，无需处理。')
+
+  // ── ⑦b 改错（2026-09-27，与 0.5.20 的 link: 写回规则配套）：来源型 spec 不探 registry、不算漂移 ──
+  // 真实现场：desktop profile 的两个 @dsh-external/* 按新规则钉成 `link:` 之后，体检仍按包名探 registry
+  // → 报 fetch-404 → 把重建**永久**挡在门外（applicable=false），而 lock 本身完全一致。
+  check('isSourceSpec：link/file/workspace/URL/git 都算来源，版本号/范围都不算',
+    isSourceSpec('link:C:/x/y') && isSourceSpec('file:../x') && isSourceSpec('git+https://x/y.git')
+    && isSourceSpec('https://x/y.tgz') && !isSourceSpec('0.1.0') && !isSourceSpec('^1.2.3') && !isSourceSpec('latest'))
+  const linkManifest = JSON.stringify({
+    name: 'dsh-profile-link', private: true,
+    dependencies: { 'dsh-github-login': 'link:C:/Users/x/.dsh/plugin-src/dsh-github-login', 'left-pad': '^1.3.0' },
+  }, null, 2)
+  const linkLock = [
+    "lockfileVersion: '9.0'", '',
+    'importers:', '',
+    '  .:', '    dependencies:',
+    '      dsh-github-login:', '        specifier: link:C:/Users/x/.dsh/plugin-src/dsh-github-login',
+    '        version: link:../../plugin-src/dsh-github-login',
+    '      left-pad:', '        specifier: ^1.3.0', '        version: 1.3.0',
+    '', 'packages:', '',
+    '  left-pad@1.3.0:', '    resolution: {integrity: sha512-x}', '',
+  ].join('\n')
+  const linkFs = memFs({
+    [join(dir, 'package.json')]: linkManifest,
+    [join(dir, 'pnpm-lock.yaml')]: linkLock,
+    // 盘上真实装的是版本号（link: 指向的 plugin-src 里的那份）——旧判据在这里必然报"漂移"（假阳性）
+    [join(dir, 'node_modules', 'dsh-github-login', 'package.json')]: JSON.stringify({ name: 'dsh-github-login', version: '0.1.0' }),
+    [join(dir, 'node_modules', 'left-pad', 'package.json')]: JSON.stringify({ name: 'left-pad', version: '1.3.0' }),
+  })
+  const probed = []
+  const linkView = await runLockfileCheck({
+    profileDir: dir, registries: [DEFAULT_REGISTRY], readFile: linkFs.readFile, exists: linkFs.exists,
+    // left-pad 是正常的 registry 依赖（可解析）；来源型依赖**根本不该出现在探测名单**里
+    probe: async (name) => {
+      probed.push(name)
+      return name === 'left-pad'
+        ? { resolvable: true, hasVersion: true, latest: '1.3.0', registry: DEFAULT_REGISTRY, tried: [], meta: { 'dist-tags': { latest: '1.3.0' }, time: { '1.3.0': '2018-01-01T00:00:00.000Z' } } }
+        : { resolvable: false, hasVersion: false, latest: null, registry: null, tried: ['https://registry.npmmirror.com：请求失败 (HTTP 404)'] }
+    },
+    now: Date.parse('2026-09-27T12:00:00Z'),
+  })
+  check('★ 来源型依赖**不去探 registry**（探测名单里没有它）',
+    !probed.includes('dsh-github-login') && probed.includes('left-pad'), JSON.stringify(probed))
+  check('★ 来源型依赖不进 packages404、不产生 fetch-404 问题（不再谎报"解析不到"）',
+    linkView.packages404.length === 0 && !linkView.problems.some((p) => p.kind === 'fetch-404') && linkView.ok === true,
+    JSON.stringify({ p404: linkView.packages404, kinds: linkView.problems.map((p) => p.kind), hint: linkView.hint }))
+  check('★ 来源型依赖不算"漂移/陈旧"（盘上 0.1.0 vs lock 的 link: 是正常形态，不是不一致）',
+    !linkView.problems.some((p) => p.kind === 'lockfile-outdated') && linkView.outdated.drift.length === 0,
+    JSON.stringify(linkView.outdated))
+  check('★ 体检把来源型依赖**列出来**（说明为什么没探测它，而不是静默跳过）',
+    JSON.stringify(linkView.sourceLinked) === JSON.stringify(['dsh-github-login']), JSON.stringify(linkView.sourceLinked))
+  check('★ 重建不再被来源型依赖拦住（applicable=false 只因"没有可修的问题"，blockedBy 里没有 fetch-404）',
+    linkView.repair.applicable === false && linkView.repair.blockedBy.length === 0, JSON.stringify(linkView.repair))
+  const noop = await runLockfileRepair({ profileDir: dir, registries: [DEFAULT_REGISTRY], check: async () => linkView, now: Date.parse('2026-09-27T12:00:00Z') })
+  check('★ 这种 profile 上点"重建"得到 noop（当前不需要重建），不是 blocked（不再误报要修）',
+    noop.ok === true && noop.action === 'noop', `${noop.action}/${noop.kind ?? '-'}`)
 
   // 探测不可达：与 404 分开报，且同样不许重建
   const unreachable = await runLockfileCheck({
