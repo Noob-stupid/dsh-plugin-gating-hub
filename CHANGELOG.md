@@ -2,6 +2,55 @@
 
 All notable changes to dsh-plugin-hub.
 
+## v0.5.27 — D-⑥ 预设随包分发不再被当成普通插件装（改错 + 加法，2026-09-27）
+
+> **与 v0.5.26 的关系（更正）**：D-⑥ 的修复**不在 0.5.26 的 npm 产物里**。npm 上 `0.5.26` 的产物由
+> commit `0312b62` 构建（registry `gitHead=0312b62a6a3b3bc5c9a1dccff1c210b352ab10b3`、`fileCount=74`）；
+> 实测下载该 tarball：**74 个文件**，其中**没有** `lib/server/domain/preset-in-package.js`、
+> 也**没有** `tests/test-preset-in-package.mjs` —— 两者都由 `e123fa1` 引入。本版（`0.5.27`）是 D-⑥
+> **第一次**进入发布物。v0.5.26 段的「测试与门槛」「未验证项」按归属留在 v0.5.26 段，未搬动。
+
+### 1. D-⑥（真机验证发现的**第三个缺陷**）：预设随包分发被当成普通插件装
+
+真机现场（官方桌面端实例、0.5.25，卡片"子包"列表第三件的等价调用）：
+`POST /install {repo:'yjh051108/dsh-routing-suite', packageName:'dsh-router-standard'}`
+→ release 通道按包名反查到**它自己的仓库** `yjh051108/dsh-router-standard` 的 release v0.3.0 资产
+（`dsh-router-standard-0.3.0.tgz`）→ 装成 `node_modules/dsh-router-standard@0.3.0`。那个包体里
+**没有 `main`/`exports`、也没有 `dsh.bundle`**，只有 `preset/`（**两个**预设目录：`router-spec` /
+`router-standard`；该资产实测 27 个文件、其中 14 个在 `preset/` 下）+ `docs/`。旧行为两个后果：
+
+- ① **预设一个字节都没进** `~/.dsh/.agent-presets` → 用户依然用不上（预设才是他要的东西）；
+- ② 却照样 `appendInsert` 了一行 `- insert: {id: dsh-router-standard}` → 注册一个**加载不了的模块行**
+  （2026-09-06「装 dsh-desktop 后服务崩」事故同族：补丁行指向的模块没有入口）。
+
+根因：判据只按**仓库**分类（有没有 `.gitmodules` / 是不是预设型子包名），没按**落地物**分类 ——
+而"包里带 `agent.cordis.yml`"是**装完之后一定能看到**的事实（registry tarball / release 资产 /
+git 规格三条路都会发生）。
+
+- 加：新模块 `domain/preset-in-package.js`（`findCarriedPresets` / `installPresetsCarriedByPackage` /
+  `settlePresetOutcome`）——任何通道装成功后、**写补丁行/声明依赖之前**先看落地物里有没有预设；
+  有 → 走 `preset-install.js#assemblePreset`（**复用**既有装配：只补不覆盖 / 结构校验 / 备份 / 读回核实），
+  按 `presetDone` 收口，**绝不写补丁行、绝不声明依赖**，并把来源记进 `preset-sources.json`
+  （面板的「覆盖该预设」因此能重新取源码）。同名冲突照 0.5.26 的语义走**显式覆盖**动作。
+- 测试：新增 `tests/test-preset-in-package.mjs`（**27 断言**，进 CI 硬门槛）：三种包体形状的预设识别、
+  装配落盘 + job 收口（含"只补不覆盖时现有文件 sha 不变"与"下发覆盖动作"）、
+  `runInstallJob` 端到端**不写补丁行/不声明依赖**、以及**反例**（普通插件包照旧写补丁行 + 声明依赖）。
+- 测试基建修正：该用例的 `ports.loader.entries()` 必须喂一个 `cordis:include` 条目 ——
+  否则 `findPatchPath` 会兜底到 `<DSH_HOME>/profiles/web/cordis.patch.yml`，
+  于是"补丁行没被写"的断言落在**根本没被写过**的文件上（假绿）。
+
+> **上游观察（本轮真机取证）**：release 资产里的预设是**旧快照**。
+> `dsh-router-standard-0.3.0.tgz`（上游 release v0.3.0 资产，62363 B）里的
+> `preset/router-standard/agent.cordis.yml` 是 **14248 B**
+> （sha256 `ED1E515E96321AA6488E9D3C699C85AAAEFF0F7BB582C93D0DFBC6AE50DB6C68`）；
+> 仓库源码 `yjh051108/dsh-routing-suite` 同路径是 **16232 B**
+> （sha256 `27F13A9D9C60722AEF93AA8B765D464B8BD3946E766F8352FAF445878268CEA6`）。
+> 资产里还多出 `router-bootstrap-v1/-v5/-v6/-v7/-v8.mjs` 这批**旧世代**引导文件
+> （仓库源码现在是 `-v34` 世代 + `gitbash-executor.mjs`，`router-bootstrap.mjs` 85212 B vs 资产 16680 B）。
+> 也就是说：**release 通道拿到的预设比仓库源码旧**。本版默认「只补不覆盖」恰好避免了用这份旧资产
+> **盖掉用户已在用的预设**；要仓库版本必须显式点「覆盖该预设」—— 该动作按 `preset-sources.json`
+> 记录的出处**重新取源码**（不是拿 release 资产）。
+
 ## v0.5.26 — 独立对抗式复核抓到的 6 处缺陷（F1–F5 / F7，2026-09-27）
 
 0.5.25 发布后由**独立对抗式复核者**（独立上下文、只负责证伪）在已发布代码上抓到的问题，本版逐条修掉。
@@ -90,35 +139,7 @@ All notable changes to dsh-plugin-hub.
 - 测试：`test-clean-residuals.mjs` 新增 F7 段（判据三种形态 + 真 `cmd.exe` 真删文件/目录 + 同步兜底 +
   "已不存在" + 端到端：陈旧快照被清掉且 `failed` 为空）。
 
-### 7. D-⑥（真机验证发现的**第三个缺陷**）：预设随包分发被当成普通插件装
-
-真机现场（官方桌面端实例、0.5.25，卡片"子包"列表第三件的等价调用）：
-`POST /install {repo:'yjh051108/dsh-routing-suite', packageName:'dsh-router-standard'}`
-→ release 通道按包名反查到**它自己的仓库** `yjh051108/dsh-router-standard` 的 release v0.3.0 资产
-（`dsh-router-standard-0.3.0.tgz`）→ 装成 `node_modules/dsh-router-standard@0.3.0`。那个包体里
-**没有 `main`/`exports`、也没有 `dsh.bundle`**，只有 `preset/`（三个预设目录）+ `docs/`。旧行为两个后果：
-
-- ① **预设一个字节都没进** `~/.dsh/.agent-presets` → 用户依然用不上（预设才是他要的东西）；
-- ② 却照样 `appendInsert` 了一行 `- insert: {id: dsh-router-standard}` → 注册一个**加载不了的模块行**
-  （2026-09-06「装 dsh-desktop 后服务崩」事故同族：补丁行指向的模块没有入口）。
-
-根因：判据只按**仓库**分类（有没有 `.gitmodules` / 是不是预设型子包名），没按**落地物**分类 ——
-而"包里带 `agent.cordis.yml`"是**装完之后一定能看到**的事实（registry tarball / release 资产 /
-git 规格三条路都会发生）。
-
-- 加：新模块 `domain/preset-in-package.js`（`findCarriedPresets` / `installPresetsCarriedByPackage` /
-  `settlePresetOutcome`）——任何通道装成功后、**写补丁行/声明依赖之前**先看落地物里有没有预设；
-  有 → 走 `preset-install.js#assemblePreset`（**复用**既有装配：只补不覆盖 / 结构校验 / 备份 / 读回核实），
-  按 `presetDone` 收口，**绝不写补丁行、绝不声明依赖**，并把来源记进 `preset-sources.json`
-  （面板的「覆盖该预设」因此能重新取源码）。同名冲突照 0.5.26 的语义走**显式覆盖**动作。
-- 测试：新增 `tests/test-preset-in-package.mjs`（**27 断言**，进 CI 硬门槛）：三种包体形状的预设识别、
-  装配落盘 + job 收口（含"只补不覆盖时现有文件 sha 不变"与"下发覆盖动作"）、
-  `runInstallJob` 端到端**不写补丁行/不声明依赖**、以及**反例**（普通插件包照旧写补丁行 + 声明依赖）。
-- 测试基建修正：该用例的 `ports.loader.entries()` 必须喂一个 `cordis:include` 条目 ——
-  否则 `findPatchPath` 会兜底到 `<DSH_HOME>/profiles/web/cordis.patch.yml`，
-  于是"补丁行没被写"的断言落在**根本没被写过**的文件上（假绿）。
-
-### 8. 顺带搬移（架构硬顶，零语义变更）
+### 7. 顺带搬移（架构硬顶，零语义变更）
 
 - 新增 `domain/preset-install.js`（装配：只补不覆盖/显式覆盖/校验/备份/读回核实），
   `domain/preset-source.js` 改为 re-export —— **写盘逻辑全项目只有一份**。
