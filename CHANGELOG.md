@@ -2,6 +2,115 @@
 
 All notable changes to dsh-plugin-hub.
 
+## v0.5.23 — 桌面端实例「所有 pnpm 操作跑不了」两处根因（改错 + 加法，2026-09-27）
+
+用户报告：**官方桌面端实例**（`D:\dsh-desktop`，Electron 跑的 `@deepseek-ai/dsh-desktop-host`）里，
+凡是走 pnpm 的功能一律失败，报 `Error: ENOENT … pnpm-lock.yaml`。真机定位到两处根因，一处**改错**、
+一处**加法**，既有候选与兜底语义一个字没动。
+
+### ① 改错：cmd-corepack 的命令串被 Node 转义成 `\"corepack\"`（先于本轮存在）
+
+`infra/exec.js` 的 `cmd-corepack` 分支原来把 `['corepack','pnpm',…]` 用 `JSON.stringify` 拼成带
+**真引号**的命令串，再作为**单个 argv 元素**交给 `spawn` —— Windows 上 Node/libuv 按 MSVCRT 规则把
+段内引号转义成 `\"`，cmd 实际收到 `\"corepack\" \"pnpm\"`：
+
+```
+'\"corepack\"' 不是内部或外部命令，也不是可运行的程序或批处理文件。
+```
+
+本机对着一个「只回显参数」的临时 `.cmd` 逐一实测三种形态：
+
+| 形态 | 结果 |
+| --- | --- |
+| `"a" "b"` + 默认转义（旧代码） | 收到 `\"a\" \"b\"` → **失败**（复现本轮缺陷） |
+| `"a" "b"` + `windowsVerbatimArguments` | cmd 的 `/s` 把首尾引号一起剥掉 → **也失败** |
+| `""a" "b""` + `windowsVerbatimArguments` | **正确解析成两个参数** ✓ |
+
+修法（纯函数，便于离线断言）：
+
+- `cmdCommandLine(parts)`：段内各段加引号 + cmd 元字符 `^ & | < > ( )` 逐个 `^` 转义
+  （实测 `"a&b"` 在引号内仍会被 cmd 当命令分隔符断开、`"a^b"` 的 `^` 会被吃掉，所以必须转义）；
+  **产出永不含 `\"`**。
+- `cmdCorepackCommand(args)` = `cmdCommandLine(['corepack','pnpm',…])`。
+- `cmdShellArgv(commandLine)` = `['/d','/s','/c', '"' + commandLine + '"']`（整条再包一层引号）。
+- runner 标 `verbatim: true` → `runPnpmWithFallback` 透传 `windowsVerbatimArguments` →
+  `execFileWithKillTree` 交给 `spawn`。
+
+已知边界（如实写进注释，不假装覆盖）：`%VAR%` / `!VAR!` 是 cmd 自己的展开，任何引号都挡不住；
+我们生成的 argv（包名、registry、布尔选项、绝对路径）不含这两个字符。
+
+### ② 加法：认不出桌面端自带运行时（候选全落空）
+
+桌面端 host 自己就是用这套形态跑 pnpm 的（`dsh-desktop-host` 的 `packageManager`，真机命令行原样）：
+
+```
+command: process.execPath                                  // D:\dsh-desktop\DeepSeek Harness.exe
+args:    ['--expose-internals', <resources>\runtime\pnpm\bin\pnpm.mjs]
+env:     { ELECTRON_RUN_AS_NODE: '1', PATH: '<resources>\runtime\bin;<原 PATH>' }
+```
+
+而我们的候选只有「node 旁边的三种 corepack.js 布局 + `cmd /c corepack pnpm` + PATH 上的 `pnpm`」：
+host 二进制旁边没有 `corepack.js`，PATH 里只有 `runtime\bin`（没有 `pnpm.cmd`）→ **三条全落空**，
+于是退回那条被转义坏的 cmd 形态。
+
+新增候选（插在 `node-corepack` **之后**、`cmd-corepack` **之前**；既有三个候选与顺序原样保留）：
+
+1. **桌面端运行时**：`process.resourcesPath` 下的 `runtime/pnpm/bin/pnpm.mjs`，照抄 host 形态
+   （`bin = execPath` 或 `DSH_DESKTOP_NODE_EXECUTABLE`，`argv = ['--expose-internals', <pnpm.mjs>, …]`），
+   并**显式带 `ELECTRON_RUN_AS_NODE=1`** —— 不带它 Electron 二进制会当 **GUI 应用**启动，
+   等于弹一个新窗口、还可能以 exit 0「假装成功」，比失败更糟；
+2. **PATH 扫描**：`<dir>\pnpm\bin\pnpm.mjs`（node 直跑）、win 的 `<dir>\pnpm.cmd`（经 cmd，走修好的形态）、
+   posix 的 `<dir>/pnpm`（直接执行）；
+3. **环境线索**：PATH 条目里的 `<…>\runtime\pnpm\bin` 与 `<…>\runtime\bin`（同级 `runtime\pnpm\bin\pnpm.mjs`）。
+
+全部候选都走注入的 `exists`；新增 `env / resourcesPath / delimiter / nodeBin` 四个注入点只为离线单测，
+默认值就是当前进程的事实 —— 生产调用方一个字都不用改。兜底语义不变：只有「执行方式本身不可用」
+（`ENOENT` / `Cannot find module`）才换下一个，真正的失败立即抛出。
+
+### 真机证据（官方桌面端实例，端口 19387）
+
+修复同步进 desktop profile 并重启桌面端后：
+
+- **进程内**（`POST /plugin-console/run-suggested` → `pin-dependency`）跑的那一步已经是桌面端自带的 pnpm：
+
+  ```
+  Command failed: D:\dsh-desktop\DeepSeek Harness.exe --expose-internals
+    D:\dsh-desktop\resources\runtime\pnpm\bin\pnpm.mjs add link:C:/Users/花火/.dsh/plugin-src/… 
+  ｜真实输出：Progress: resolved 55, reused 46, downloaded 0, added 45, done …
+  ```
+
+  （旧代码在这一步连 corepack 都解析不到；现在 pnpm 真的跑完并把 45 个包对齐了。）
+- **host 同款运行时**（同一个 Electron 二进制 + `ELECTRON_RUN_AS_NODE=1` + `--expose-internals`，
+  走生产解析路径）：runner = `desktop-pnpm-mjs`，`pnpm --version` → **`11.7.0`**；
+  `pnpm install --lockfile-only --no-frozen-lockfile --registry …` → **exitCode 0**。
+- **隔离项目**（不出网，`link:` 规格）：`pnpm add link:<目录>` → `Done in 304ms using pnpm v11.7.0`，**exitCode 0**。
+
+### 测试（进 CI 硬门槛）
+
+新增 `tests/test-pnpm-runners.mjs`（36 条断言）：cmd 命令串不含 `\"`、argv 形如
+`['/d','/s','/c', …]`、元字符 `^` 转义、桌面端形态（resourcesPath / PATH 线索 / `DSH_DESKTOP_NODE_EXECUTABLE`）、
+PATH 扫描（win `.cmd` / posix / `pnpm.mjs`）、**既有候选与顺序回归**、**兜底语义回归**
+（ENOENT 换下一个、真失败立刻抛、全不可用时报"已尝试"清单）、
+`verbatim`/`env` 只在 runner 明确要求时生效（既有候选拿到的还是同一个 execOpts 对象）、
+win32 / linux / darwin 三分支各断言一次；最后在**真 cmd.exe** 上做负对照 / 正对照
+（旧形态必失败、新形态把含空格与 `&` 的参数原样送达；非 win32 平台如实 SKIP，不假装 PASS）。
+
+### 未验证 / 不确定项（如实记录）
+
+- **桌面端 profile 上 `pnpm add` 仍以 exitCode 1 结束，但这不是 runner 的问题**：pnpm 11 的
+  `strictDepBuilds` **默认 true**（pnpm 自带 dist 源码原话：`// strictDepBuilds (the v11 default)`；
+  它自己的 `pnpm dlx` 就显式关掉它），而该 profile 的 `pnpm-workspace.yaml` 里有一份
+  **pnpm 自己写下的** `allowBuilds` 占位（`cloudflared / cpu-features / ssh2: set this to true or false`）
+  → 安装**已完成**（`added 45, done`）之后 pnpm 抛 `ERR_PNPM_IGNORED_BUILDS` 并以 1 退出。
+  本轮**没有**动它：命令行加 `--config.strictDepBuilds=false` 能让它不再报错（实测安装确实 `Done in 558ms`），
+  但该形态在**当前镜像对 lightningcss-* 平台包请求超时**的情况下进程不退出（实测 240 秒仍未退出，
+  被我们自己的超时杀掉）；而 `allowBuilds` 写成 `true` 等于放行这三个包的构建脚本，是**用户的安全决策**。
+  建议的收尾（留给用户/下一轮）：在 desktop profile 的 `pnpm-workspace.yaml` 里显式写
+  `strictDepBuilds: false`（只影响"要不要因为被忽略的构建脚本而报错"，不会执行任何脚本），
+  或跑一次 `pnpm approve-builds` 逐包授权。
+- 桌面端实例的 `selfVersion` 只有在**同步 profile 并重启桌面端**之后才会变成 0.5.23（网页端 3080 按约定
+  **不重启**：磁盘上同步后它仍以旧代码在跑，重启后才生效）。
+
 ## v0.5.22 — 动作执行器补上「未知 pnpm 选项降级」+ 一组真 pnpm 断言（改错，2026-09-27）
 
 0.5.21 的动作执行器自己拼 `pnpmAddArgs`（带 `--fetch-timeout/--fetch-retries` 两个加固选项），
