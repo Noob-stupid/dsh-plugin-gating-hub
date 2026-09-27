@@ -192,6 +192,24 @@ git clone https://github.com/Noob-stupid/dsh-plugin-hub /tmp/dsh-plugin-console 
 > - 想让某条通道优先，去「软件源」里调整顺序：**Git 源**、**archive 源**、**索引源** 都支持主→备与
 >   自建镜像（内网 Gitea/GitLab、本地 `file://` 裸仓库均可）。
 
+#### 下载安装通道与依赖形态
+
+走哪条通道，取决于**这个包到底是什么**，而不是某个开关：
+
+| 通道 | 目标 | 何时使用 | 清单里写成 | 需要 plugin-src |
+|---|---|---|---|---|
+| ① pnpm（registry） | npm registry | **registry 上有该包就走它**（主通道） | `<name>: <version>` | 否 |
+| ② curl tarball（registry） | npm registry tarball | 与 ① **并行竞速**（pnpm 被拦/卡住时顶上） | 同上 | 否 |
+| ③ GitHub Release 资产 | 上游 release 的预构建 tgz | registry **双源 404** 时 | `link:<绝对路径>` | 是 |
+| ④ git 克隆 | 仓库源码 | 无 npm 包 / 无 release 资产 | `link:…` | 是 |
+| ⑤ archive（tar.gz） | codeload / 镜像 | git 协议拉不动时 | `link:…` | 是 |
+
+一句话结论：**有 npm 包 → 走 ①/②，写版本号、lock 干净；没有 npm 包 → 降级 ③/④/⑤，物化到
+`~/.dsh/plugin-src/<pkg>` 并写 `link:`。**
+
+环境提醒：加速器/代理改 hosts 会让**直连源**失效（见上）；免费镜像的 **git 协议**对大 pack 不可靠，
+而 **archive/raw 通常更快** —— 控制台已按这两条自行切换，不用手动换源。
+
 ### 静态索引市场（插件 / 技能双 tab）
 
 > **混合架构**：浏览走静态索引（秒开、零 API 调用），搜索走实时通道（GitHub 搜索 API / 多源并行）——

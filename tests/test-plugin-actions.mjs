@@ -10,15 +10,17 @@
 // **假 React**（真实极小的 hooks 运行时：useState 真能重渲染），把安装结果里的执行框真渲染成元素树，
 // 再对树上的文本/按钮做断言。整条链路（点「执行」→ 发 POST /run-suggested → 回显结果）都跑在
 // 假 fetch 上，**不发网络请求、不碰真实 profile**。
-import { readFileSync, mkdirSync, writeFileSync, rmSync, existsSync } from 'node:fs'
+import { readFileSync, mkdirSync, writeFileSync, rmSync, existsSync, readdirSync } from 'node:fs'
 import { join, dirname } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
-import { ACTION_KINDS, COMMAND_KEYS, parseActionRequest, runSuggestedAction, isReleaseAgeBlock } from '../lib/server/domain/plugin-actions.js'
+import { ACTION_KINDS, COMMAND_KEYS, IGNORED_BUILDS_REACHED_NOTE, parseActionRequest, runSuggestedAction, isReleaseAgeBlock } from '../lib/server/domain/plugin-actions.js'
 import { preferredRegistries } from '../lib/server/domain/sources.js'
 
 const ROOT = dirname(fileURLToPath(import.meta.url))
 const HOME = join(ROOT, '.testdir', 'plugin-actions-home')
 process.env.DSH_HOME = HOME
+/** 真 pnpm 组用的隔离包名（夹具，不在 registry 上）。 */
+const REAL_PKG = '@dsh-probe/pin-only-7c1f9a'
 
 let failed = 0
 const check = (label, cond, extra) => {
@@ -34,6 +36,9 @@ writeFileSync(join(PROFILE, 'node_modules', '@fake', 'demo', 'package.json'), JS
 writeFileSync(join(PROFILE, 'node_modules', '@fake', 'demo', 'index.js'), 'export const ok = true\n', 'utf8')
 const writeManifest = (deps) => writeFileSync(join(PROFILE, 'package.json'), `${JSON.stringify({ name: 'dsh-profile-actions', private: true, dependencies: deps }, null, 2)}\n`, 'utf8')
 writeManifest({ '@fake/demo': '1.0.0' })
+// 真机同形夹具：profile 一定带着 pnpm-workspace.yaml（pnpm 11 自己也往里写 allowBuilds / 排除项）。
+// 一开始就写好，避免"先装依赖、后加 workspace 文件"造成 lock 设置不一致（frozen-lockfile 会报 mismatch）。
+writeFileSync(join(PROFILE, 'pnpm-workspace.yaml'), 'packages:\n  - .\n\nnodeLinker: hoisted\nautoInstallPeers: false\n', 'utf8')
 
 console.log('=== C4-① 结构契约：路由清单 + 白名单动作 + payload 无命令位置 ===')
 {
@@ -43,8 +48,8 @@ console.log('=== C4-① 结构契约：路由清单 + 白名单动作 + payload 
   check('路由 /plugin-console/run-suggested 已在路由表里注册（与路由清单测试同一口径）',
     routeSrc.includes('`${ROUTE_PREFIX}/run-suggested`'), 'routes/index.js')
   const actionSrc = readFileSync(join(ROOT, '..', 'lib', 'server', 'domain', 'plugin-actions.js'), 'utf8')
-  check('白名单只有我们定义的动作类型（pin-dependency / reconcile-lock）',
-    ACTION_KINDS.length === 2 && ACTION_KINDS.includes('pin-dependency') && ACTION_KINDS.includes('reconcile-lock'), JSON.stringify(ACTION_KINDS))
+  check('白名单只有我们定义的动作类型（pin-dependency / reconcile-lock / allow-builds）',
+    ACTION_KINDS.length === 3 && ACTION_KINDS.includes('pin-dependency') && ACTION_KINDS.includes('reconcile-lock') && ACTION_KINDS.includes('allow-builds'), JSON.stringify(ACTION_KINDS))
   check('服务端**自己**拼 argv（pnpmAddArgs / repairArgsFor），源码里没有拼客户端字符串的位置',
     actionSrc.includes('pnpmAddArgs(') && !/exec\(|spawn\(/u.test(actionSrc), 'plugin-actions.js')
   check('危险字段清单覆盖 command/cmd/argv/args/exec/shell/script/run/spawn/bin',
@@ -167,12 +172,68 @@ console.log('\n=== C1 执行器：pin-dependency 走产品路径（注入桩，�
   check('主源优先的 registry 列表非空（探测/执行共用一份口径）', preferredRegistries().length > 0, JSON.stringify(preferredRegistries()))
 }
 
+console.log('\n=== A-③ 失败分类：ERR_PNPM_IGNORED_BUILDS + 清单/lock 已就位 → ok=true（exitCode 如实）===')
+{
+  // 与真机同形的桩：pnpm 退出码 1、stderr 是 pnpm 11.7.0 的原话；pin 桩把清单与 lock 都写成 link:。
+  const pinAndLock = async (profileDir, name) => {
+    const spec = `link:${join(HOME, 'plugin-src', ...name.split('/')).replace(/\\/gu, '/')}`
+    const manifest = JSON.parse(readFileSync(join(profileDir, 'package.json'), 'utf8'))
+    manifest.dependencies[name] = spec
+    writeManifest(manifest.dependencies)
+    writeFileSync(join(profileDir, 'pnpm-lock.yaml'), `lockfileVersion: '9.0'\n\nimporters:\n\n  .:\n    dependencies:\n      '${name}':\n        specifier: ${spec}\n        version: link:../../plugin-src/${name}\n`, 'utf8')
+    return { ok: true, spec, before: '1.0.0', after: spec, changed: true, dir: join(HOME, 'plugin-src', ...name.split('/')) }
+  }
+  const ignoredStderr = 'Command failed: pnpm add link:…\n[ERR_PNPM_IGNORED_BUILDS] Ignored build scripts: cloudflared@0.7.3, cpu-features@0.0.10, ssh2@1.17.0\n\nRun "pnpm approve-builds" to pick which dependencies should be allowed to run scripts.'
+  const ignoredError = () => { const e = new Error('Command failed: pnpm add link:…'); e.code = 1; e.stderr = ignoredStderr; e.stdout = 'Packages: -10\n'; return e }
+  const reached = await runSuggestedAction({
+    body: { action: 'pin-dependency', packageName: '@fake/demo', version: '1.0.0' },
+    profileDir: PROFILE, registries: ['https://registry.npmmirror.com'],
+    deps: { pin: pinAndLock, runAdd: async () => { throw ignoredError() } },
+  })
+  check('★ 目标状态已达成 + 构建脚本未获批准 → ok=true（不再报成失败）',
+    reached.ok === true && reached.partial === false && reached.kind === 'ignored-builds'
+    && reached.manifest.pinned === true && reached.lock.synced === true,
+    JSON.stringify({ ok: reached.ok, kind: reached.kind, manifest: reached.manifest?.pinned, lock: reached.lock?.synced }))
+  check('★ exitCode 如实回报（1 就是 1，绝不抹成 0）', reached.exitCode === 1, String(reached.exitCode))
+  check('★ note 就是约定的那句话（逐字）',
+    Array.isArray(reached.notes) && reached.notes[0] === IGNORED_BUILDS_REACHED_NOTE
+    && reached.notes[0].includes('如需放行请点「允许这些构建脚本」'),
+    JSON.stringify(reached.notes.slice(0, 1)))
+  check('★ 报错里点名的三个包原样带回（面板/按钮直接用）',
+    JSON.stringify(reached.ignoredBuilds) === JSON.stringify(['cloudflared', 'cpu-features', 'ssh2']), JSON.stringify(reached.ignoredBuilds))
+  check('★ 同一个结果里带上第二个动作 nextAction=allow-builds（结构化，无命令位置）',
+    reached.nextAction?.kind === 'allow-builds' && reached.nextAction?.payload?.action === 'allow-builds'
+    && typeof reached.nextAction?.command === 'string' && reached.nextAction?.payload?.packageName === undefined,
+    JSON.stringify(reached.nextAction))
+  check('★ stderr 原样回显（用户能自己核对 pnpm 说了什么）', String(reached.stderr).includes('ERR_PNPM_IGNORED_BUILDS'))
+
+  // 反例：清单/lock **没**到位时，同一类报错必须仍如实报失败（ok=false + partial 语义不变）
+  writeManifest({ '@fake/demo': '1.0.0' })
+  rmSync(join(PROFILE, 'pnpm-lock.yaml'), { force: true })
+  const notReached = await runSuggestedAction({
+    body: { action: 'pin-dependency', packageName: '@fake/demo' },
+    profileDir: PROFILE, registries: ['https://registry.npmmirror.com'],
+    deps: {
+      pin: async (profileDir, name) => {
+        const spec = `link:${join(HOME, 'plugin-src', ...name.split('/')).replace(/\\/gu, '/')}`
+        const manifest = JSON.parse(readFileSync(join(profileDir, 'package.json'), 'utf8'))
+        manifest.dependencies[name] = spec
+        writeManifest(manifest.dependencies)
+        return { ok: true, spec, before: '1.0.0', after: spec, changed: true, dir: join(HOME, 'plugin-src', ...name.split('/')) }
+      },
+      runAdd: async () => { throw ignoredError() },
+    },
+  })
+  check('★ 反例：清单/lock 未就位时仍如实报失败（ok=false、partial=true、exitCode=1）',
+    notReached.ok === false && notReached.partial === true && notReached.exitCode === 1
+    && notReached.notes.some((n) => n.includes('还没到目标状态')), JSON.stringify({ ok: notReached.ok, partial: notReached.partial, notes: notReached.notes }))
+}
+
 console.log('\n=== C1 真机路径（真 pnpm、不出外网）：动作的 pnpm 那一步真的跑起来 ===')
 // 为什么单开一段：上面那段把 runAdd 换成了桩（为了钉住"失败也要如实回报"），但**动作真的会执行 pnpm**
 // 这件事必须由真 pnpm 证一次 —— 用隔离 profile + 一个只在本地存在的包（link: 不经 registry），
 // 断言：exitCode=0、清单/lock 都是 link:、且 node_modules/<包名> 真的被 pnpm 换成了指向 plugin-src 的链接。
 {
-  const REAL_PKG = '@dsh-probe/pin-only-7c1f9a'
   const realDir = join(PROFILE, 'node_modules', ...REAL_PKG.split('/'))
   mkdirSync(realDir, { recursive: true })
   writeFileSync(join(realDir, 'package.json'), JSON.stringify({ name: REAL_PKG, version: '0.0.1-rc9', main: 'index.js' }), 'utf8')
@@ -210,6 +271,81 @@ console.log('\n=== C1 真机路径（真 pnpm、不出外网）：动作的 pnpm
     } catch { linkType = 'missing' }
     check('★ 真 pnpm：node_modules/<包名> 被真的换成了指向 plugin-src 的链接（不是只写了两个文本文件）',
       linkType === 'symlink', `linkType=${linkType}`)
+  }
+
+  // ── A-③ 的**真 pnpm** 证据（2026-09-27 加法）：让 pnpm 自己产出 ERR_PNPM_IGNORED_BUILDS，
+  //    再断言"目标状态已达成 → ok=true、exitCode 如实、note 就是那句话、nextAction 是 allow-builds"。
+  //    做法：用 pnpm pack 打一个带 install 脚本的本地小包当依赖（离线、秒级；脚本只写一个标记文件）。
+  //    已知边界（真机 + 本用例都实测到，写在这里免得后人误判）：pnpm 11 对 `file:` 形态的依赖**匹配不上**
+  //    `allowBuilds: <name>: true`（dep path 不是 name@semver），所以这里只验到"分类 + 显式放行写盘"；
+  //    "放行后 pnpm 真的构建、exitCode=0" 由真机（registry 依赖，名字能匹配）在 E-③ 里验证。
+  const probeRoot = join(PROFILE, 'build-probe-src')
+  const basePath = join(PROFILE, 'node_modules', ...REAL_PKG.split('/'))
+  if (!existsSync(basePath)) {
+    console.log('SKIP 真 pnpm · ignored-builds 组 —— 上一个真 pnpm 组没把夹具装好')
+  } else {
+    const { runPnpmWithFallback, buildPnpmEnv } = await import('../lib/server/infra/exec.js')
+    const execOpts = { cwd: probeRoot, timeout: 120000, windowsHide: true, maxBuffer: 8 * 1024 * 1024 }
+    mkdirSync(probeRoot, { recursive: true })
+    writeFileSync(join(probeRoot, 'package.json'), JSON.stringify({
+      name: 'build-probe', version: '1.0.0', files: ['index.js'],
+      scripts: { install: "node -e \"require('fs').writeFileSync(require('path').join(__dirname,'MARKER.txt'),'ran')\"" },
+    }, null, 2), 'utf8')
+    writeFileSync(join(probeRoot, 'index.js'), 'module.exports = 1\n', 'utf8')
+    let packed = null
+    try {
+      // runPnpmWithFallback 只回报用到的 runner（stdout 由 exec 自己吞掉）→ 打完包从目录里认 tgz
+      await runPnpmWithFallback(['pack'], { execOpts: { ...execOpts, env: buildPnpmEnv('https://registry.npmmirror.com') } })
+      packed = readdirSync(probeRoot).find((f) => f.endsWith('.tgz')) ?? null
+    } catch (error) {
+      console.log(`SKIP 真 pnpm · ignored-builds 组 —— pnpm pack 不可用：${String(error?.message ?? error).slice(0, 200)}`)
+    }
+    if (packed === null) console.log('SKIP 真 pnpm · ignored-builds 组 —— pnpm pack 没产出 tgz（见上一行原始输出）')
+    if (packed !== null && existsSync(join(probeRoot, packed))) {
+      const tgzSpec = `file:${join(probeRoot, packed).replace(/\\/gu, '/')}`
+      // 保持上一步真 pnpm 写好的 link: 形态（这样这一步不需要 registry），只**加**一个带安装脚本的依赖
+      const depsNow = JSON.parse(readFileSync(join(PROFILE, 'package.json'), 'utf8')).dependencies
+      if (String(depsNow[REAL_PKG] ?? '').startsWith('link:') !== true) {
+        console.log('SKIP 真 pnpm · ignored-builds 组 —— 夹具里的 pin 目标不是 link: 形态')
+      } else {
+      writeManifest({ ...depsNow, 'build-probe': tgzSpec })
+      let setupErr = null
+      try {
+        // --no-frozen-lockfile：这一步是**造夹具**（新增一个 file: 依赖），不是产品行为；
+        // CI 上 pnpm 默认 frozen → 不加这个开关会先报 OUTDATED_LOCKFILE，掩盖我们要的 ignored-builds
+        await runPnpmWithFallback(['install', '--no-frozen-lockfile'], { execOpts: { cwd: PROFILE, timeout: 180000, windowsHide: true, maxBuffer: 8 * 1024 * 1024, env: buildPnpmEnv('https://registry.npmmirror.com') } })
+      } catch (error) { setupErr = error }
+      const setupText = `${setupErr?.stderr ?? ''}${setupErr?.message ?? ''}`
+      if (!/ERR_PNPM_IGNORED_BUILDS/u.test(setupText)) {
+        console.log(`SKIP 真 pnpm · ignored-builds 组 —— 夹具没造出预期的报错：${setupText.slice(-200) || '（没有报错）'}`)
+      } else {
+        const realIgnored = await runSuggestedAction({
+          body: { action: 'pin-dependency', packageName: REAL_PKG, version: '0.0.1-rc9', profile: 'web' },
+          profileDir: PROFILE, registries: ['https://registry.npmmirror.com'],
+        })
+        check('★ 真 pnpm：构建脚本未获批准 + 目标状态已达成 → ok=true、kind=ignored-builds、exitCode 如实（非 0）',
+          realIgnored.ok === true && realIgnored.kind === 'ignored-builds' && realIgnored.exitCode !== 0
+          && realIgnored.manifest.pinned === true && realIgnored.lock.synced === true,
+          JSON.stringify({ ok: realIgnored.ok, kind: realIgnored.kind, exit: realIgnored.exitCode, lock: realIgnored.lock }))
+        check('★ 真 pnpm：note 就是约定的那句话，并点名了被忽略的依赖',
+          realIgnored.notes?.[0] === IGNORED_BUILDS_REACHED_NOTE && realIgnored.ignoredBuilds.includes('build-probe'),
+          JSON.stringify({ note: realIgnored.notes?.[0]?.slice(0, 40), ignored: realIgnored.ignoredBuilds }))
+        check('★ 真 pnpm：stderr 原样带回 pnpm 的原话（面板可核对）',
+          String(realIgnored.stderr).includes('ERR_PNPM_IGNORED_BUILDS'), String(realIgnored.stderr).slice(-120))
+        const wsFile = join(PROFILE, 'pnpm-workspace.yaml')
+        const beforeWs = readFileSync(wsFile, 'utf8')
+        const allowed = await runSuggestedAction({ body: { action: 'allow-builds' }, profileDir: PROFILE, registries: [] })
+        const afterWs = readFileSync(wsFile, 'utf8')
+        check('★ 真 pnpm 现场：显式放行把 build-probe 写进 allowBuilds（顶层回报 changed/added/file/sha256/backup）',
+          allowed.ok === true && allowed.changed === true && allowed.added.includes('build-probe')
+          && allowed.file === wsFile && allowed.sha256Before !== allowed.sha256After
+          && typeof allowed.backup === 'string' && existsSync(allowed.backup), JSON.stringify({ ok: allowed.ok, added: allowed.added, backup: allowed.backup }))
+        check('★ 真 pnpm 现场：除新增的 allowBuilds 块外，原文件每一行都还在（其它字段未动）',
+          beforeWs.split('\n').every((line) => line === '' || afterWs.includes(line)) && afterWs.includes('allowBuilds:'),
+          JSON.stringify(afterWs.split('\n').slice(-4)))
+      }
+      }
+    }
   }
 }
 
@@ -282,6 +418,8 @@ console.log('\n=== C3/C4-③ 离线渲染：用假 React 真渲染安装结果�
       actionRun: '执行', actionCopy: '复制', actionCopied: '已复制命令', actionRunning: '执行中…',
       actionOk: '执行成功', actionPartial: '部分成功（清单已改，lock 未对齐）', actionFailed: '执行失败',
       actionLongTitle: '控制台按白名单动作执行', closeModal: '关闭',
+      actionAllowLabel: '允许这些构建脚本', actionAllowOk: '已写入放行项', actionAllowFailed: '放行失败（文件未改动）', actionAllowBackup: '备份',
+      actionAllowLong: '只有你点它才会写盘：把具体包名补进 allowBuilds（改前备份、写完读回核实）；它本身不下载、不执行任何脚本。',
     }
     return dict[key] ?? key
   }
@@ -291,6 +429,8 @@ console.log('\n=== C3/C4-③ 离线渲染：用假 React 真渲染安装结果�
       actionRun: 'Run', actionCopy: 'Copy', actionCopied: 'Command copied', actionRunning: 'Running…',
       actionOk: 'Done', actionPartial: 'Partly done (manifest updated, lock not aligned)', actionFailed: 'Failed',
       actionLongTitle: 'The console runs a whitelisted action inside its own process', closeModal: 'Close',
+      actionAllowLabel: 'Allow these build scripts', actionAllowOk: 'Approval written', actionAllowFailed: 'Approval failed (file untouched)', actionAllowBackup: 'Backup',
+      actionAllowLong: 'Nothing is written until you click: it adds the exact package names to allowBuilds (backup + read-back verify); it downloads and runs nothing itself.',
     }
     return dict[key] ?? key
   }
@@ -376,6 +516,90 @@ console.log('\n=== C3/C4-③ 离线渲染：用假 React 真渲染安装结果�
     check('★ 渲染断言：点「复制」复制的是**展示用命令**（只读字符串，不参与执行）',
       copied === action.command && copyView.view().texts.includes('已复制命令'), String(copied))
   }
+
+  // ⑦ 选项 2：执行结果说明"pnpm 因构建脚本未获批准而报错"时，动作框多出第二个动作按钮
+  const ignoredNotes = ['依赖已钉住（清单+lock 已就位）；pnpm 因构建脚本未获批准而报错 —— 这不会执行任何脚本，也不影响加载；如需放行请点「允许这些构建脚本」']
+  const nextAction = { kind: 'allow-builds', label: '允许这些构建脚本', command: 'pnpm approve-builds', payload: { action: 'allow-builds', profile: 'web' } }
+  let pinResponse = {
+    ok: true, kind: 'ignored-builds', exitCode: 1, notes: ignoredNotes,
+    reason: '@fake/demo 已钉住：清单与 pnpm-lock.yaml 都指向 link:…',
+    ignoredBuilds: ['cloudflared', 'cpu-features', 'ssh2'], nextAction,
+  }
+  let allowResponse = {
+    ok: true, action: 'allow-builds', changed: true, added: ['cloudflared', 'cpu-features', 'ssh2'],
+    file: 'C:/Users/x/.dsh/profiles/web/pnpm-workspace.yaml', sha256Before: 'aaaabbbbcccc', sha256After: 'ddddeeeeffff',
+    backup: 'C:/Users/x/.dsh/profiles/web/pnpm-workspace.yaml.bak-2026-09-27T16-12-33-123Z',
+    notes: ['已把 3 个包写进 pnpm-workspace.yaml 的 allowBuilds（只加/改这几行，其它字段一字未动）。'],
+    reason: '已放行：cloudflared、cpu-features、ssh2',
+  }
+  const allowLog = []
+  globalThis.fetch = (path, options) => {
+    fetchCalls += 1
+    const body = options?.body === undefined ? null : JSON.parse(options.body)
+    fetchLog.push({ path, body })
+    if (body?.action === 'allow-builds') {
+      allowLog.push(body)
+      return Promise.resolve({ ok: true, status: 200, json: async () => allowResponse })
+    }
+    return Promise.resolve({ ok: true, status: 200, json: async () => pinResponse })
+  }
+  // ⑦a 还没执行 → 一个像素都不多占（没有这个按钮）
+  const beforeRun = renderJob({ jobId: 'j6', status: 'done', packageName: '@fake/demo', suggestedAction: action }, zh)
+  check('★ 渲染断言：还没执行前不出现「允许这些构建脚本」（该场景才知道要放行）',
+    !beforeRun.view().buttons.includes('允许这些构建脚本') && !beforeRun.view().buttons.includes('Allow these build scripts'),
+    JSON.stringify(beforeRun.view().buttons))
+  // ⑦b 执行后拿到 ignored-builds 结果 → 出现按钮（中英各一份 + 悬浮长解释）
+  buttonByText(beforeRun.view(), '执行').onClick()
+  await new Promise((r) => setTimeout(r, 0))
+  await new Promise((r) => setTimeout(r, 0))
+  beforeRun.calls()
+  const ignoredFlat = beforeRun.view()
+  const allowBtn = buttonByText(ignoredFlat, '允许这些构建脚本')
+  check('★ 渲染断言：ignored-builds 结果 → 出现「允许这些构建脚本」按钮，且服务端 note 原样回显',
+    allowBtn !== undefined && ignoredFlat.texts.some((s) => s.includes('构建脚本未获批准')),
+    JSON.stringify({ buttons: ignoredFlat.buttons, texts: ignoredFlat.texts }))
+  check('★ 渲染断言：长解释挂在悬浮 title 上（含"不下载、不执行任何脚本"），正文只放短句',
+    typeof allowBtn?.title === 'string' && allowBtn.title.includes('不下载、不执行任何脚本')
+    && !ignoredFlat.texts.some((s) => s.includes('不下载、不执行任何脚本')), String(allowBtn?.title).slice(0, 60))
+  // ⑦c 点它 → 发的是结构化 payload（不是命令字符串）
+  allowBtn.onClick()
+  beforeRun.calls()
+  check('★ 渲染断言：点放行按钮发的是 nextAction.payload（{action:"allow-builds"}），不带任何命令字符串',
+    JSON.stringify(allowLog) === JSON.stringify([nextAction.payload]), JSON.stringify(allowLog))
+  check('★ 渲染断言：执行中按钮禁用（防连点）',
+    beforeRun.view().nodes.some((n) => n.tag === 'button' && n.disabled === true && n.props?.children === '执行中…'),
+    JSON.stringify(beforeRun.view().buttons))
+  await new Promise((r) => setTimeout(r, 0))
+  await new Promise((r) => setTimeout(r, 0))
+  beforeRun.calls()
+  const allowedFlat = beforeRun.view()
+  check('★ 渲染断言：放行成功 → 回显「已写入放行项」+ 原因，按钮收起（不会再点第二次）',
+    allowedFlat.texts.some((s) => s.includes('已写入放行项')) && !allowedFlat.buttons.includes('允许这些构建脚本')
+    && allowedFlat.nodes.some((n) => typeof n.title === 'string' && n.title.includes('sha256') && n.title.includes('备份')),
+    JSON.stringify({ texts: allowedFlat.texts, buttons: allowedFlat.buttons }))
+  // ⑦d 英文界面：同一份数据换字典 → 按钮文案跟随
+  const enIgnored = renderJob({ jobId: 'j7', status: 'done', packageName: '@fake/demo', suggestedAction: action }, en)
+  buttonByText(enIgnored.view(), 'Run').onClick()
+  await new Promise((r) => setTimeout(r, 0))
+  await new Promise((r) => setTimeout(r, 0))
+  enIgnored.calls()
+  check('★ 渲染断言：中英切换（Allow these build scripts）',
+    enIgnored.view().buttons.includes('Allow these build scripts'), JSON.stringify(enIgnored.view().buttons))
+  // ⑦e 放行失败 → 如实回显（不假装成功）
+  allowResponse = { ok: false, action: 'allow-builds', changed: false, reason: 'ssh2 不在当前被忽略的构建脚本名单里，拒绝改写' }
+  const allowFail = renderJob({ jobId: 'j8', status: 'done', packageName: '@fake/demo', suggestedAction: action }, zh)
+  buttonByText(allowFail.view(), '执行').onClick()
+  await new Promise((r) => setTimeout(r, 0))
+  await new Promise((r) => setTimeout(r, 0))
+  allowFail.calls()
+  buttonByText(allowFail.view(), '允许这些构建脚本').onClick()
+  await new Promise((r) => setTimeout(r, 0))
+  await new Promise((r) => setTimeout(r, 0))
+  allowFail.calls()
+  const failFlat = allowFail.view()
+  check('★ 渲染断言：放行失败 → 回显「放行失败（文件未改动）」+ 服务端 reason（不是"成功"）',
+    failFlat.texts.some((s) => s.includes('放行失败（文件未改动）')) && failFlat.texts.some((s) => s.includes('拒绝改写'))
+    && !failFlat.texts.some((s) => s.includes('已写入放行项')), JSON.stringify(failFlat.texts))
 }
 
 rmSync(HOME, { recursive: true, force: true })

@@ -252,6 +252,25 @@ Requires: DSH ≥ 0.1.0-rc.6 (web profile, with `dsh-client-modules` / `dsh-host
 >   sources** all support primary→backup plus self-hosted mirrors (internal Gitea/GitLab, local
 >   `file://` bare repos).
 
+#### Download-install channels and dependency forms
+
+Which channel gets used depends on **what the package actually is** — not on a setting:
+
+| Channel | Target | When it is used | Written in the manifest as | Needs plugin-src |
+|---|---|---|---|---|
+| ① pnpm (registry) | npm registry | **if the package is on the registry, this is the main channel** | `<name>: <version>` | no |
+| ② curl tarball (registry) | npm registry tarball | **races in parallel** with ① (takes over when pnpm is blocked/stuck) | same as above | no |
+| ③ GitHub Release asset | prebuilt tgz of an upstream release | when **both registry sources 404** | `link:<absolute path>` | yes |
+| ④ git clone | repository source | no npm package / no release asset | `link:…` | yes |
+| ⑤ archive (tar.gz) | codeload / mirrors | when the git protocol cannot move any bytes | `link:…` | yes |
+
+In one sentence: **has an npm package → ①/②, write a version, keep the lock clean; no npm package →
+fall back to ③/④/⑤, materialize into `~/.dsh/plugin-src/<pkg>` and write `link:`.**
+
+Environment reminder: an accelerator/proxy that rewrites hosts makes the direct sources unreachable
+(see above), and free mirrors are unreliable for the **git protocol** on large packs while
+**archive/raw are usually much faster** — the console already switches by itself.
+
 ### Static index market (plugin & skill tabs)
 
 > **Hybrid architecture**: browsing uses the static index (instant, zero GitHub API calls),

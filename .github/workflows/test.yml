@@ -60,7 +60,12 @@ jobs:
           node tests/test-dep-pin.mjs
           # 0.5.20 加法：结构化「建议动作」的契约 + 拒绝任意命令（400 且一次都没执行）+
           # 客户端执行框的离线渲染断言（有/无、执行中、成功、失败、中英切换）
+          # 0.5.24 加法：A-③ 的**真 pnpm** 证据（pnpm 自己产出 ERR_PNPM_IGNORED_BUILDS → ok=true、exitCode 如实）
+          #          + 选项 2 的第二个动作按钮渲染断言；pnpm 不可用时该组响亮 SKIP
           node tests/test-plugin-actions.mjs
+          # 0.5.24 加法（选项 2）：显式动作「允许这些构建脚本」——最小改动 + 改前备份 + 写后读回核实 +
+          # 未点击时文件 sha256 不变（负例）+ 绝不 exec/spawn（源码级安全边界）；全离线
+          node tests/test-allow-builds.mjs
           # 批次 A-①（2026-09-27）：git 克隆的停滞判据（-c http.lowSpeedLimit=1 -c http.lowSpeedTime=20）
           # 含一段**真 git** 对着本机"只连不传"桩源的 ≈20 秒判死断言（不出外网，CI 可跑）
           node tests/test-git-stall-guard.mjs

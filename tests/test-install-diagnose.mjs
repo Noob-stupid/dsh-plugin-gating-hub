@@ -32,7 +32,7 @@ mkdirSync(profileDir, { recursive: true })
 writeFileSync(join(profileDir, 'package.json'), JSON.stringify({ name: 'dsh-profile-web', private: true }, null, 2), 'utf8')
 writeFileSync(join(profileDir, 'cordis.patch.yml'), '# diagnose test\n', 'utf8')
 
-const { classifyInstallFailure, longerTimeoutFor, diagnosisText, missingPackagesFrom, DIAGNOSIS_RULES } = await import(new URL('../lib/server/domain/install-diagnose.js', import.meta.url).href)
+const { classifyInstallFailure, longerTimeoutFor, diagnosisText, missingPackagesFrom, ignoredBuildsFrom, DIAGNOSIS_RULES } = await import(new URL('../lib/server/domain/install-diagnose.js', import.meta.url).href)
 const { runInstallJob } = await import(new URL('../lib/server/domain/install-job.js', import.meta.url).href)
 const { installJobView } = await import(new URL('../lib/server/domain/install.js', import.meta.url).href)
 const mod = await import(new URL('../lib/index.js', import.meta.url).href)
@@ -44,8 +44,12 @@ const mod = await import(new URL('../lib/index.js', import.meta.url).href)
     ['minimumReleaseAge', 'minimum release age: 1440 minutes (发布年龄未满)'],
     // 2026-09-27 新增：pnpm 供应链闸真的拦下时的专用错误码（与上面泛化文本分开，带安全边界文案）
     ['supply-chain-age', 'ERR_PNPM_MINIMUM_RELEASE_AGE_VIOLATION  The version 0.5.15 was published too recently (minimumReleaseAge is 1440 minutes)'],
-    ['allowBuilds', 'Ignored build scripts: sharp, esbuild. Run "pnpm approve-builds" to pick which dependencies should be allowed to run scripts.'],
-    ['allowBuilds', 'ERR_PNPM_IGNORED_BUILDS  The following packages have build scripts that were ignored: sharp'],
+    ['allowBuilds', 'allowBuilds: the following packages are not allowed to run scripts: sharp'],
+    // 2026-09-27 加法：pnpm 11 的"构建脚本未获批准"硬错误（strictDepBuilds 默认 true）。
+    // 与泛化的 allowBuilds 分开：这一条要点名是哪些包，并说清"报错时安装其实已经完成"。
+    ['ignored-builds', 'Ignored build scripts: sharp, esbuild. Run "pnpm approve-builds" to pick which dependencies should be allowed to run scripts.'],
+    ['ignored-builds', 'ERR_PNPM_IGNORED_BUILDS  The following packages have build scripts that were ignored: sharp'],
+    ['ignored-builds', '[ERR_PNPM_IGNORED_BUILDS] Ignored build scripts: cloudflared@0.7.3, cpu-features@0.0.10, ssh2@1.17.0'],
     ['missing-tool', 'spawn git.exe ENOENT'],
     ['missing-tool', "Error: Cannot find module '/usr/local/bin/node_modules/corepack/dist/corepack.js'"],
     // 2026-09-27 新增：registry 抓取 404（要点名依赖）——旧版这类文本归在泛化的 not-found
@@ -72,9 +76,15 @@ const mod = await import(new URL('../lib/index.js', import.meta.url).href)
   }
   const wt = classifyInstallFailure('ECONNRESET')
   check('network-timeout → retry=longer-timeout（唯一会被自动重试的分类）', wt.retry === 'longer-timeout')
-  check('allowBuilds → retry=null（绝不自动重试）', classifyInstallFailure('Ignored build scripts: sharp').retry === null)
-  check('allowBuilds 的 hint 明写"绝不自动写 allowBuilds / 构建白名单"（安全边界写进面向用户的文案）',
-    /绝不自动写 allowBuilds/u.test(classifyInstallFailure('Ignored build scripts: sharp').hint))
+  check('ignored-builds → retry=null（绝不自动重试，也绝不自动放行）', classifyInstallFailure('Ignored build scripts: sharp').retry === null)
+  check('ignored-builds 的 hint 把用户引到**显式**按钮上，并明写"绝不自动放行"',
+    /允许这些构建脚本/u.test(classifyInstallFailure('Ignored build scripts: sharp').hint)
+    && /绝不自动放行/u.test(classifyInstallFailure('Ignored build scripts: sharp').hint))
+  check('ignored-builds 的 hint 说清"清单与 lock 通常已就位、不执行任何脚本、不影响加载"',
+    /已.*就位/u.test(classifyInstallFailure('Ignored build scripts: sharp').hint)
+    && /不执行任何脚本/u.test(classifyInstallFailure('Ignored build scripts: sharp').hint))
+  check('allowBuilds（泛化形态）的 hint 仍明写"绝不自动写 allowBuilds / 构建白名单"（安全边界进面向用户的文案）',
+    /绝不自动写 allowBuilds/u.test(classifyInstallFailure('allowBuilds: not allowed to run scripts: sharp').hint))
   check('minimumReleaseAge → retry=later（提示稍后重试，不自动放宽安全间隔）',
     classifyInstallFailure('ERR_PNPM_MINIMUM_RELEASE_AGE').retry === 'later'
     && /不替你放宽安全间隔/u.test(classifyInstallFailure('ERR_PNPM_MINIMUM_RELEASE_AGE').hint))
@@ -118,6 +128,16 @@ const mod = await import(new URL('../lib/index.js', import.meta.url).href)
   const stale = classifyInstallFailure('ERR_PNPM_OUTDATED_LOCKFILE  Cannot install with "frozen-lockfile" because pnpm-lock.yaml is not up to date with package.json')
   check('★ lockfile-outdated：定性为"不是网络问题"，并指向显式体检/重建',
     stale.kind === 'lockfile-outdated' && stale.retry === null && /显式/u.test(stale.hint) && /lock/u.test(stale.hint), stale.hint)
+  // 2026-09-27 加法：从"构建脚本被忽略"的报错里点名依赖（真机原文形态）
+  check('★ ignoredBuildsFrom：真机原文能点名三个包（去掉 @版本，scoped 包名不吃错）',
+    JSON.stringify(ignoredBuildsFrom('[ERR_PNPM_IGNORED_BUILDS] Ignored build scripts: cloudflared@0.7.3, cpu-features@0.0.10, ssh2@1.17.0')) === JSON.stringify(['cloudflared', 'cpu-features', 'ssh2'])
+    && JSON.stringify(ignoredBuildsFrom('Ignored build scripts: sharp, esbuild')) === JSON.stringify(['sharp', 'esbuild'])
+    && JSON.stringify(ignoredBuildsFrom('Ignored build scripts: @scope/pkg@1.2.3, plain')) === JSON.stringify(['@scope/pkg', 'plain'])
+    && JSON.stringify(ignoredBuildsFrom('nothing here')) === JSON.stringify([]),
+    JSON.stringify(ignoredBuildsFrom('[ERR_PNPM_IGNORED_BUILDS] Ignored build scripts: cloudflared@0.7.3, cpu-features@0.0.10, ssh2@1.17.0')))
+  check('分类结果里也带上了点名的依赖（面板可直接显示/用于放行按钮）',
+    JSON.stringify(classifyInstallFailure('Ignored build scripts: sharp, esbuild').packages) === JSON.stringify(['sharp', 'esbuild']),
+    JSON.stringify(classifyInstallFailure('Ignored build scripts: sharp, esbuild').packages))
   check('每个分类的 hint 都是短句（面板只放短句：≤ 200 字，长解释不进正文）',
     DIAGNOSIS_RULES.every((r) => r.hint.length <= 200), String(Math.max(...DIAGNOSIS_RULES.map((r) => r.hint.length))))
   check('诊断一行文案带上点名的依赖（diagnosisText 加法字段）',
@@ -202,13 +222,14 @@ async function runScenario(label, pnpmMessage) {
   check('B hint 指向"核对包名/镜像未同步"且明写不会静默丢弃依赖',
     /镜像未同步/u.test(b.job.diagnosis?.hint ?? '') && /静默丢弃/u.test(b.job.diagnosis?.hint ?? ''))
 
-  // 场景 C：allowBuilds → 只提示、绝不自动写白名单、绝不重试
+  // 场景 C：ignored-builds → 只提示、绝不自动写白名单、绝不重试
   const c = await runScenario('c', 'Ignored build scripts: sharp, esbuild. Run "pnpm approve-builds" to allow them.')
   const pnpmOfPkgC = c.calls.filter((x) => x.startsWith(`pnpm:${PKG}:`))
-  check('C allowBuilds → 没有任何定向重试（只提示）',
+  check('C ignored-builds → 没有任何定向重试（只提示）',
     pnpmOfPkgC.every((x) => !x.endsWith(':180000')) && pnpmOfPkgC.length >= 1, pnpmOfPkgC.join(' | '))
-  check('C job.diagnosis.kind=allowBuilds，hint 明写"绝不自动写 allowBuilds"',
-    c.job.diagnosis?.kind === 'allowBuilds' && /绝不自动写 allowBuilds/u.test(c.job.diagnosis?.hint ?? ''), JSON.stringify(c.job.diagnosis))
+  check('C job.diagnosis.kind=ignored-builds，hint 指向显式按钮且明写"绝不自动放行"',
+    c.job.diagnosis?.kind === 'ignored-builds' && /允许这些构建脚本/u.test(c.job.diagnosis?.hint ?? '')
+    && /绝不自动放行/u.test(c.job.diagnosis?.hint ?? ''), JSON.stringify(c.job.diagnosis))
   check('C 严格替身账本为空（新代码没有属性式读取未声明的 ctx 名字）',
     violationsOf(c.ctx).length === 0, [...new Set(violationsOf(c.ctx))].join('、'))
 }
