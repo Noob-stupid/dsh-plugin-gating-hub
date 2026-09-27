@@ -80,6 +80,8 @@ const ROUTES = [
   // 依赖锁体检 / 重建（2026-09-27 加法）：check 只读，repair 必须显式调用
   '/lockfile-check',
   '/lockfile-repair',
+  // 结构化建议动作（2026-09-27 加法）：只认白名单动作类型，argv 由服务端自拼
+  '/run-suggested',
 ]
 // 分层后路由可能写在 lib/server/routes/**（表项）或 index.js（内联分支）—— 两种写法都要认
 const walkSrc = (dir) => readdirSync(dir, { withFileTypes: true }).flatMap((e) => {
@@ -113,6 +115,9 @@ const SCHEMAS = [
   // 依赖锁体检（2026-09-27 加法）：夹具 profile 没有 package.json / pnpm-lock.yaml，
   // 因此这条**不打 registry**（清单里没有依赖要探测），响应是确定性的。字段逐字段钉死。
   ['POST', '/plugin-console/lockfile-check', {}, 200, ['checkedAt', 'hint', 'lockfile', 'manifestDeps', 'ok', 'outdated', 'packages404', 'problems', 'profileDir', 'registry', 'repair', 'supplyChainAge']],
+  // 2026-09-27 加法：结构化建议动作 —— 传 `command` 这类任意命令字符串**必须 400**（且不执行任何东西）。
+  // 夹具 profile 里没有该包，所以即便放行也只可能走"包不在清单里"的 400；这里钉的是"带命令字符串一律 400"。
+  ['POST', '/plugin-console/run-suggested', { action: 'pin-dependency', packageName: '@fake/demo', command: 'rm -rf /' }, 400, ['error', 'ok']],
   // github-login 只测"形状不合法"这条不触网的路径：合法 token 会真的打 GitHub，测试不能依赖网络
   ['POST', '/plugin-console/github-login', { token: '' }, 400, ['error', 'ok']],
   // github-open-login 不能进这张表：它的响应随环境分两种形状（成功 {ok,started,status} / 不可用

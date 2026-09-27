@@ -11,11 +11,14 @@ const all = readdirSync(join(ROOT, 'tests')).filter((f) => f.startsWith('test-')
 const UNIT = all.filter((f) => !/test-real-|test-install-smoke|test-framework-upgrade|test-bundle-guard|test-issue15-resolve|test-suite-install|test-registry-scan|test-preset-migration|test-upgrade-script-syntax|test-preflight-disable|test-lockfile-repair/u.test(f))
 const ENV = all.filter((f) => /test-framework-upgrade|test-bundle-guard|test-issue15-resolve|test-suite-install|test-registry-scan|test-preset-migration|test-upgrade-script-syntax|test-preflight-disable|test-lockfile-repair/u.test(f))
 const REAL = all.filter((f) => /test-real-|test-install-smoke/u.test(f))
+// 0.5.20：非 registry 包写回形态那套要在**真 registry** 下再跑一次（CI 也这么分两步：Unit 硬门槛 + 真装冒烟）
+const NETONLY = all.filter((f) => /test-dep-pin/u.test(f))
 
 const suites = [
   ['unit（DSH_TEST_SKIP_NETWORK=1）', UNIT, { DSH_TEST_SKIP_NETWORK: '1' }],
   ['real smoke（真网络）', REAL, { DSH_TEST_SKIP_NETWORK: '' }],
   ['env-dependent（本机有 profile 就真跑）', ENV, { DSH_TEST_SKIP_NETWORK: '1' }],
+  ['真 registry 端到端（不带 SKIP_NETWORK）', NETONLY, { DSH_TEST_SKIP_NETWORK: '' }],
 ]
 
 let failed = 0

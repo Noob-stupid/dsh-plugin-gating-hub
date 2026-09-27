@@ -49,6 +49,13 @@ jobs:
           node tests/test-install-verify.mjs
           node tests/test-upgrade-script-blocks.mjs
           node tests/test-lockfile-health.mjs
+          node tests/test-manifest-declare.mjs
+          # 0.5.20 改错+加法（2026-09-27）：非 registry 包按 link: 写回（写回形态 / lock 对账 /
+          # 文案与实际一致 / **真 pnpm** 断言"随后 pnpm install --lockfile-only 退出码 0"，不出外网）
+          node tests/test-dep-pin.mjs
+          # 0.5.20 加法：结构化「建议动作」的契约 + 拒绝任意命令（400 且一次都没执行）+
+          # 客户端执行框的离线渲染断言（有/无、执行中、成功、失败、中英切换）
+          node tests/test-plugin-actions.mjs
           # 批次 A-①（2026-09-27）：git 克隆的停滞判据（-c http.lowSpeedLimit=1 -c http.lowSpeedTime=20）
           # 含一段**真 git** 对着本机"只连不传"桩源的 ≈20 秒判死断言（不出外网，CI 可跑）
           node tests/test-git-stall-guard.mjs
@@ -82,7 +89,11 @@ jobs:
       - name: Real install/uninstall smoke (temp DSH_HOME)
         env:
           DSH_TEST_SKIP_NETWORK: ''
-        run: node tests/test-install-smoke.mjs
+        run: |
+          node tests/test-install-smoke.mjs
+          # 0.5.20：真 registry 那条路（真探测 npmmirror 报 404 → 清单/ lock 写 link: → 随后
+          # `pnpm install --lockfile-only` 退出码 0）。镜像不可达时本套会**响亮 SKIP**（打印原因，不假装 PASS）。
+          node tests/test-dep-pin.mjs
 
       # 真实通道冒烟：archive 通道真下载 + npmName 首选候选真装（隔离 DSH_HOME；需要外网）
       - name: Real channel smoke (ghproxy / npmmirror)
