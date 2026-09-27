@@ -2,6 +2,91 @@
 
 All notable changes to dsh-plugin-hub.
 
+## v0.5.20 — 非 registry 包一律按 `link:` 写回（清单/lock/文案三处一致）+ 可执行的「建议动作」执行框（2026-09-27）
+
+本版**只做改错与加法**：不动内核结构、不删既有能力；registry 可解析的包**行为逐条不变**（有回归断言）。
+
+### 背景：真机上的一颗雷 + 一句谎报
+
+desktop profile 的 `dependencies` 里写着 `@dsh-external/dsh-graded-mode: 0.0.1-rc1`，
+而 `registry.npmmirror.com` 与 `registry.npmjs.org` **双双 404**（该包只存在于 GitHub release 资产里，
+同族还有 `@dsh-external/dsh-super-injector` 与 web profile 的 `dsh-github-login@0.1.0`）；
+同一个 profile 的 `pnpm-lock.yaml` 里**根本没有**这条依赖。后果：
+
+- **下一次任何 pnpm 操作**（开关插件、`dsh plugin add/remove`、装任何新插件）都会
+  `ERR_PNPM_FETCH_404`，而报错指向 npm registry —— 用户根本联想不到是几天前面板的安装留下的；
+- 更糟的是**面板当时报的是「已按 link: 形式记录依赖」**：那句文案是硬编码的，从未读回磁盘真实值。
+
+### 一、写回形态由 registry 可解析性决定（改错）
+
+`domain/manifest.js#planDependencySpec`（新）：安装成功后的「安装即声明」不再无条件写磁盘版本号，
+先按配置的源（npmmirror → npmjs）探这个包的**这个版本**：
+
+| 探测结论 | 写进 `dependencies` 的形态 |
+| --- | --- |
+| 可解析 | `<版本号>`（**回归：与之前完全一致**） |
+| 查无此包 / 查无此版本（404） | `link:<DSH_HOME>/plugin-src/<包名>`（先把已装副本物化过去） |
+| 本次没探到（网络/镜像不可达） | 仍写版本号，但**如实记 note** + 下发「钉住」建议动作（绝不冒充已钉住） |
+
+选 `link:` 而不是 `file:` 的理由：① 两个 profile 的 lock 本来就带 `excludeLinksFromLockfile: false`
+（明确为 link 依赖准备）；② `link:` 只建链接，不经 registry 解析、不经 tarball 完整性校验，
+删 lock / 清 node_modules / 换机都能装上（本机真 pnpm 实测：`pnpm add link:<绝对路径>` 会把
+`node_modules/<包名>` 从真实目录换成 Junction，并在 lock 的 importer 段写下
+`specifier: link:<绝对路径>` + `version: link:../../plugin-src/…`）；③ `file:` 在本机
+`nodeLinker: hoisted` 下按普通依赖处理（多一层副本/打包语义），更容易出现版本漂移。
+
+写清单之后**总是**做一次 lock 对账（对齐时零成本：只在漂移时才跑 pnpm）；
+且 `aligned()` 现在要求**清单 / node_modules / lock 三处齐**才算对齐 —— 旧判据只看"链接还在"，
+lock 里没有这条也算对齐，`lockUpdated` 会谎报 `true`（本次一并修掉）。
+
+### 二、文案按实际写入形态生成（改错）
+
+`domain/selfupdate.js#reconcileLockfile` 在写回**之后**读回 `package.json` 的真实值再生成说明：
+只有清单里真的是 `link:…` 才说「已按 link: 形式记录依赖（<真实值>）」；没写成就点名
+「计划写入 X，实际是 Y —— 写回**未生效**」并附可复制命令 + 结构化动作；`errors` 也进 note（不再吞）。
+`misrecorded` 指纹从"裸版本号 + URL 解析"扩展到"裸版本号 + **任何来源钉住**"（`link:` / `git+` / URL），
+真机上那种「清单是版本号、lock 是 `link:`」的隐形状态因此能被自愈。
+`routes/compat.js#declare-installed`（补声明）走同一套判据与同一份源配置。
+
+### 三、可执行的「钉住 / 修复」动作框（加法）
+
+- **服务端** `POST /plugin-console/run-suggested`（`routes/actions.js` + `domain/plugin-actions.js`）：
+  只接受 `{ action, packageName, version, profile }`；出现 `command`/`cmd`/`argv`/`args`/`exec`/
+  `shell`/`script`/`run`/`spawn`/`bin` 任一字段即 **400 且一次都不执行**（有断言：零执行）。
+  argv 全部由服务端自己拼：`pin-dependency` 走 `infra/exec.js#pnpmAddArgs`，
+  `reconcile-lock` 直接复用 `lockfile-health.js#runLockfileRepair`（仍**不带**任何绕过供应链闸的开关）。
+  `profile` 字段只作回显 —— profileDir 一律取当前实例，绝不按请求体挑目录。
+  供应链闸（pnpm 11 的 `minimumReleaseAge` 默认 24h；本控制台自己刚发布的版本必然落在这个窗口里）
+  只在它**确实**拦住命令时，为**这一条命令**追加 `--config.minimumReleaseAge=0` 重试一次，
+  并在结果里显式回报 `relaxedReleaseAge: true`（面板原样展示，绝不写进任何配置文件）。
+- **下发**：安装结果新增 `job.suggestedAction = { kind, label, command（仅供展示/复制）, payload }`
+  —— 老客户端忽略该字段即可（向后兼容）。
+- **面板**：安装结果卡片旁的小执行框（短说明 + 等宽只读命令 + 「执行」「复制」+ 执行中 +
+  结果/错误回显 + 可关闭；中英双语；只用既有 `styles.*`，长解释挂悬浮 `title`）。
+  有建议动作时**不再自动刷新**页面（旧行为 2.5 秒 reload，用户根本来不及点）。
+  执行结果走 `callAction`：服务端把"动作失败"也当**结果**返回，不能被 `call()` 的统一错误约定
+  吞成一句没信息量的 `HTTP 200`。
+
+### 验收（真跑，非仅单测）
+
+- 本机全量 **55 套全绿**（含真 pnpm / 真 registry 那套）；CI `tests` 双 step
+  （Unit tests 硬门槛 + Real install/uninstall smoke）全绿；
+- 新增 `tests/test-dep-pin.mjs`：非 registry 包 → 清单是 `link:`（桩 + 真物化）、写后 lock 有条目、
+  **真 pnpm** 断言「随后 `pnpm install --lockfile-only` 退出码 0」、反证「裸版本号形态下同一条命令
+  必然失败」、文案与实际值一致（含"写回未生效时绝不出现已按 link: 记录"的负例）、
+  registry 可解析的包仍写 `<name>@<版本>`；
+- 新增 `tests/test-plugin-actions.mjs`：路由/白名单/payload 契约、任意命令 400 且零执行、
+  **用假 React 真渲染执行框**（有/无、执行中、成功、失败、中英切换、复制、关闭）。
+
+### 未验证 / 不确定项（如实记录）
+
+- `link:` 的**物理落地**（`node_modules/<包名>` 从真实目录换成指向 `plugin-src` 的 Junction）
+  发生在下一次**完整** pnpm 安装（或点一次「钉住」动作）时；本版只保证清单与 lock 三处一致、
+  且 `pnpm install --lockfile-only` 退出码 0（按验收要求只跑 `--lockfile-only`）。
+- 本机 pnpm 11.21 的 `minimumReleaseAge`（24h）默认闸会让**刚发布 <24h** 的控制台版本拦住任何
+  lockfile 校验 —— 这不是本插件引入的，但会在每次发版后的一天内影响 `pnpm` 操作；
+  动作框在这种情况下会显式回报"已放宽一次（有安全代价）"，其余通道（体检/重建）口径不变：只提示不绕过。
+
 ## v0.5.19 — 套装链两处改错：根克隆失败必须回落普通通道 + 套装判定前先看根包（子包）是否已发布（内核零改动）（2026-09-27）
 
 本版**只做改错与加法**：不动内核结构、不删既有能力、不改公开行为语义。三处改动全部落在
