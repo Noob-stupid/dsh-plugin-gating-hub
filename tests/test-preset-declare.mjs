@@ -193,7 +193,12 @@ check('① 备份路径唯一：同毫秒第二次不覆盖第一次',
   const duplicated = `${first.text}\n\n${built.rowText}\n`
   check('⑤ 清重复：同 id 出现两次（老版本重复插入的残局）→ 只剩一行',
     scanPresetRows(duplicated).length === 2 && scanPresetRows(upsertPresetRow(duplicated, changedRow, built.rowId).text).length === 1)
-  const twoPresets = upsertPresetRow(updated.text, buildPresetDeclaration(makePreset('other', { composition: COMPOSITION }), 'other').rowText, 'preset-other')
+  // 0.5.29 起「相对引用必须在预设目录里真的存在」（否则声明行必然加载失败，见 test-preset-rows.mjs），
+  // 所以这个夹具也要把文件补齐 —— 否则 buildPresetDeclaration 会如实拒绝，拿不到 rowText。
+  const twoPresets = upsertPresetRow(updated.text, buildPresetDeclaration(
+    makePreset('other', { composition: COMPOSITION, files: { 'router-core.mjs': 'export const a = 1\n', 'router-bootstrap.mjs': 'export const b = 2\n' } }),
+    'other',
+  ).rowText, 'preset-other')
   check('⑤ 两个不同预设共存：各一行、互不覆盖', scanPresetRows(twoPresets.text).map((r) => r.id).join(',') === 'preset-demo-preset,preset-other')
 }
 

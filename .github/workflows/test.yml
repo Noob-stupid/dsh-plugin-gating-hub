@@ -136,6 +136,25 @@ jobs:
           #   文案**绝不**再说"新建会话时选择"，改说"文件已就位，但当前框架版本需要声明行"并给出出路
           # ⑩ assemblePreset 接线（给 patchPath 就声明、不给就一个字节都不写）+ 声明抛异常不把装配带崩
           node tests/test-preset-declare.mjs
+          # 0.5.29 改错+加法（**真机缺陷 D-⑦**：预设卡片红框「加载失败」）。
+          # 真机错误原文（活体实例 /api/agentPresets/list 读回）：
+          #   BROKEN  router-spec
+          #           persona (@deepseek-ai/dsh-persona): invalid config:
+          #             - $.prefix missing required value (at prefix)
+          # 真根因：装配落盘的 agent.cordis.yml 里 persona 行写的是 `config.text`，而框架
+          # @deepseek-ai/dsh-persona 的 Config 是 `prefix: z.string().required()`；框架 schema 读不到
+          # text → 装配抛错 → 注册表把它吞成 record.broken → 卡片永远顶着框架自己的
+          # brokenBadge「加载失败」。仓库**早就有** text→prefix 的迁移表，但它只在**框架升级**那一步跑，
+          # 而预设还会经「装预设型子包 / 源码装配 / 手工放文件」落盘，那些路完全不过升级步骤。
+          # 段内断言（全离线）：① persona 缺 prefix → 判红且点名行/包/键与框架会抛的原文
+          # ② file:/// 目标不存在 → 判红；②′ 相对引用在预设目录里不存在 → 判红（**写行之前**就拦，
+          # 不是"写完再读回判红"——那样已经写坏用户补丁）③ 行无 name / 空 composition → 判红
+          # ④ **不误杀**：真机三预设的形状（CRLF / 块标量 persona / 空 config / 非 persona 的 text）全放行
+          # ⑤ 迁移只动命中行、值一字不差、已有 prefix 绝不覆盖、非 persona 行的 text 不动
+          # ⑥ 版本判据：低于引入版本不迁；**版本未知按最新处理**（否则又写出坏行，D-⑦ 现场正是如此）
+          # ⑦ 接线：declarePresetRow 拒绝写坏行（ok:false + reason + detail + 补丁零字节改动）；
+          #    真机形状写成且行里是 prefix、file: URL 改写正确、读回核实 6 项全过、二次声明幂等
+          node tests/test-preset-rows.mjs
 
       # 真装真卸冒烟：在 CI 的 Linux 宿主上跑（临时 DSH_HOME，不碰真实目录）。
       # 为什么单独一步且**不带** DSH_TEST_SKIP_NETWORK：环境相关测试"没 profile 就整体 SKIP"，
