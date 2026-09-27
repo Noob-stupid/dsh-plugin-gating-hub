@@ -74,7 +74,10 @@ const sourceDeps = { sizeDeps: { probe: async () => ({ state: 'known', sizeKb: 1
 
 const ports = {
   baseUrl: pathToFileURL(join(PROFILE, 'cordis.yml')).href,
-  loader: { entries: () => [] },
+  // 必须喂一个 cordis:include 条目：否则 findPatchPath 兜底到 <DSH_HOME>/profiles/web/cordis.patch.yml。
+  // 本文件里 DSH_HOME=HOME 且 PROFILE=HOME/profiles/web，恰好同路；显式写出来，免得将来改了目录结构
+  // 就让"补丁行没被写"的断言落在一个**根本没被写过**的文件上（假绿）。
+  loader: { entries: () => [{ id: 'include', options: { name: 'cordis:include', group: true, config: { path: pathToFileURL(join(PROFILE, 'cordis.yml')).href } } }] },
   get: () => undefined,
 }
 const REPO = 'probe-org/routing-suite'

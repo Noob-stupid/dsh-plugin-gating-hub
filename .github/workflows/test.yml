@@ -114,6 +114,13 @@ jobs:
           # 绝不把原本可用的预设写坏）；备份路径唯一（同一毫秒两次装配不再互相覆盖）。
           # 全离线：真 git + 本机裸仓库 + 真 runInstallJob / runSuggestedAction。
           node tests/test-preset-overwrite.mjs
+          # 0.5.26 改错（D-⑥，真机验证发现的**第三个缺陷**）：**预设随包分发** —— 包已经装下来了、
+          # 落地物里带着 agent.cordis.yml（真机 dsh-router-standard@0.3.0 的 release 资产就是这样：
+          # 没有 main/exports，只有 preset/）时，旧行为把它当普通插件装：预设一个字节都没进
+          # .agent-presets（用户拿不到东西），还给一个无入口的模块写了补丁行（2026-09-06 崩溃事故同族）。
+          # 段内断言：三种包体形状的预设识别；装配落盘 + job 收口（只补不覆盖时 sha 不变 + 下发覆盖动作）；
+          # runInstallJob 端到端**不写补丁行/不声明依赖**；**反例**（普通插件照旧写补丁行）。
+          node tests/test-preset-in-package.mjs
 
       # 真装真卸冒烟：在 CI 的 Linux 宿主上跑（临时 DSH_HOME，不碰真实目录）。
       # 为什么单独一步且**不带** DSH_TEST_SKIP_NETWORK：环境相关测试"没 profile 就整体 SKIP"，
