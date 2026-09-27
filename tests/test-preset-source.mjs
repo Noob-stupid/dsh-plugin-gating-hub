@@ -81,7 +81,7 @@ mkdirSync(join(HOME, 'plugin-console'), { recursive: true })
   writeFileSync(join(src, 'preset.yml'), 'name: Router Standard\n', 'utf8')
   writeFileSync(join(src, 'router-core.mjs'), 'export const v = 2\n', 'utf8')
 
-  const r1 = assemblePreset(src, 'router-standard', { presetsRoot })
+  const r1 = await assemblePreset(src, 'router-standard', { presetsRoot })
   const dest = join(presetsRoot, 'router-standard')
   check('② 新装配：目录 + agent.cordis.yml 落盘', r1.ok === true && existsSync(join(dest, 'agent.cordis.yml')), JSON.stringify({ ok: r1.ok, dest: r1.dest }))
   check('② 新装配：字节与源一致（16538 B 那类断言的前提）',
@@ -97,7 +97,7 @@ mkdirSync(join(HOME, 'plugin-console'), { recursive: true })
   writeFileSync(join(dest, 'user-only.mjs'), 'export const keep = true\n', 'utf8')   // 用户独有，必须保留
   const userHashBefore = createHash('sha256').update(readFileSync(join(dest, 'router-core.mjs'))).digest('hex')
   const userConfigHashBefore = createHash('sha256').update(readFileSync(join(dest, 'agent.cordis.yml'))).digest('hex')
-  const r2 = assemblePreset(src, 'router-standard', { presetsRoot, now: () => 1234567890 })
+  const r2 = await assemblePreset(src, 'router-standard', { presetsRoot, now: () => 1234567890 })
   const userHashAfter = createHash('sha256').update(readFileSync(join(dest, 'router-core.mjs'))).digest('hex')
   const userConfigHashAfter = createHash('sha256').update(readFileSync(join(dest, 'agent.cordis.yml'))).digest('hex')
   check('★★② 默认语义：同名文件内容不同 → **不覆盖**（用户原文件 sha256 一字不变）',
@@ -117,9 +117,9 @@ mkdirSync(join(HOME, 'plugin-console'), { recursive: true })
     `identical=${JSON.stringify(r2.identical)} skipped=${JSON.stringify(r2.skipped)}`)
   check('★② 默认语义：用户独有文件仍在（不是 rm -rf 重建）', existsSync(join(dest, 'user-only.mjs')))
   check('★② 默认语义：**只补缺失文件**这件事真的发生（源里新增的文件会补进来）',
-    (() => {
+    (async () => {
       writeFileSync(join(src, 'new-file.mjs'), 'export const fresh = true\n', 'utf8')
-      const r = assemblePreset(src, 'router-standard', { presetsRoot, now: () => 1234567890 })
+      const r = await assemblePreset(src, 'router-standard', { presetsRoot, now: () => 1234567890 })
       return r.added.includes('new-file.mjs') && existsSync(join(dest, 'new-file.mjs'))
     })())
 
@@ -127,7 +127,7 @@ mkdirSync(join(HOME, 'plugin-console'), { recursive: true })
   // 注意：默认模式那一轮把仓库里的 v=2 留在了原地，所以这里先把源改成别的值，
   // 覆盖才有"同名不同内容"可言（否则会走 identical 分支，覆盖计数为 0）。
   writeFileSync(join(src, 'router-core.mjs'), 'export const v = 99\n', 'utf8')
-  const r4 = assemblePreset(src, 'router-standard', { presetsRoot, now: () => 1234567890, overwrite: true })
+  const r4 = await assemblePreset(src, 'router-standard', { presetsRoot, now: () => 1234567890, overwrite: true })
   check('★★② 显式覆盖：这次才**先整目录备份**（backup 非空且目录真的存在）',
     typeof r4.backup === 'string' && existsSync(r4.backup), String(r4.backup))
   check('★★② 显式覆盖：备份里是**用户原来的**内容（v=1），不是被覆盖后的',
@@ -142,7 +142,7 @@ mkdirSync(join(HOME, 'plugin-console'), { recursive: true })
     r4.verified !== null && r4.verified.ok === true, JSON.stringify(r4.verified))
   // 复原成仓库版本，后面的幂等断言与 F3/F4 都以它为基准
   writeFileSync(join(src, 'router-core.mjs'), 'export const v = 2\n', 'utf8')
-  const r4b = assemblePreset(src, 'router-standard', { presetsRoot, now: () => 1234567890, overwrite: true })
+  const r4b = await assemblePreset(src, 'router-standard', { presetsRoot, now: () => 1234567890, overwrite: true })
   check('★② 显式覆盖：覆盖后把仓库版本写回，第二次覆盖把 v=99 换回 v=2（幂等重装可用）',
     readFileSync(join(dest, 'router-core.mjs'), 'utf8') === 'export const v = 2\n' && r4b.overwritten.includes('router-core.mjs'), r4b.note)
   check('★② 显式覆盖：模式如实回报（mode=overwrite，面板据此区分两种语义）',
@@ -155,9 +155,9 @@ mkdirSync(join(HOME, 'plugin-console'), { recursive: true })
   // 源必须先对齐成"仓库版 v=2"，覆盖才会真的发生（否则走 identical 分支）。
   writeFileSync(join(src, 'router-core.mjs'), 'export const v = 2\n', 'utf8')
   writeFileSync(join(dest, 'router-core.mjs'), 'export const v = 77\n', 'utf8')
-  const b1 = assemblePreset(src, 'router-standard', { presetsRoot, now: () => 555000, overwrite: true })
+  const b1 = await assemblePreset(src, 'router-standard', { presetsRoot, now: () => 555000, overwrite: true })
   writeFileSync(join(dest, 'router-core.mjs'), 'export const v = 88\n', 'utf8')
-  const b2 = assemblePreset(src, 'router-standard', { presetsRoot, now: () => 555000, overwrite: true })  // 同一时间值
+  const b2 = await assemblePreset(src, 'router-standard', { presetsRoot, now: () => 555000, overwrite: true })  // 同一时间值
   check('★★② F4：同一毫秒的两次装配 → 备份路径**不同**（不再互相覆盖）',
     typeof b1.backup === 'string' && typeof b2.backup === 'string' && b1.backup !== b2.backup, `${b1.backup} vs ${b2.backup}`)
   check('★★② F4：两个备份**各自完整**（第一个存的是 v=77、第二个存的是 v=88）',
@@ -171,7 +171,7 @@ mkdirSync(join(HOME, 'plugin-console'), { recursive: true })
   writeFileSync(join(badSrc, 'preset.yml'), 'name: Broken\n', 'utf8')
   const goodConfig = readFileSync(join(dest, 'agent.cordis.yml'))
   const goodConfigHash = createHash('sha256').update(goodConfig).digest('hex')
-  const rBad = assemblePreset(badSrc, 'router-standard', { presetsRoot, now: () => 1, overwrite: true })
+  const rBad = await assemblePreset(badSrc, 'router-standard', { presetsRoot, now: () => 1, overwrite: true })
   const afterBadHash = createHash('sha256').update(readFileSync(join(dest, 'agent.cordis.yml'))).digest('hex')
   check('★★② F3：非法（空）的 agent.cordis.yml → **跳过未写入**，原文件 sha256 不变',
     rBad.skippedInvalid.length === 1 && rBad.skippedInvalid[0].rel === 'agent.cordis.yml' && afterBadHash === goodConfigHash,
@@ -189,14 +189,14 @@ mkdirSync(join(HOME, 'plugin-console'), { recursive: true })
     mkdirSync(s, { recursive: true })
     writeFileSync(join(s, 'agent.cordis.yml'), text, 'utf8')
     writeFileSync(join(s, 'preset.yml'), 'name: Broken\n', 'utf8')   // 非配置类文件：不该被连坐
-    const r = assemblePreset(s, 'never-written', { presetsRoot })
+    const r = await assemblePreset(s, 'never-written', { presetsRoot })
     check(`★② F3：${label} 的 agent.cordis.yml → 拒绝装配（目录都不建，非配置类文件也不写）`,
       r.ok === false && r.skippedInvalid.length === 1 && !existsSync(join(presetsRoot, 'never-written')), String(r.error).slice(0, 120))
   }
 
-  const bad = assemblePreset(src, '../escape', { presetsRoot })
+  const bad = await assemblePreset(src, '../escape', { presetsRoot })
   check('★② 目录名带路径分隔符 → 明确拒绝（不越出 .agent-presets）', bad.ok === false && String(bad.error).includes('不合法'), JSON.stringify(bad))
-  const empty = assemblePreset(join(HOME, 'no-such-dir'), 'x', { presetsRoot })
+  const empty = await assemblePreset(join(HOME, 'no-such-dir'), 'x', { presetsRoot })
   check('② 源目录不存在/为空 → 明确报错', empty.ok === false && String(empty.error).includes('没有任何文件'))
 
   // 幂等：把源对齐成目标当前的样子 → 一个文件都不写，且**不算失败**
@@ -204,7 +204,7 @@ mkdirSync(join(HOME, 'plugin-console'), { recursive: true })
   writeFileSync(join(src, 'preset.yml'), readFileSync(join(dest, 'preset.yml')))
   writeFileSync(join(src, 'router-core.mjs'), readFileSync(join(dest, 'router-core.mjs')))
   writeFileSync(join(src, 'new-file.mjs'), readFileSync(join(dest, 'new-file.mjs')))
-  const r3 = assemblePreset(src, 'router-standard', { presetsRoot, now: () => 999 })
+  const r3 = await assemblePreset(src, 'router-standard', { presetsRoot, now: () => 999 })
   check('★② 幂等：内容全一致 → added/skipped/overwritten 为空、identical=4、ok=true（不是"失败"）',
     r3.ok === true && r3.skipped.length === 0 && r3.added.length === 0 && r3.identical.length === 4,
     JSON.stringify({ ok: r3.ok, a: r3.added, s: r3.skipped, i: r3.identical.length, err: r3.error }))
@@ -378,8 +378,12 @@ const SPARSE_DIR = join(HOME, 'sparse-1')
     `bytes=${readFileSync(join(dest, 'agent.cordis.yml')).length}（源 LF 版 ${Buffer.byteLength(AGENT_YML, 'utf8')} B；git checkout 在 Windows 上按 autocrlf 落 CRLF）`)
   check('★⑤ 第二个预设 router-spec 也装配了（同一子包目录里的多个预设一起装）',
     existsSync(join(presetsRoot, 'router-spec', 'agent.cordis.yml')))
-  check('★⑤ 面板短句：note 里含「新建会话时选择」与落盘根目录',
-    okRun.note.includes('新建会话时选择') && okRun.note.includes(presetsRoot), okRun.note)
+  // 0.5.28 改错：框架 0.1.7-rc.x 起预设改为**声明行**，旧文案"新建会话时选择"对没写成声明行的预设是谎话。
+  // 本次没传 patchPath（离线单测没有目标 profile）→ note 必须**如实**说"文件已就位，但当前框架版本需要
+  // 声明行才能在界面上显示"并给出出路；绝不能宣称"新建会话时选择"。
+  check('★⑤ 面板短句：note 含落盘根目录，且**如实**说明"需要声明行"（不再谎称"新建会话时选择"）',
+    okRun.note.includes(presetsRoot) && /需要声明行/u.test(okRun.note) && /文件已就位/u.test(okRun.note)
+    && !/新建会话时选择/u.test(okRun.note), okRun.note)
   check('★⑤ note 里说明用了稀疏取源码（用户能核实"只取了那一个子包目录"）',
     okRun.note.includes('稀疏取源码'), okRun.note)
   check('★⑤ job 上留下结构化结果（name/dest/ok/bytes/backup/subdir/sparse）',

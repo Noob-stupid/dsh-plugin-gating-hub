@@ -17,8 +17,14 @@ process.env.DSH_HOME = HOME
 process.env.DSH_TEST_SKIP_NETWORK = '1'
 rmSync(HOME, { recursive: true, force: true })
 
+// ★ 2026-09-27 改错（真 bug 的回归防线）：这里原本写成 `join(HOME, 'agent-presets', …)` —— **少一个点**，
+// 与 routes/framework-preflight.js 里同一个错字配套，于是"预设里的 V3 生产方"**从来没有被扫到过**，
+// 下面那几条断言一直在对一个空目录做结论（假绿）。框架的目录是 `<DSH_HOME>/.agent-presets`。
+//
+// `ctxForRoots`：只喂 baseUrl、**不喂任何 loader 条目** → 扫描面里只有预设那一条，正好单独验它。
+const ctxForRoots = { baseUrl: pathToFileURL(join(HOME, 'profiles', 'web', 'cordis.yml')).href, loader: { entries: () => [] } }
 const profileDir = join(HOME, 'profiles', 'web')
-const presetDir = join(HOME, 'agent-presets', 'router-react')
+const presetDir = join(HOME, '.agent-presets', 'router-react')
 mkdirSync(presetDir, { recursive: true })
 mkdirSync(join(profileDir, 'node_modules', '@fake', 'legacy-plugin'), { recursive: true })
 mkdirSync(join(profileDir, 'node_modules', '@fake', 'clean-plugin'), { recursive: true })
@@ -87,6 +93,9 @@ const {
   applyFormatPatch,
   probeSchemasteryVolatile,
 } = await import('../lib/server/domain/format-scan.js')
+// 0.5.28 改错：预检扫描面（`<DSH_HOME>/.agent-presets`）的**唯一定义处**在路由模块里，
+// 这里直接 import 它而不是在测试里重写一遍路径 —— 否则测试绿、线上仍然扫错目录（这次的教训）。
+const { preflightRoots, userPresetsRoot } = await import('../lib/server/routes/framework-preflight.js')
 
 let failed = 0
 const check = (label, cond, extra) => {
@@ -237,7 +246,7 @@ check('探针缺省（未注入）时保守报告', scanProducerText({ file: '/x
 
 // ── ③ 扫描 + 补丁（夹具落盘）─────────────────────────────────────────────────
 const roots = [
-  { root: join(HOME, 'agent-presets'), kind: 'preset' },
+  { root: join(HOME, '.agent-presets'), kind: 'preset' },
   { root: join(profileDir, 'node_modules', '@fake', 'legacy-plugin'), kind: 'plugin', moduleName: '@fake/legacy-plugin' },
   { root: join(profileDir, 'node_modules', '@fake', 'clean-plugin'), kind: 'plugin', moduleName: '@fake/clean-plugin' },
 ]
@@ -337,7 +346,20 @@ check('预检路由可达且返回报告', pre.status === 200 && pre.json.ok ===
 check('框架包命中旧形状只算提示、不算 blocker', pre.json.scan.blockers === 2 && pre.json.scan.warnings >= 1, `blockers=${pre.json.scan.blockers} warnings=${pre.json.scan.warnings}`)
 check('离线模式如实说明契约未知（不假装成功）', pre.json.contract === null && /跳过网络/u.test(String(pre.json.contractError)), String(pre.json.contractError))
 check('离线模式用内置规则仍能扫出 blocker', pre.json.scan.blockers >= 2, `blockers=${pre.json.scan.blockers}`)
+check('★ 扫描面 = <DSH_HOME>/.agent-presets（**带点**；旧代码少一个点 → 静默 0 文件、升级前"0 blocker"是假绿）',
+  userPresetsRoot() === join(HOME, '.agent-presets') && preflightRoots(ctxForRoots, profileDir).find((r) => r.kind === 'preset')?.root === join(HOME, '.agent-presets'),
+  `${userPresetsRoot()} / ${preflightRoots(ctxForRoots, profileDir).find((r) => r.kind === 'preset')?.root}`)
+check('★★ 预设扫描面**真的能扫到文件**（不是"目录不存在 → 0 个文件"的静默绿）',
+  existsSync(join(HOME, '.agent-presets', 'router-react', 'router-bootstrap.mjs'))
+  && preflightRoots(ctxForRoots, profileDir)
+    .filter((r) => r.kind === 'preset')
+    .flatMap((r) => collectProducerTargets([r]))
+    .length > 0,
+  `presetRoots=${JSON.stringify(preflightRoots(ctxForRoots, profileDir).filter((r) => r.kind === 'preset'))}`)
 check('报告带扫描面（预设 + 插件包）', Array.isArray(pre.json.roots) && pre.json.roots.some((r) => r.kind === 'preset') && pre.json.roots.some((r) => r.kind === 'plugin'))
+check('★ 报告里的预设扫描面就是 <DSH_HOME>/.agent-presets（把错字钉死在契约上）',
+  pre.json.roots.filter((r) => r.kind === 'preset').every((r) => r.root === join(HOME, '.agent-presets')),
+  JSON.stringify(pre.json.roots.filter((r) => r.kind === 'preset').map((r) => r.root)))
 check('框架作用域包（@deepseek-ai/*）即使物理在 profile 内也判为框架包', pre.json.roots.some((r) => r.kind === 'framework' && r.moduleName === '@deepseek-ai/dsh-fake-schedule'), JSON.stringify(pre.json.roots.map((r) => `${r.kind}:${r.moduleName ?? '-'}`)))
 
 const plan = await call('POST', '/plugin-console/framework-preflight-patch', { targetVersion: '0.1.7-rc.1', mode: 'plan' })

@@ -2,6 +2,116 @@
 
 All notable changes to dsh-plugin-hub.
 
+## v0.5.28 — 预设机制迁移：装配预设时同时写**声明行**（改错 + 加法，2026-09-27）
+
+> ### ⚠️ 框架 0.1.7-rc.x 起，预设**不再靠目录发现**，改为 profile 补丁里的**声明行**
+>
+> 这是本版要跟上的**机制迁移**，只读诊断结论如下（都可在本机复现）：
+>
+> - **0.1.5 及更早**：`@deepseek-ai/dsh-agent-presets` 扫描 `$DSH_HOME/.agent-presets/` 目录发现预设
+>   （该包常量 `USER_PRESET_DIR = '.agent-presets'`，逐项用 `PRESET_ID = /^[a-z0-9][a-z0-9-]*$/` 校验）。
+> - **0.1.7-rc.2 起**：该包**不在依赖图、也没被挂载**（`node_modules/@deepseek-ai/` 下已无实体）；
+>   `dsh-agent-preset-registry` 的 `definitions` 是**内存 Map、没有任何 fs 调用** —— **目录发现被彻底移除**。
+> - **现行载体**：profile `cordis.patch.yml` 里的一行
+>   ```yaml
+>   - insert:
+>       - id: preset-<x>
+>         name: '@deepseek-ai/dsh-agent-preset'
+>         config:
+>           id: <预设 id>          # 必填
+>           name: <显示名>          # 给了 name 才会出现在「自定义」分组
+>           description: <说明>
+>           order: <数字>
+>           plugins: [ ... ]        # 就是旧 agent.cordis.yml 的内容
+>   ```
+>   schema 见 `@deepseek-ai/dsh-agent-preset@0.1.7-rc.2/lib/index.js:13-25`（`id`/`plugins` 必填）。
+> - **相对路径基准变了**：声明行的 `./x.mjs` 相对**profile 目录**（不是预设目录）→ 必须改写成 `file:///<绝对路径>`。
+>
+> **后果**（本版要修的真 bug）：本插件 0.5.27 及以前只把预设写进 `~/.dsh/.agent-presets/`，
+> 然后提示"**新建会话时选择**" —— 在新框架上这是**一句谎话**：
+> 没有声明行的预设**不会出现在选择器里**（官方桌面端「自定义」分组为空正是这个原因），
+> 而老会话 `resume` 还会直接失败：`RemoteError: Unknown agent preset: <id>`。
+
+### 1. 加：装配预设时**同时生成声明行**（产品缺口修复）
+
+- **新模块 `lib/server/domain/preset-declare.js`**：一句话职责 —— **幂等地**把 `preset-<id>` 声明行写进目标
+  profile 的补丁文件。行为逐条：
+  - `config.id/name/description/order` 取自预设目录（`preset.yml` → `name/description/order`，
+    **缺省有合理默认**：name 回退目录名、description 不回退（可选字段，不编）、order 回退 `1000`（不抢内置预设位置））；
+    `plugins` 取自 `agent.cordis.yml`；
+  - `plugins` 里所有**确实存在于预设目录**的相对文件（`./x.mjs`）→ `file:///` + 绝对路径
+    （`pathToFileURL`，中文用户名按 URL 规则百分号编码，例：`file:///C:/Users/%E8%8A%B1%E7%81%AB/…`）；
+    预设目录里**不存在**的同名文件**原样保留** —— 那种相对引用在 profile 下本来就不通，没有依据替它猜路径，不猜；
+  - 行 id 固定 `preset-<id>`（与官方内置 `preset-standard` / `preset-minimal` / `preset-ptc` / `preset-cordis` 同一命名法）；
+  - **同 id 行已存在 → 原地更新，绝不重复插入**（重复会让注册表 `Duplicate agent preset: <id>` 直接抛）；
+    顺手清掉历史遗留的重复同 id 行；
+  - 内容逐字节一致 → **一个字节都不写、也不建备份**（真正的幂等）；
+  - 真写盘时先备份 `.bak-preset-<时间戳>`（同毫秒自增后缀，绝不互相覆盖），**再写**；
+  - **写后读回核实**：真解析回来逐字段比对（行在、模块名对、`config.id`/`name`/`description`/`order` 一致、
+    `plugins` 与磁盘 `agent.cordis.yml` 逐行一致、无残留相对引用）；任一条不通过 → `ok:false + 原因`；
+  - 写入前清掉顶层 `[]` 占位符（issue #7 事故：`[]` 后面再跟条目是非法 YAML，`dsh` 启动直接崩）。
+- **接线（加法，安装路径全部自动带上这一步）**：
+  - `assemblePreset`（唯一的预设落盘实现）新增 `patchPath` / `profileDir` 两个**可选**入参：
+    给了就声明并进 `declaration` 字段；**都没给就一个字节都不写**，且 note **如实**说
+    "文件已就位，但当前框架版本需要声明行才能显示"（绝不宣称"新建会话时选择"）；
+  - `tryPresetSourceChannel`（批次 D-③ 源码通道）、`installPresetsCarriedByPackage`（批次 D-⑥ 随包分发）、
+    `overwritePreset`（「覆盖该预设」显式动作）、`runSuiteInstallJob`（套装路径）四条路全部把目标 profile 传下去；
+  - `install-job.js` 的目标 profile 由 `findPatchPath(ports)` 推导（= `dirname(patch)`），
+    **绝不写死任何本机路径**；
+  - 结构字段随 `presetInstalled[].declaration` 一并下发（老客户端忽略，向后兼容）。
+- **文案改错**（这是本次最容易继续骗人的地方）：所有"新建会话时选择"改为**按实际落盘/声明结果生成**：
+  - 声明成功 → 「已声明为预设行 `preset-x`（写入 `<profile>/cordis.patch.yml`）；**重启实例后**在新会话可选」；
+  - 声明未写成 → 「**文件已就位，但当前框架版本（0.1.7-rc.x 起预设改为声明行）需要声明行才能在界面上显示** ——
+    本次声明未写成（<具体原因>）。出路：在目标 profile 的 `cordis.patch.yml` 里补一行 …」，并**不再说**"重启实例后即可选"
+    （那时还没写成，重启也不会出现它）；
+  - 覆盖到的位置：`preset-install.js`（`assemblePreset` 的 note + 新 `declarationClause`/`declarationClauseForReports`）、
+    `preset-source.js`（通道 note）、`preset-in-package.js`（`job.presetNote` + 结构化 summary）、
+    `suite.js`（`suiteNote` + 报告项）、`lib/client.js`（中英两套 i18n 短句）。
+- 测试：新增 `tests/test-preset-declare.mjs`（**77 断言**，进 CI 硬门槛、全离线）：行形状、相对引用改写
+  （含"预设目录里不存在 → 原样保留"与"已是绝对路径 → 一动不动"）、幂等、原地更新 + 备份、
+  重复行清理、`[]` 占位符清理、读回核实（真解析 + 篡改必须判红）、**七条失败路径**都必须如实报、
+  `assemblePreset` 接线（给 patchPath 就声明 / 不给就一个字节不写 / 声明抛异常不把装配带崩）。
+  另更新 7 套既有用例的旧文案断言（`test-preset-{source,overwrite,channel-wiring,in-package}`、
+  `test-{real-preset-e2e,suite-install}`），并给 `assemblePreset` 的调用点补 `await`
+  （装配现在是 async：写声明行要走串行写队列，忘了 `await` 会"明明写成了却报没写成"）。
+
+### 2. 改错：升级前契约预检的"用户预设扫描面"**少了一个点**（真 bug）
+
+- `lib/server/routes/framework-preflight.js` 原本是 `join(dshHome(), 'agent-presets')` —— **不带点**，
+  而框架的目录是 `<DSH_HOME>/.agent-presets`。于是预检的"用户预设扫描面"**一直指向一个不存在的目录**：
+  静默扫到 **0 个文件**，预设里的 V3 生产方**从来没被预检看见**（升级前"0 blocker"的结论因此是**假绿**）。
+- 改为单一推导点 `userPresetsRoot()`（`join(dshHome(), '.agent-presets')`）并导出；
+  同步修 `lib/server/domain/format-scan.js` 顶部同样写错的注释（`~/.dsh/agent-presets/**` → `~/.dsh/.agent-presets/**`）；
+  `lib/client.js` 的预检说明文案同步为 `.agent-presets`。
+- 测试：`tests/test-format-preflight.mjs` 的夹具目录从 `agent-presets` 改为 **`.agent-presets`**（原来那个错字
+  让"预设 2 处 blocker"之类的断言一直对一个**空目录**下结论），并补三条断言：
+  扫描面**等于** `<dshHome>/.agent-presets`、预设扫描面**真的能扫到文件**（不再静默 0 文件）、
+  路由报告里的 `roots` 也是同一个路径。
+
+### 3. 改错：两处"本机色彩"的文案通用化（纯文案）
+
+- `lib/server/domain/ai.js`：`用户名含中文（花火）` → `用户名/路径含非 ASCII 字符`（规则本来就是通用的：
+  路径里有非 ASCII 字符时各语言的 Rust/原生向量库会报 `UnicodeDecodeError`，与用户名具体是不是中文无关）。
+- `lib/server/routes/components.js`：报错示例 `D:\dsh\repos`（本机真实目录）→
+  `C:\repos 或 \\server\share\repos`，并说明"任意绝对路径均可"。
+
+### 测试与门槛
+
+- 全量本地套件：**65 套 / 全 exit 0**（新增 1 套、修改 8 套）。
+- `tests/test-architecture-guard.mjs` 绿：`lib/server/**` 单文件 ≤600 行、`lib/index.js` ≤142 行、
+  依赖方向、`domain` 层不出现 `ctx`、无自由变量、导入绑定只读、`ctx/ports` 属性访问白名单。
+- 新增 `tests/test-preset-declare.mjs` 进 `test.yml` **硬门槛**。
+
+### 未验证项（如实列出，不假装已验）
+
+- **框架侧"选择器里真的出现这三条预设"**：本版只做到"框架把它注册进了 loader 树"
+  （真机桌面端 `/plugin-console/state` 的 `entries` 里出现 `include:preset-router-*` 且 `fiberPhase=active`），
+  **没有**在真实 UI 里逐条点选、也没有跑一次带预设的会话（那需要新建会话 + 真实模型调用）。
+- **预设挂载后的运行期行为**（路由/注入是否按预期生效）：不在本次范围内，未验证。
+- **其他框架版本**（0.1.5-rc.2 及更早、0.1.7-rc.1）：只按 rc.2 的 schema 实现；更早版本走目录发现，
+  写声明行的效果**未实测**（预期是"多一行无害的声明"，但未验证）。
+- **非 Windows / 非中文用户名**：`file:///` 生成走 `pathToFileURL`（通用），但只在 Windows + 中文用户名下实测过。
+
 ## v0.5.27 — D-⑥ 预设随包分发不再被当成普通插件装（改错 + 加法，2026-09-27）
 
 > **与 v0.5.26 的关系（更正）**：D-⑥ 的修复**不在 0.5.26 的 npm 产物里**。npm 上 `0.5.26` 的产物由

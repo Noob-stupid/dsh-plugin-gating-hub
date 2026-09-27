@@ -106,8 +106,11 @@ const runPresetJob = async (id) => {
 
 // ── ① 首次装配：预设落到 .agent-presets，配置可解析（面板要能贴首行）──────────────────────────
 const first = await runPresetJob('ovw-1')
-check('① 首次装配成功（status=done，presetNote 含落盘路径与「新建会话时选择」）',
-  first.status === 'done' && String(first.presetNote ?? '').includes('新建会话时选择'), `status=${first.status}`)
+// 0.5.28 改错：note 必须按**实际声明结果**说（框架 0.1.7-rc.x 起没有声明行就选不到预设），
+// 旧文案"新建会话时选择"是谎话。本作业没有目标 profile 可写 → 必须如实说"需要声明行"。
+check('① 首次装配成功（status=done，presetNote **如实**说明"需要声明行"，不再谎称"新建会话时选择"）',
+  first.status === 'done' && /需要声明行/u.test(String(first.presetNote ?? ''))
+  && !/新建会话时选择/u.test(String(first.presetNote ?? '')), `status=${first.status} note=${String(first.presetNote).slice(0, 200)}`)
 check('① 预设落盘到 <DSH_HOME>/.agent-presets/router-standard/agent.cordis.yml',
   existsSync(join(DEST, 'agent.cordis.yml')) && existsSync(join(DEST, 'router-core.mjs')))
 check('① 落盘的 agent.cordis.yml **结构合法**（贴得出内容）',
@@ -209,7 +212,7 @@ check('★③ 显式动作：结果里逐条回报被覆盖的文件名（面板
   mkdirSync(badSrc, { recursive: true })
   writeFileSync(join(badSrc, 'agent.cordis.yml'), '', 'utf8')       // 空文件（复核现场的形态之一）
   const before = sha(join(DEST, 'agent.cordis.yml'))
-  const r = assemblePreset(badSrc, 'router-standard', { presetsRoot: PRESETS, overwrite: true, now: () => 42 })
+  const r = await assemblePreset(badSrc, 'router-standard', { presetsRoot: PRESETS, overwrite: true, now: () => 42 })
   check('★★⑤ F3：非法配置 → 拒绝装配，在用文件 sha256 不变',
     r.ok === false && sha(join(DEST, 'agent.cordis.yml')) === before, String(r.error).slice(0, 140))
   check('★⑤ F3：拒绝理由具体（点名文件 + 说清问题），不是笼统失败',
@@ -223,12 +226,12 @@ check('★③ 显式动作：结果里逐条回报被覆盖的文件名（面板
   const src = join(HOME, 'f4-src')
   mkdirSync(src, { recursive: true })
   writeFileSync(join(src, 'agent.cordis.yml'), '- id: repo\n  name: b\n', 'utf8')
-  const b1 = assemblePreset(src, 'f4-probe', { presetsRoot: PRESETS, now: () => 777 })
+  const b1 = await assemblePreset(src, 'f4-probe', { presetsRoot: PRESETS, now: () => 777 })
   check('⑥ F4 前置：首次装配不建备份（本来就没有同名预设）', b1.ok === true && b1.backup === null)
   writeFileSync(join(PRESETS, 'f4-probe', 'agent.cordis.yml'), '- id: user1\n  name: b\n', 'utf8')
-  const b2 = assemblePreset(src, 'f4-probe', { presetsRoot: PRESETS, now: () => 777, overwrite: true })
+  const b2 = await assemblePreset(src, 'f4-probe', { presetsRoot: PRESETS, now: () => 777, overwrite: true })
   writeFileSync(join(PRESETS, 'f4-probe', 'agent.cordis.yml'), '- id: user2\n  name: b\n', 'utf8')
-  const b3 = assemblePreset(src, 'f4-probe', { presetsRoot: PRESETS, now: () => 777, overwrite: true })
+  const b3 = await assemblePreset(src, 'f4-probe', { presetsRoot: PRESETS, now: () => 777, overwrite: true })
   check('★⑥ F4：同一时间值的两次覆盖 → 备份路径**不同**（不再互相覆盖）',
     typeof b2.backup === 'string' && typeof b3.backup === 'string' && b2.backup !== b3.backup, `${b2.backup} vs ${b3.backup}`)
   check('★★⑥ F4：两个备份**各自完整**（第一个存 user1、第二个存 user2，都没被对方盖掉）',

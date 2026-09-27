@@ -121,6 +121,21 @@ jobs:
           # 段内断言：三种包体形状的预设识别；装配落盘 + job 收口（只补不覆盖时 sha 不变 + 下发覆盖动作）；
           # runInstallJob 端到端**不写补丁行/不声明依赖**；**反例**（普通插件照旧写补丁行）。
           node tests/test-preset-in-package.mjs
+          # 0.5.28 改错+加法（2026-09-27）：**预设机制迁移** —— 框架 0.1.7-rc.x 起预设不再靠目录发现
+          # （@deepseek-ai/dsh-agent-presets 不在依赖图、注册表 definitions 是内存 Map、无任何 fs 调用），
+          # 载体变成 profile `cordis.patch.yml` 里的 `preset-<id>` **声明行**（name: '@deepseek-ai/dsh-agent-preset'）。
+          # 旧行为只往 .agent-presets 落文件 → 用户在选择器里**看不到预设**（官方桌面端「自定义」为空就是这么来的）、
+          # 老会话 resume 报 Unknown agent preset。本套把新模块 preset-declare.js 的判据与落盘全部钉死（全离线）：
+          # ① 行形状（id 前缀/模块名/config 五字段/缩进 10 空格）② 相对 ./x.mjs → file:/// 绝对 URL
+          # （基准是 **profile 目录**而非预设目录；中文用户名百分号编码）③ 预设目录里不存在同名文件 → 原样保留不猜
+          # ④ 幂等（同 id 同内容 → 一个字节都不写、不建备份）⑤ 更新（原地替换 + .bak-preset-<ts> 备份）
+          # ⑥ 已是绝对路径/裸包名 → 一动不动；重复旧行 → 清掉多余的（否则注册表 Duplicate agent preset 直接抛）
+          # ⑦ 顶层 [] 占位符被清（issue #7：[] 后跟条目是非法 YAML，启动直接崩）
+          # ⑧ 读回核实逐字段比对（真解析回来）+ 被篡改/不一致/找不到行都必须判红
+          # ⑨ 失败路径如实报（没给 profile / profile 目录不存在 / 预设目录不存在 / id 非法 / YAML 非法 / 写盘失败），
+          #   文案**绝不**再说"新建会话时选择"，改说"文件已就位，但当前框架版本需要声明行"并给出出路
+          # ⑩ assemblePreset 接线（给 patchPath 就声明、不给就一个字节都不写）+ 声明抛异常不把装配带崩
+          node tests/test-preset-declare.mjs
 
       # 真装真卸冒烟：在 CI 的 Linux 宿主上跑（临时 DSH_HOME，不碰真实目录）。
       # 为什么单独一步且**不带** DSH_TEST_SKIP_NETWORK：环境相关测试"没 profile 就整体 SKIP"，

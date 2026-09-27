@@ -126,8 +126,11 @@ const dest = join(HOME, 'src')
   check('★③ 同一子包里的另外两个预设也装了（上游 preset/ 下有三个）',
     existsSync(join(presetsRoot, 'router-spec', 'agent.cordis.yml')) && existsSync(join(presetsRoot, 'router-react', 'agent.cordis.yml')),
     JSON.stringify(readdirSync(presetsRoot)))
-  check('★③ 面板文案：落盘路径 + 「新建会话时选择」+ 稀疏取源码',
-    String(res.note).includes(presetsRoot) && /新建会话时选择/u.test(String(res.note)) && /稀疏取源码/u.test(String(res.note)),
+  // 0.5.28 改错：框架 0.1.7-rc.x 起预设改为**声明行**，旧文案"新建会话时选择"是谎话；
+  // 这条真网络端到端没传 patchPath（没有目标 profile）→ note 必须如实说"需要声明行"。
+  check('★③ 面板文案：落盘路径 + 「需要声明行」（如实，不谎称"新建会话时选择"）+ 稀疏取源码',
+    String(res.note).includes(presetsRoot) && /需要声明行/u.test(String(res.note))
+    && !/新建会话时选择/u.test(String(res.note)) && /稀疏取源码/u.test(String(res.note)),
     String(res.note).slice(0, 300))
   check('★③ job.presetSource 如实记录 sparse/subdir（可核验"用的是稀疏"）',
     job.presetSource?.sparse === true && job.presetSource?.subdir === 'preset' && job.presetSource?.downgraded === false,

@@ -243,8 +243,11 @@ if (Array.isArray(job?.presetInstalled) && job.presetInstalled.some((p) => p.ok 
   const marker = `${pdir}/agent.cordis.yml`
   check('★ [真机] 预设型子包装成：<临时 home>/.agent-presets/router-standard/agent.cordis.yml 真的落盘',
     existsSync(marker), `${marker} bytes=${existsSync(marker) ? readFileSync(marker).length : 0}`)
-  check('★ [真机] 面板文案含「新建会话时选择」与落盘路径',
-    /新建会话时选择/u.test(String(job.presetNote ?? '')) && String(job.presetNote).includes('.agent-presets'),
+  // 0.5.28 改错：框架 0.1.7-rc.x 起预设改为**声明行**。本套跑在临时 home 上、没有可写的目标 profile，
+  // 所以 note 必须**如实**说"文件已就位，但当前框架版本需要声明行才能显示"（旧文案是谎话）。
+  check('★ [真机] 面板文案含落盘路径，且**如实**说明"需要声明行"（不再谎称"新建会话时选择"）',
+    String(job.presetNote).includes('.agent-presets') && /需要声明行/u.test(String(job.presetNote ?? ''))
+    && !/新建会话时选择/u.test(String(job.presetNote ?? '')),
     String(job.presetNote ?? '').slice(0, 240))
   check('★ [真机] **绝不写补丁行 / 绝不声明依赖**（预设不是 npm 包；写了会让补丁行指向不存在的模块 → 启动崩溃）',
     !readFileSync(`${home}/profiles/web/cordis.patch.yml`, 'utf8').includes('dsh-router-standard')

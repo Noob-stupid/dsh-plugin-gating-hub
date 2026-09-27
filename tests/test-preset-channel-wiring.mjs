@@ -104,8 +104,8 @@ const PRESET_NAME = 'dsh-router-standard'
     expand: async () => 0,
   })
   check('① 预设通道成功 → 返回 installedName（外层据此收口）', res.installedName === PRESET_NAME, JSON.stringify(res))
-  check('① job.presetDone=true 且 presetNote 含「新建会话时选择」',
-    job.presetDone === true && /新建会话时选择/u.test(String(job.presetNote)), String(job.presetNote))
+  check('① job.presetDone=true 且 presetNote 按**声明结果**如实说话（不再谎称"新建会话时选择"）',
+    job.presetDone === true && /需要声明行/u.test(String(job.presetNote)) && !/新建会话时选择/u.test(String(job.presetNote)), String(job.presetNote))
   check('★① 顺序：竞速 → pnpm → curl → release 都在；且**预设成功时 git 通道一次都没被调**',
     ['race', 'curl', 'release'].every((c) => calls.includes(c)) && calls.some((c) => c.startsWith('pnpm:')) && !calls.includes('git'),
     calls.join(' → '))
@@ -187,8 +187,8 @@ const PRESET_NAME = 'dsh-router-standard'
   check('★③ 预设真的落盘到 <presetsRoot>/router-standard/agent.cordis.yml（字节数可贴）',
     existsSync(join(presetsRoot, 'router-standard', 'agent.cordis.yml')),
     `bytes=${existsSync(join(presetsRoot, 'router-standard', 'agent.cordis.yml')) ? readFileSync(join(presetsRoot, 'router-standard', 'agent.cordis.yml')).length : 0}`)
-  check('★③ job.presetNote 说清落盘根目录 + 「新建会话时选择」+ 稀疏取源码',
-    String(job.presetNote).includes(presetsRoot) && /新建会话时选择/u.test(String(job.presetNote)) && /稀疏取源码/u.test(String(job.presetNote)),
+  check('★③ job.presetNote 说清落盘根目录 + 「需要声明行」+ 稀疏取源码',
+    String(job.presetNote).includes(presetsRoot) && /需要声明行/u.test(String(job.presetNote)) && /稀疏取源码/u.test(String(job.presetNote)),
     String(job.presetNote).slice(0, 300))
   check('③ job.packageName 就是那个候选（面板显示的是真正装上的那一件）', job.packageName === PRESET_NAME, String(job.packageName))
   check('③ 面板可读的结构化结果：presetInstalled[0] 有 name/dest/bytes/subdir/sparse',
@@ -347,15 +347,23 @@ const PRESET_NAME = 'dsh-router-standard'
     installJobView({ id: 'v2' }).presetNote === null && installJobView({ id: 'v2' }).presetInstalled === null)
 
   const clientSrc = readFileSync('lib/client.js', 'utf8')
-  check('④ 客户端有「预设：新建会话时选择」短句，且中英两套都在',
-    /presetDot:\s*"。预设：新建会话时选择"/u.test(clientSrc) && /presetDot:\s*"\. Preset: pick it when starting a new session"/u.test(clientSrc))
+  // 0.5.28 改错：客户端的可见性短句不再替服务端断言"选了就能用"（框架 0.1.7-rc.x 起没有声明行就选不到）；
+  // 它现在指向服务端下发的 presetNote，中英两套都必须说"需要声明行"。
+  // 注意：只断言**这两行 i18n 文案本身**（整文件里还留着"旧文案是谎话"的说明性注释，笼统取反会误杀）。
+  const presetDotLines = clientSrc.split('\n').filter((l) => /presetDot:\s*"/u.test(l))
+  check('④ 客户端短句中英两套都在，且都说"需要声明行才会出现在选择器里"（旧谎话已清）',
+    presetDotLines.length === 2
+    && presetDotLines.some((l) => l.includes('。预设：见上方说明（需要声明行才会出现在选择器里）'))
+    && presetDotLines.some((l) => l.includes('. Preset: see the note above (a declaration row is required for it to appear)'))
+    && presetDotLines.every((l) => !l.includes('新建会话时选择') && !l.includes('pick it when starting a new session')),
+    presetDotLines.join('\n'))
   check('④ 客户端有「预设已装配」标题（中英两套）',
     clientSrc.includes('presetInstalledMsg: "预设已装配"') && clientSrc.includes('presetInstalledMsg: "Presets installed"'))
-  check('★④ 成功路径按 presetNote 分支渲染（含落盘路径 + 新建会话提示）',
+  check('★④ 成功路径按 presetNote 分支渲染（服务端说什么就显示什么）',
     /data\.presetNote === "string"[\s\S]{0,400}t\("presetInstalledMsg"\)[\s\S]{0,200}t\("presetDot"\)/u.test(clientSrc))
   check('★④ 失败路径把服务端 channelNotes 逐条展示（不再只显示笼统"失败"）',
     /view\.status === "failed" && channelNotes\.length > 0/u.test(clientSrc) && clientSrc.includes('diagChannelNotes'))
-  check('★④ 预设装配成功时不再自动刷新页面（否则「落盘路径 + 新建会话时选择」会被冲掉）',
+  check('★④ 预设装配成功时不再自动刷新页面（否则「落盘路径 + 声明行提示」会被冲掉）',
     /typeof data\.presetNote === "string" && data\.presetNote !== ""\)\)\s*\{/u.test(clientSrc))
 
   // 失败不笼统：预设通道失败时 lastError 必须是**具体原因**

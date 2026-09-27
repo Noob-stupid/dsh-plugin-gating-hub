@@ -96,9 +96,23 @@ function makeCarriedPackage(root, { name = 'dsh-router-standard', presets = ['ro
     existsSync(join(presetsRoot, 'router-standard', 'agent.cordis.yml'))
     && readFileSync(join(presetsRoot, 'router-standard', 'agent.cordis.yml'), 'utf8').replace(/\r\n/gu, '\n') === AGENT_YML,
     `bytes=${existsSync(join(presetsRoot, 'router-standard', 'agent.cordis.yml')) ? readFileSync(join(presetsRoot, 'router-standard', 'agent.cordis.yml')).length : 0}`)
-  check('★② job 收口：status=done / presetDone / packageName=candidate / presetNote 含「新建会话时选择」',
+  check('★② job 收口：status=done / presetDone / packageName=candidate / presetNote 按**声明结果**说话',
     job.status === 'done' && job.presetDone === true && job.packageName === 'dsh-router-standard'
-    && /新建会话时选择/u.test(String(job.presetNote)), String(job.presetNote).slice(0, 220))
+    // 0.5.28 改错：框架 0.1.7-rc.x 起预设改为**声明行**，旧文案"新建会话时选择"对没写成声明行的预设是谎话。
+    // 现在必须按实际落盘/声明结果说：声明成功 → "已声明为预设行 … 重启实例后在新会话可选"。
+    && /已声明为预设行/u.test(String(job.presetNote))
+    && String(job.presetNote).includes('preset-router-standard')
+    && /重启实例后/u.test(String(job.presetNote))
+    && !/新建会话时选择/u.test(String(job.presetNote)),
+    `status=${job.status} presetDone=${job.presetDone} packageName=${job.packageName}`
+    + ` noteHasDeclared=${/已声明为预设行/u.test(String(job.presetNote))}`
+    + ` noteHasRow=${String(job.presetNote).includes('preset-router-standard')}`
+    + ` noteHasRestart=${/重启实例后/u.test(String(job.presetNote))}`
+    + ` noteHasOld=${/新建会话时选择/u.test(String(job.presetNote))}`)
+  check('★② 声明行真的写进了目标 profile 的 cordis.patch.yml + 结构字段一并下发',
+    Array.isArray(job.presetInstalled) && job.presetInstalled.every((p) => p.declaration?.ok === true && /^preset-/u.test(String(p.declaration.rowId)))
+    && readFileSync(join(PROFILE, 'cordis.patch.yml'), 'utf8').includes('preset-router-standard'),
+    JSON.stringify(job.presetInstalled?.map((p) => p.declaration)))
   check('★② 面板可读明细：presetInstalled 带 carriedBy=包名 与 marker',
     Array.isArray(job.presetInstalled) && job.presetInstalled.length === 2 && job.presetInstalled.every((p) => p.ok === true && p.carriedBy === 'dsh-router-standard' && p.marker === 'agent.cordis.yml'),
     JSON.stringify(job.presetInstalled))
@@ -199,8 +213,12 @@ function makeCarriedPackage(root, { name = 'dsh-router-standard', presets = ['ro
   const manifestAfter = readFileSync(join(PROFILE2, 'package.json'), 'utf8')
   console.log(`INFO ③ status=${job.status} stage=${job.stage} presetNote=${String(job.presetNote ?? '').slice(0, 160)}`)
   check('③ 作业自己收尾（无异常逃逸）+ status=done', thrown === null && job.status === 'done', thrown === null ? JSON.stringify({ s: job.status, st: job.stage }) : String(thrown?.message).slice(0, 200))
-  check('★★③ **绝不写补丁行**（旧行为会给一个无入口的模块 appendInsert → 启动崩溃）',
-    !patchAfter.includes('dsh-router-standard') && patchAfter === patchBefore, `patchChanged=${patchAfter !== patchBefore}`)
+  check('★★③ **绝不写「插件行」**（旧行为会给一个无入口的模块 appendInsert → 启动崩溃）；'
+    + '补丁里只允许出现**预设声明行**（0.5.28 的机制迁移要求的那一种）',
+    !patchAfter.includes('- id: dsh-router-standard\n') && !/- id: router-standard\b/u.test(patchAfter)
+    && patchAfter.includes('- id: preset-router-standard')
+    && patchAfter !== patchBefore,
+    `hasPresetRow=${patchAfter.includes('- id: preset-router-standard')} changed=${patchAfter !== patchBefore}`)
   check('★★③ **绝不声明依赖**（预设不是 npm 插件，写进清单会让后续 pnpm 操作硬失败）',
     !manifestAfter.includes('dsh-router-standard') && manifestAfter === manifestBefore, manifestAfter.replace(/\s+/gu, ' ').slice(0, 140))
   check('★③ 预设真的落盘（点第三件 → 那个包自带的预设装上了）',
