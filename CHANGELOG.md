@@ -2,6 +2,121 @@
 
 All notable changes to dsh-plugin-hub.
 
+## v0.5.25 — 预设类子包拿不到（根因改错 + 稀疏取源码 + 预设装配，2026-09-27）
+
+真机事故（用户实测 `yjh051108/dsh-routing-suite` 三件套**只装到两件**）：该仓库 `graded/`
+（`@dsh-external/dsh-graded-mode`）与 `injector/`（`@dsh-external/dsh-super-injector`）的 release 里有
+产物、装得上；**第三件 `preset/`（= `dsh-router-standard`，"思维模式路由预设"）npm 双 404、
+release 无资产 —— 它只存在于仓库源码里**。而 0.5.18 的批次 A-③ 把判据写成
+「**根包未发布（private）→ 禁用 git/archive 通道**」（本意是治 `zhu1090093659/dsh-web` 429 MB 被白拉），
+该仓库根包恰好也是 private（真机实测 **1334 KB**）→ 源码通道被一并跳过，第三件连一次机会都没有。
+**一刀切的错在于：真正的成本是仓库体积，不是"根包是否 private"。** 本版四条（改错 + 加法）。
+
+### 1. 改错：private 根不再一刀切禁源码通道，改按**仓库体积**判定
+
+- 新模块 `domain/repo-size.js`：用 GitHub API `/repos/{owner}/{repo}` 的 `size`（KB）**探测体积**
+  （复用既有 http 多通道：`githubJson` 官方+镜像竞速且带 gh CLI 兜底、`curlJson` 走系统网络栈，
+  外层预算与 `fetchRepoMeta` 同一个 `META_BUDGET_MS`；**成功才落 6 小时缓存**，失败不缓存——
+  免得一次网络抖动把仓库永久钉成"尺寸未知"）。阈值默认 **20 MB**，可用 `DSH_GIT_MAX_REPO_MB`
+  配置（夹在 1 MB ~ 4096 MB；非法值回落默认而不是"全禁"）。
+- 纯判据 `sourceChannelGate({state,sizeKb}, thresholdMb)` 三种结局，**note 一律非空**（不静默）：
+  · **小仓库**（≤ 阈值）→ **放行** git / archive / 稀疏取源码，note 写明体积与上限；
+  · **巨仓**（真机 dsh-web = 429.0 MB）→ **仍禁**，note 说清尺寸（MB／KB 都给，避免四舍五入看不出）、
+    原因与**出路**（「仓库落地」克隆到本地目录 / 本地镜像 / 已发布的聚合子包）；
+  · **尺寸未知**（探测失败/超时/404）→ **保守但不沉默**：保持禁令 + note 说明"尺寸未知，已保守跳过源码通道"。
+- `domain/install-job.js` 的两处 private 根分支改为同一个入口 `gatePrivateRoot(job, noteChannel, …)`：
+  写 `job.privateRoot / job.repoSize / job.gitChannelBlocked / job.sourceChannelBlocked` 并记备注。
+
+### 2. 加法：稀疏/定向取源码（让"巨仓里的小目录"也取得下）
+
+- `domain/repoland.js`：`runGitClone` 抽出通用 `runGitArgs(argv, {timeout,cwd,…})`（**同一套**停滞判据 +
+  kill-tree + wait-for-exit，**不新造进程管理**），并新增 `GIT_SPARSE_FLAGS = ['--filter=blob:none','--sparse']`；
+  `gitCloneRepo(..., { sparse: [...] })` 走稀疏克隆（`.tryN` / 探活 / `.trash-*` 降级 / archive 兜底全部照旧），
+  非空目录列表时再 `git sparse-checkout set <dir>`。
+- **不支持时报错降级到普通 clone**：`sparseUnsupportedReason(stderr)` 认出两类真机情形（旧 git 不认
+  `--filter`/`--sparse`；没有 `sparse-checkout` 子命令），`gitCloneRepo` 的下一轮改用普通 clone 并把原因
+  写进错误清单；`fetchPresetSource` 对 `sparse-checkout` 不可用同样降级并在 notes 里说明——
+  **绝不静默降级，也绝不因为"稀疏不可用"把候选判死**。
+- 真机实测（本机 ghproxy）：骨架 `92 125 B`（工作区只有根目录文件）、
+  `sparse-checkout set preset` 后 `1 089 586 B` 且**只有 `preset/` 多出来**（`graded/`、`injector/` 缺席）；
+  整仓 clone 对照 `2 342 446 B / 17.3 秒`。
+
+### 3. 加法：预设型子包按 preset 装配（复用套装路径的既有逻辑，不复制粘贴）
+
+- 新模块 `domain/preset-source.js`：
+  · `findPresetDirs` 从 `suite.js` **原样搬来**（`suite.js` 改为 re-export —— 两条路径共用**同一份**判据，
+    测试直接断言 `suiteFindPresetDirs === findPresetDirs`）；新增 `isPresetDir`（只认 `agent.cordis.yml/.yaml`）、
+    `looksLikePresetPackageName`（`dsh-router-standard` / `dsh_router_standard` / `@scope/dsh-preset-*`…，
+    只作**便宜初筛**，最终判据永远是"目录里真的有 agent.cordis.yml"）。
+  · **`assemblePreset`（唯一实现）**：装配到 `<DSH_HOME>/.agent-presets/<name>`；**已存在同名预设时绝不静默覆盖** ——
+    先整目录备份成 `<name>.bak-<ts>`（暂存/备份失败就**不合并**并如实报错），再逐文件合并并逐条报告
+    （新增 / 覆盖 / 内容一致）；用户独有文件保留。旧 `suite.js` 里那三行是 `rmSync(dest)` + `copyTree`，
+    会**无声抹掉**用户手上的同名预设（真机 `.agent-presets` 下就有三个在用的）——一并改掉。
+  · `tryPresetSourceChannel`：候选 → 子包目录用 **`git ls-tree` 在本地定位**（零额外网络）→
+    `git sparse-checkout set <subdir>` → 装配；`job.presetInstalled / presetSource` 留下结构化结果。
+- `domain/install-job.js` 新增「通道 n+1c：预设源码装配」（在 registry/curl/release 全部失败、展开之后）：
+  成功后**提前收口**，`job.presetDone=true` → **绝不写补丁行、绝不声明依赖**（预设不是 npm 包，
+  写补丁行会让下次启动崩 —— 2026-09-06 事故同族），`candidateDone/packageName` 与普通成功安装对齐。
+
+### 4. 一并修掉的缺陷（过程中发现）
+
+- **git 规格装成"别的包名"被当成成功**：`git+<repo>` 装的是**仓库根包**，候选是子包时名字根本不同
+  （真机 dsh-routing-suite：根包 private、名字 `@dsh-external/dsh-super-injector`，候选是 `dsh-router-standard`）。
+  旧代码无条件把 `installedName` 记成候选名 → 补丁行指向不存在的模块 → 启动崩溃。
+  现在装完**读回真实包名核实**（`git-channel.js#installedPackageName`），不一致就当作"这个 git 源装不出该候选"
+  并留下具体原因；读不到时按"无法核实"放行但记备注（不误杀）。
+- **`tests/test-suite-install.mjs` 会改动用户线上预设**（本版首次实现时真发生了：真机 `.agent-presets` 下
+  多出 6 个 `.bak-*` 目录、文件被上游版本合并）：该用例的安装通道虽然全部打桩，但**预设源码通道是一条真实通道**。
+  已改为把作业跑在**临时 home 的 profile 副本**上（仍要求真实 profile 存在才跑，保持 env-dependent 语义），
+  线上目录全程只读；并顺带把这条用例升级成**真网络端到端断言**（预设真的落盘 + 不写补丁行/不声明依赖 + 用了稀疏）。
+
+### 5. 面板文案（装完告知落盘路径；失败给具体原因与下一步）
+
+- `installJobView` 新增 `presetNote / presetInstalled / presetSource / repoSize`（老客户端忽略即兼容）。
+- `lib/client.js`：预设装配成功走**独立分支**（而不是混进普通插件文案）——
+  「预设已装配：<名字>（落盘 <路径>；**新建会话时选择**）」，并**不再 2.5 秒后自动刷新页面**
+  （刷新会把落盘路径冲掉）；中英双语键 `presetInstalledMsg / presetDot`。
+- **失败不再笼统**：安装失败时把服务端一直在下发、但面板从未展示的 `channelNotes` 逐条显示
+  （短句进消息栏、全部进悬浮 title；中英键 `diagChannelNotes`）——体积门禁、稀疏降级、预算跳过等
+  原因与"下一步"都在里面。
+
+### 测试（全部进 `.github/workflows/test.yml` 硬门槛）
+
+- `tests/test-repo-size-gate.mjs`（新增，44 断言）：纯判据边界（恰好等于阈值 / 多 1 KB / 0 KB / 非数字 /
+  非法阈值）、env 夹取、探测成功·404·超时 + 缓存语义（**成功才落缓存**）、门禁落到 job 的三种结局、
+  **dsh-web 429 MB fixture 必须仍被禁且 note 含 429.0 MB**，以及 **162 行边界矩阵**
+  （仓库 小/大 × 根包 已发布/private/未发布 × 子包 有 npm/仅 release/仅源码 × 类型 插件/bundle/预设 ×
+  探测 成功/超时/404），**每行一条断言**。
+- `tests/test-preset-source.mjs`（新增，66 断言）：预设包名判据正反例、`isPresetDir`/`findPresetDirs`
+  （含与 `suite.js` 的 re-export 同一性）、`assemblePreset` 的备份+合并+用户独有文件保留+越权目录名拒绝、
+  真 git 稀疏取源码（`graded/`、`injector/` 必须缺席）、**稀疏不可用的两条降级路径**、
+  `tryPresetSourceChannel` 全流程与"不是预设型"的如实报错、git 装成别的包名被识破。
+- `tests/test-preset-channel-wiring.mjs`（新增，25 断言）：通道顺序（… release → 展开 → **预设装配**；
+  预设成功时 git 一次都不调）、`runInstallJob` 全链路**绝不写补丁行/绝不声明依赖** + 预设真的落盘、
+  反例（名字不像预设 → 零副作用、git 照旧被尝试）、面板契约（服务端字段 + 客户端中英文案 + 失败路径
+  显示 channelNotes + 预设通道失败时 lastError 是具体原因）。
+- `tests/test-real-preset-e2e.mjs`（新增，22 断言，真网络）：真打 `yjh051108/dsh-routing-suite` →
+  体积 1334 KB 放行 → 稀疏骨架 92 125 B（只有根目录文件）→ `sparse-checkout set preset` 后
+  `1 089 586 B` 且**只有 `preset/`** → 隔离 `DSH_HOME` 下 `router-standard/agent.cordis.yml` 真的落盘
+  （**16 538 B**，首行 `# The \`router-standard\` agent preset: …`）；镜像不可达时**响亮 SKIP**（不假装 PASS）。
+- `tests/test-suite-install.mjs`：改用临时 home + 升级为真网络端到端断言（见 §4）。
+
+### 本地全量回归（61 套 / 0 失败）
+
+`node tests/run-all.mjs` → unit 46 套 + real smoke 5 套 + env-dependent 9 套 + 真 registry 1 套，
+**61 套全绿**。0.5.18–0.5.24 的关键修复逐项重跑结论见 PR/发版说明（停滞判据、git 独立预算、展开顺序、
+通道 0 不短路、release 预算可见、子包分支、探活降级、报错带字节数、archive、落地复用、npmName 首选、
+套装回落、`link:` 写回 + lock 对账、体检 sourceLinked、动作负例 400、runner 转义 + 桌面端 pnpm、
+ignored-builds 分类、allow-builds 显式动作）。
+
+### 未验证项
+
+- 巨仓（> 20 MB）路径上的**真实**稀疏取源码没有跑（没有体积合适又能验证的公开巨仓做确定性夹具）；
+  该分支由 162 行矩阵 + 本机裸仓库夹具覆盖，真网络只覆盖了"小仓库放行"这一侧。
+- `DSH_GIT_MAX_REPO_MB` 只做了单元与注入验证，**没有在真机 profile 上改成非默认值跑过**。
+- 稀疏克隆对 `--filter` 的服务端支持差异（GitLab / 自建 Gitea / 部分镜像可能只警告不报错）只在
+  ghproxy + 本机裸仓库两种源上实测过。
+
 ## v0.5.24 — 构建脚本未获批准不再算失败 + 显式「允许这些构建脚本」（改错 + 加法 + 文档，2026-09-27）
 
 上接 0.5.23：桌面端实例的 pnpm 终于能跑起来之后，**同一个 pin 动作仍然 exitCode=1**。

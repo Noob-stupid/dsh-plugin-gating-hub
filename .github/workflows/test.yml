@@ -92,6 +92,20 @@ jobs:
           node tests/test-suite-fallback.mjs
           # 批次 C-⑩：已落地仓库优先复用（克隆前先看 reposDir，命中就不发网络请求）
           node tests/test-landed-reuse.mjs
+          # 批次 D-①（2026-09-27 改错）：源码通道改按**仓库体积**判定（private 根不再一刀切禁 git）。
+          # 全离线：①纯判据边界（恰好等于阈值 / 多 1 KB / 0 KB / 非法阈值）②env 夹取 ③探测成功·404·超时
+          # + 缓存语义（成功才落缓存）④门禁落到 job（放行/禁/未知三种结局 + note 必须含尺寸与出路）
+          # ⑤dsh-web 429 MB fixture **必须仍被禁** ⑥162 行边界矩阵（仓库×根包×子包×类型×探测）每行一条断言
+          node tests/test-repo-size-gate.mjs
+          # 批次 D-②/D-③（2026-09-27 加法）：稀疏/定向取源码 + 预设型子包按 preset 装配。
+          # 全离线（真 git + 本机裸仓库）：稀疏骨架只落地目标子目录（graded//injector/ 必须缺席）、
+          # 不支持时降级普通 clone（两条触发路径）、assemblePreset 备份+合并绝不静默覆盖、
+          # git 规格装成"别的包名"必须被识破。33+ 断言。
+          node tests/test-preset-source.mjs
+          # 批次 D-③ 的**接线**验收：预设源码通道真的接进候选循环（顺序：… release → 冻结展开 →
+          # 预设装配；预设成功时 git 一次都不调）；runInstallJob 全链路**绝不写补丁行/绝不声明依赖**
+          # （否则补丁行指向不存在的模块 → 启动崩溃），预设真的落盘 + presetNote 含"新建会话时选择"。
+          node tests/test-preset-channel-wiring.mjs
 
       # 真装真卸冒烟：在 CI 的 Linux 宿主上跑（临时 DSH_HOME，不碰真实目录）。
       # 为什么单独一步且**不带** DSH_TEST_SKIP_NETWORK：环境相关测试"没 profile 就整体 SKIP"，
@@ -105,13 +119,18 @@ jobs:
           # `pnpm install --lockfile-only` 退出码 0）。镜像不可达时本套会**响亮 SKIP**（打印原因，不假装 PASS）。
           node tests/test-dep-pin.mjs
 
-      # 真实通道冒烟：archive 通道真下载 + npmName 首选候选真装（隔离 DSH_HOME；需要外网）
+      # 真实通道冒烟：archive 通道真下载 + npmName 首选候选真装 + **预设源码通道真取源码真装配**
       - name: Real channel smoke (ghproxy / npmmirror)
         env:
           DSH_TEST_SKIP_NETWORK: ''
         run: |
           node tests/test-real-archive.mjs
           node tests/test-real-npmname-hint.mjs
+          # 批次 D-②/D-③ 的真网络端到端（2026-09-27）：真打 yjh051108/dsh-routing-suite，
+          # 稀疏取源码只取 preset/ 一个目录（graded//injector/ 必须缺席），把 dsh-router-standard
+          # 真的装配到隔离 DSH_HOME 的 .agent-presets/router-standard/agent.cordis.yml（打印字节数与首行）。
+          # 镜像不可达时**响亮 SKIP**（打印原因、退出码 0），不拿网络当红灯，但也绝不假装 PASS。
+          node tests/test-real-preset-e2e.mjs
 
       - name: Environment-dependent tests (auto-SKIP without local profile)
         run: |

@@ -21,23 +21,41 @@
 //    在单测里全绿、在真实 cordis 上必抛（cannot get property ... without inject），每次安装都失败。
 //    现在用 strict-ctx.mjs 复刻 cordis 语义（未 inject 的名字属性访问即抛 + 记账本），
 //    并在末尾断言账本为空；把注入缝改回属性访问，本用例立刻红。
+// ④ **作业跑在临时 home 的 profile 副本上**（2026-09-27 批次 D-③ 事故的防线）：
+//    本用例的安装通道全部打桩（见 ①），但 D-③ 新增的**预设源码通道**是一条真实通道 —— 它会
+//    git 取源码并把预设装配到 `<DSH_HOME>/.agent-presets`。首次实现时本用例正是对着真实 home 跑的，
+//    结果**改动了用户线上正在用的三个预设**（多出 6 个 .bak-* 目录、文件被上游版本合并）。
+//    仍然保留"必须有真实 profile 才跑"的语义（CI 无 profile → SKIP），但真正的落盘全在临时目录里：
+//    线上目录一个字节都不会动。
 import { createRequire } from 'node:module'
 import { pathToFileURL } from 'node:url'
-import { existsSync } from 'node:fs'
-import { homedir } from 'node:os'
+import { existsSync, mkdirSync, copyFileSync, readFileSync } from 'node:fs'
+import { homedir, tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { disposeDir } from '../lib/server/infra/fsx.js'
 import { channelImpls } from '../lib/server/domain/install-job.js'
 import { strictCtx, violationsOf } from './strict-ctx.mjs'
 
 const require = createRequire(import.meta.url)
-const mod = await import(new URL('../lib/index.js', import.meta.url).href)
 
 // 该测试真实安装到 profile；无 profile 的环境（CI）跳过而非红灯
-const home = process.env.DSH_HOME ?? join(homedir(), '.dsh')
-if (!existsSync(join(home, 'profiles', 'web'))) {
-  console.log(`SKIP 需要真实 profile（${join(home, 'profiles', 'web')}）——CI 环境跳过`)
+const liveHome = process.env.DSH_HOME ?? join(homedir(), '.dsh')
+if (!existsSync(join(liveHome, 'profiles', 'web'))) {
+  console.log(`SKIP 需要真实 profile（${join(liveHome, 'profiles', 'web')}）——CI 环境跳过`)
   process.exit(0)
 }
+// 临时 home：只带 profile 的三个必要文件（package.json / cordis.patch.yml / cordis.yml），
+// 不复制 node_modules（几十 MB，且各通道已打桩，用不到）。
+const home = join(tmpdir(), `dsh-suite-install-${process.pid}`)
+disposeDir(home)
+mkdirSync(join(home, 'profiles', 'web'), { recursive: true })
+mkdirSync(join(home, 'plugin-console'), { recursive: true })
+for (const f of ['package.json', 'cordis.patch.yml', 'cordis.yml']) {
+  try { copyFileSync(join(liveHome, 'profiles', 'web', f), join(home, 'profiles', 'web', f)) } catch {}
+}
+process.env.DSH_HOME = home
+console.log(`INFO 临时 home：${home}（真实 home=${liveHome} 全程只读）`)
+const mod = await import(new URL('../lib/index.js', import.meta.url).href)
 
 // 离线通道桩（见文件头 ①）：每个桩都记录"自己被谁调用"，并立刻以确定性错误失败。
 const channelCalls = []
@@ -205,13 +223,41 @@ if (attempted.length === 0) {
   check('★ git 通道不尝试（subpackageMode 下候选不是被请求的包，clone 根仓库装不出子包）',
     !channelCalls.some((c) => c.startsWith('git:')),
     channelCalls.filter((c) => c.startsWith('git:')).join(' → ') || '（无）')
-  check('作业真的走到过 AI 兜底授权（说明确定性通道确实按序试完了）', consentAnswered > 0, `应答 ${consentAnswered} 次`)
+  check('★ 作业按序试完确定性通道：要么停在 AI 兜底授权并被告知（本机网络装不上），要么被**预设源码装配**收口（第三件真的装上了）',
+    consentAnswered > 0 || (Array.isArray(job?.presetInstalled) && job.presetInstalled.some((p) => p.ok === true)),
+    `应答 ${consentAnswered} 次 / presetInstalled=${JSON.stringify(job?.presetInstalled ?? null).slice(0, 200)}`)
 }
 
 // 3. 验证磁盘结果（套装成功安装时才断言预设落地）
 if (isSuiteRepo) {
   check('preset router-standard exists', existsSync(`${home}/.agent-presets/router-standard/preset.yml`), `${home}/.agent-presets/router-standard`)
   check('preset router-spec exists', existsSync(`${home}/.agent-presets/router-spec/preset.yml`))
+}
+
+// 3b. 批次 D-③（2026-09-27）的**真机端到端断言**：真仓库 yjh051108/dsh-routing-suite 的第三件
+//     `dsh-router-standard` 只存在于仓库源码里（npm 双 404、release 无资产）。旧版本它必然落到
+//     ai-consent（"装不上"）；现在由预设源码通道（稀疏取源码 + 按 preset 装配）真的装上。
+//     网络不可达时本段如实 SKIP —— 上面的通道派发断言与 ai-consent 断言已经把"按序试完"钉住了。
+if (Array.isArray(job?.presetInstalled) && job.presetInstalled.some((p) => p.ok === true)) {
+  const pdir = `${home}/.agent-presets/router-standard`
+  const marker = `${pdir}/agent.cordis.yml`
+  check('★ [真机] 预设型子包装成：<临时 home>/.agent-presets/router-standard/agent.cordis.yml 真的落盘',
+    existsSync(marker), `${marker} bytes=${existsSync(marker) ? readFileSync(marker).length : 0}`)
+  check('★ [真机] 面板文案含「新建会话时选择」与落盘路径',
+    /新建会话时选择/u.test(String(job.presetNote ?? '')) && String(job.presetNote).includes('.agent-presets'),
+    String(job.presetNote ?? '').slice(0, 240))
+  check('★ [真机] **绝不写补丁行 / 绝不声明依赖**（预设不是 npm 包；写了会让补丁行指向不存在的模块 → 启动崩溃）',
+    !readFileSync(`${home}/profiles/web/cordis.patch.yml`, 'utf8').includes('dsh-router-standard')
+    && !readFileSync(`${home}/profiles/web/package.json`, 'utf8').includes('dsh-router-standard'),
+    'patch/manifest clean')
+  check('★ [真机] 用了**稀疏取源码**（--filter=blob:none --sparse + sparse-checkout set），不是整仓 clone',
+    job.presetSource?.sparse === true && job.presetInstalled?.some((p) => p.subdir === 'preset') === true,
+    JSON.stringify(job.presetSource ?? null))
+  check('★ [真机] job.packageName 就是真正装上的那一件（不是私有根的根包名）',
+    job.packageName === 'dsh-router-standard', String(job.packageName))
+  console.log(`INFO [真机] 预设落盘明细：${JSON.stringify(job.presetInstalled ?? null)}`)
+} else {
+  console.log('SKIP [真机] 预设端到端断言：本次预设源码通道没成功（网络受限/上游变更）—— 通道派发与 ai-consent 断言已覆盖')
 }
 // injector 没有落盘：本用例的安装通道已全部打桩（见文件头 ①），所以这里验证的是
 // "失败的确定性通道不会写下任何东西"；至于 release 产物本身能不能装，由只读真实验证回答
@@ -238,4 +284,6 @@ check('★ 严格替身：整条安装路径没有属性式访问未声明的 ct
   violations.length === 0 ? '账本为空' : `越界读取 ${violations.length} 次：${[...new Set(violations)].join('、')}`)
 
 console.log(failed === 0 ? '\nALL PASS' : `\n${failed} FAILED`)
+// 收尾：临时 home 整份清掉（复用既有降级：删不掉就改名成 .trash-*），线上目录全程只读
+try { disposeDir(home) } catch {}
 process.exit(failed === 0 ? 0 : 1)
