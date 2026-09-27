@@ -2,6 +2,140 @@
 
 All notable changes to dsh-plugin-hub.
 
+## v0.5.29 — 预设卡片「加载失败」：写声明行前校验插件契约（改错 + 加法，2026-09-27）
+
+> ### ⚠️ 真机现象：`router-spec` 卡片红框「加载失败」，另两条同来源的预设却正常
+>
+> 桌面端（官方桌面端实例，PID 19387）预设选择器里三张卡：**`router-react`、`router-standard` 正常**，
+> **`router-spec` 顶着一枚红框「加载失败」**。那枚徽标是**框架自己的**文案
+> （`@deepseek-ai/dsh-client-ui-agent-preset` 的 i18n 串 `brokenBadge: "加载失败"`），
+> 数据源是 `agentPresets.list()[].broken` —— 也就是框架注册表算出来的**装配诊断**。
+>
+> **真实错误原文**（从活体实例直接读回，不是推测）：
+>
+> ```
+> BROKEN  router-spec
+>         persona (@deepseek-ai/dsh-persona): invalid config:
+>           - $.prefix missing required value (at prefix)
+> ```
+>
+> 本机复现路径：起一个隔离实例（临时 `DSH_HOME`，预设目录整份照抄真机字节），
+> 经 `POST /api/agentPresets/list` 读回（信封 `{type:'client-request',rpcId,method,payload}`）。
+>
+> ### 根因：装配落盘的 composition 用了框架 schema **读不到**的键名
+>
+> - 框架 `@deepseek-ai/dsh-persona@0.1.7-rc.2` 的 Config 是 `prefix: z.string().required()`
+>   （`+ suffix/complete/includeRuntimeContext`，**没有 `text`**）。
+> - 真机 `~/.dsh/.agent-presets/router-spec/agent.cordis.yml` 第 40 行写的是 **`config.text`**；
+>   同一句文案在 `router-react` 里写的是 `config.prefix` —— 这两个预设的 plugins 列表
+>   **顶层 id 完全相同（18 条）**，逐行比对**只有 persona 这一处**落在 schema 外
+>   （另一处差异是 `router-bootstrap` 的文件名与 `routerMode` 值，那是设计差异不是缺陷）。
+> - 于是装配该行时框架抛 `$.prefix missing required value`；注册表 `activate()` 把异常吞成
+>   `record.broken`（只打一条 `logger.warn`），`list()` 把 `broken` 交给界面 → 徽标永久亮红。
+>
+> ### 为什么改前一条判据都拦不住 / 为什么"早就有的迁移"没生效
+>
+> 1. `preset-yaml.js` 只判**结构**（空文件 / tab 缩进 / 未闭合引号 / 缩进跳级）——
+>    `text:` 结构完全合法，`!!js`、块标量、注释都照旧。
+> 2. `file:///` 目标**确实存在**、包名**确实存在** —— 那两个维度也是干净的。
+> 3. 仓库里**早就有** `text → prefix` 的迁移表（`presets.js` 的 `PRESET_CONFIG_MIGRATIONS`），
+>    但它挂在**框架升级**那一步（`routes/framework-upgrade.js` → `migrateAgentConfigsForUpgrade`）。
+>    而预设落盘不止"升级"一条路 —— **装预设型子包 / 源码装配 / 手工放文件都会写
+>    `agent.cordis.yml`，那些路完全不经过升级步骤**。本机事实佐证：
+>    `router-spec/agent.cordis.yml` 是当天 21:27 装配落盘的，升级步骤根本没参与；
+>    同一时刻生成的 web profile 补丁里 persona 是 `prefix`（老世代内容），
+>    桌面 profile 补丁里是 `text` —— **同一个预设、两条路，走岔了**。
+
+### 1. 改错：写声明行**之前**校验插件契约，命中即如实拒绝写入
+
+- **新模块 `lib/server/domain/preset-rows.js`**（L1 domain，纯函数、可注入、无 IO）：
+  - `parseCompositionRows()` —— 把 composition 解析成「行 id → name / config 直属子键」。
+    **先归一 CRLF**（真机磁盘上的 `agent.cordis.yml` 就是 CRLF，行尾 `\r` 会让行级判据整体失配；
+    自测真抓到过：归一一条都不命中）。
+  - `validatePresetPluginRows()` —— 三类判据，**全部在动手写之前**：
+    - ① 行结构：不是映射 / 没有非空 `name` / composition 里一条插件行都没有（框架
+      `entryListProblem` 同样会拒）；
+    - ② `file:///` 引用目标**必须存在**，且必须能真的解码成磁盘路径
+      （坏百分号编码 `%zz` 在 URL 层"合法"，到加载器才知道读不了 —— 正是要在写行前拦下的形状）；
+    - ②′ **相对引用**（`./x.mjs`）在预设目录里**必须存在**：声明行落在 profile 补丁里，
+      相对基准已变成 profile 目录，预设目录里又没有那个文件可改写 → 留着必然加载失败。
+      改前行为是"照写、留给读回核实判红"，而那时**用户补丁已经被改动了**
+      （自测真抓到过这个形状：`ok:false` + `reason:verify-failed` + 补丁已写坏）——
+      现在拦在写之前，**拒绝 = 一个字节都不写**；
+    - ③ **已确证的框架契约**：`@deepseek-ai/dsh-persona` 必填 `prefix`。命中即判红，并**如实点名**
+      是哪个行 id、哪个包、缺哪个键、**框架会抛的原文**，外加上路。
+  - `PLUGIN_ROW_CONSTRAINTS` —— 判据表**故意不猜**：只收「拿真机错误 + 框架真 schema 双向确证过」的条目，
+    没有证据的插件一律放行。宁可漏判，也绝不因为猜错而把一个**本来可用**的预设挡在门外
+    （那是把缺陷换个方向；与 `preset-yaml.js` 的宽严分寸同一取舍）。
+- `preset-declare.js` 接线：`buildPresetDeclaration()` 在 `validateAgentConfig`（结构）之后、
+  写行之前调契约校验；不通过 → `ok:false` + `reason`（`unresolvable-plugin-file` /
+  `invalid-plugin-rows`）+ `detail`（逐条明细 + 出路）+ `problems`，**绝不写一行必然「加载失败」的声明**。
+
+### 2. 加法：把「旧键迁移」挂到**写行那一刻**，并让迁移表全仓唯一
+
+- **同一张表**：`PRESET_CONFIG_KEY_MIGRATIONS` 现在定义在 `preset-rows.js`，
+  `presets.js` 的 `PRESET_CONFIG_MIGRATIONS` 从它取（升级那条路与写行这条路**判据不再分叉**）。
+- **新函数 `migratePluginRowKeys()`**（纯文本、不碰盘）：只改 `name:` 精确命中该插件的行，
+  且**仅当该行 config 里还没有真键** —— 已有 `prefix` 就一个字节都不动，
+  **绝不覆盖用户自己写的值**；非 persona 行的 `text` 一动不动（不误伤别的插件）。
+- **版本判据的取舍（很要紧）**：低于迁移引入版本 → 不迁（老框架要的正是 `text`）；
+  但**版本未知时按最新处理并迁移** —— 声明行这套机制只在框架 0.1.7-rc.x 起存在，
+  能走到这里的场景必然 ≥ 0.1.7；反过来若按"版本未知就不动"处理，就会在拿不到版本时
+  **又写出那行必然「加载失败」的声明**，把本函数存在的意义整条抹掉（真机 D-⑦ 现场正是"拿不到版本"）。
+- 声明结果的 `note` 如实点名迁移（`@deepseek-ai/dsh-persona 的 text → prefix（第 40 行）`），
+  与既有的「相对文件已改写为 file: URL」同一句式，**不出现 `undefined`**。
+
+### 3. 测试（全离线，已进 `test.yml` 硬门槛）
+
+- **新增 `tests/test-preset-rows.mjs`（52 条断言）**：判据（persona 缺 prefix / `file:///` 不存在 /
+  坏 file: URL / 相对引用不存在 / 行无 name / 空 composition）；**不误杀**
+  （CRLF、块标量 `>-` persona 里的伪键、空 config、无 config、disabled 行、非 persona 的 `text` 全放行）；
+  迁移（命中行/值一字不差/已有 prefix 不覆盖/两键并存不覆盖/非 persona 不动/CRLF 也能迁）；
+  版本判据（低版本不迁、**未知版本照迁**）；接线（`declarePresetRow` 拒绝写坏行 + **补丁零字节改动**、
+  真机形状写成且行里是 `prefix`、file: URL 改写正确、读回核实 6 项全过、二次声明幂等）。
+- `tests/test-preset-declare.mjs` 的一个夹具补齐了它引用的两个 `.mjs` 文件
+  （新判据正确地拒绝了那个"引用了不存在文件"的夹具 —— 这正是它该做的）。
+
+### 4. 真机验收（官方桌面端，3080 全程未重启）
+
+- **改前（活体取证）**：隔离复现实例（预设目录整份照抄真机字节）读回 → `router-spec` 报
+  `persona (@deepseek-ai/dsh-persona): invalid config: - $.prefix missing required value (at prefix)`；
+  同一读回里 `router-react` / `router-standard` **没有这一条**。
+- **改后（隔离实例端到端）**：用修复后的代码重新生成声明行 → 同一条读回里 **persona 那条诊断消失**
+  （`router-spec` 的剩余行与另两条完全一致）。
+- **真机 profile 修复（可审计）**：对 `profiles/desktop/cordis.patch.yml` 调**产品自己的**
+  `declarePresetRow()`：
+  - 改前备份：`plugin-console/profile-sync-backups/cordis.patch.yml.bak-0529-presetfix-<ts>`
+    （SHA256 `0f0814ec…4ba1`，55495 B）+ 预设源文件备份（SHA256 `9cadb89e…6d84`）；
+  - 结果：`ok=true status=updated`，迁移 `@deepseek-ai/dsh-persona 的 text → prefix（第 40 行）`，
+    读回核实 **6/6 通过**；框架视角严格 YAML 解析 OK（顶层 11 条、三条 `insert` 行齐、`plugins` 18 行）；
+  - 复验：`persona.config = {"prefix":"You are a helpful software engineer assistant."}`，
+    三条 `preset-router-*` 行都在、各 31 条 composition 行**全部通过**新契约判据；
+  - 补丁 SHA256 `11ad1eb2…b627`（55502 B，**+7 字节** = `text`→`prefix` 的 2 字节 + 一处相对引用改写为
+    `file:///` URL 的 5 字节）；**预设源文件 `agent.cordis.yml` 一个字节都没动**（SHA256 与备份一致）。
+- **未改动** `developerTools`（那是用户自己的开关）；**未重启 3080 网页实例**。
+
+### 5. 顺手查实的**另一件事**（不是本版根因，独立记录）
+
+`@deepseek-ai/dsh-workflow-worker-thread` 在框架 0.1.7-rc.2 的安装树里**没有实体**
+（`.pnpm` 下无对应目录），只有一份**陈旧孤儿**留在 `node_modules/@deepseek-ai/` 顶层且版本是
+`0.1.5-rc.2`；`profiles/node_modules/@deepseek-ai/dsh-workflow-worker-thread` 也是指向它的 junction。
+后果：预设里那条 `workflow-worker-thread` 行装配时 `never started`
+（框架 `auditRows` 把它记成可诊断项，**不**导致整个预设挂载失败 —— 所以卡片照常显示）。
+由于三条 `preset-router-*` 的该行完全相同、而真机上另两条卡片正常，判定它是**环境性**问题
+（框架安装树陈旧残留：0.1.5 时代留下的顶层包没被清掉，0.1.7-rc.2 又不再分发它），
+**不是**本次「加载失败」的根因，本版**不改**它；留作独立跟进。
+（`@deepseek-ai/dsh-persona` 那一条与本缺陷无关：它在 0.1.7-rc.2 树里是**正常实体**。）
+
+### 6. 发布门槛证据
+
+- 本地干净全量：**59 套测试 / 0 失败**（含新增 `test-preset-rows.mjs` 52 条断言；
+  `test-architecture-guard.mjs` 绿：`lib/server/**` 单文件均 ≤ 600 行 —— `preset-rows.js` 272 行、
+  `preset-declare.js` 545 行）。
+- CI（GitHub Actions `tests`，push 触发）：run [36329283413](https://github.com/Noob-stupid/dsh-plugin-gating-hub/actions/runs/36329283413)
+  commit `f08c05e`，**5 个 step 全绿**（Syntax check / Unit tests / Real install-uninstall smoke /
+  Real channel smoke / Environment-dependent tests），耗时 5m11s。
+
 ## v0.5.28 — 预设机制迁移：装配预设时同时写**声明行**（改错 + 加法，2026-09-27）
 
 > ### ⚠️ 框架 0.1.7-rc.x 起，预设**不再靠目录发现**，改为 profile 补丁里的**声明行**
