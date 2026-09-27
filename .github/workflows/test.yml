@@ -45,6 +45,11 @@ jobs:
           node tests/test-killtree-wait.mjs
           node tests/test-trash-fallback.mjs
           node tests/test-pnpm-env.mjs
+          # 0.5.23 改错+加法（2026-09-27）：桌面端实例"所有 pnpm 操作跑不了"两处根因——
+          # ① cmd-corepack 的命令串被 Node 转义成 \"corepack\"（cmd 解析不到，本套 ⑥ 用真 cmd.exe 做负/正对照）
+          # ② 认不出桌面端自带运行时（<resources>\runtime\pnpm\bin\pnpm.mjs + execPath/--expose-internals）
+          # 全离线可跑（唯一用到真 cmd.exe 的 ⑥ 在非 win32 上如实 SKIP）；含既有候选与兜底语义的回归断言
+          node tests/test-pnpm-runners.mjs
           node tests/test-install-diagnose.mjs
           node tests/test-install-verify.mjs
           node tests/test-upgrade-script-blocks.mjs
