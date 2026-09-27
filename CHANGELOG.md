@@ -51,6 +51,29 @@ git 规格三条路都会发生）。
 > **盖掉用户已在用的预设**；要仓库版本必须显式点「覆盖该预设」—— 该动作按 `preset-sources.json`
 > 记录的出处**重新取源码**（不是拿 release 资产）。
 
+### 测试与门槛
+
+- **干净全量（本机，无并发写者，一次跑完）**：`node tests/run-all.mjs` → **63 次套运行全部 exit 0**
+  （62 个 `tests/test-*.mjs`；`test-dep-pin.mjs` 按 CI 的分法在 "unit" 与 "真 registry" 两组各跑一次）、
+  **0 FAIL**、墙钟 **519.2 秒**。断言计数：各套自报格式不一（`PASS n / FAIL 0` 形式可统计的合计 **719** 条，
+  其余为 `ALL PASS` / `15 passed, 0 failed` / `36 条` 等），**没有一套报失败**。
+- 响亮 SKIP（打印原因、不假装 PASS）：`test-dep-pin` 在 unit 组 **2 组 SKIP**（该组本来就带
+  `DSH_TEST_SKIP_NETWORK=1`）、`test-lockfile-repair` **1 组**真实环境未验证；而真 registry 组里的
+  `test-dep-pin` 这次 **0 组 SKIP**（真网络可用）。
+- CI（`tests` 工作流，commit `0bdf5ae` → run **36317841184**）：`Syntax check (hard gate)`、
+  `Unit tests (hard gate)`、`Real install/uninstall smoke (temp DSH_HOME)`、
+  `Real channel smoke (ghproxy / npmmirror)`、`Environment-dependent tests` **五步全绿**。
+- 真机（官方桌面端 0.5.27）实测见 Release notes。
+
+### 未验证项
+
+- **「覆盖该预设」在真机上对"用户在用预设"的完整往返**：本机 `.agent-presets/router-standard` 是用户
+  **自己改过**的版本（283 行、带一行自定义 `- id: pressure-sensor` / `name: ./pressure-sensor.mjs`，
+  该文件上游没有），而仓库源码是 307 行且**没有**这一行 —— 覆盖会把它换成上游版本（整目录备份可回滚）。
+  是否替用户按这个按钮由用户决定；离线侧由 `tests/test-preset-overwrite.mjs`（39 断言，真
+  `runSuggestedAction` + 真 git + 本机裸仓库）覆盖。
+- **`del /f /q` 对"被别的进程长期占用"文件的最终结局**（沿用 v0.5.26 的未验证项）。
+
 ## v0.5.26 — 独立对抗式复核抓到的 6 处缺陷（F1–F5 / F7，2026-09-27）
 
 0.5.25 发布后由**独立对抗式复核者**（独立上下文、只负责证伪）在已发布代码上抓到的问题，本版逐条修掉。
