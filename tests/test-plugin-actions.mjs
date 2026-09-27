@@ -133,6 +133,32 @@ console.log('\n=== C1 执行器：pin-dependency 走产品路径（注入桩，�
   check('★ 供应链闸判据只认 pnpm 自己的错误码/文案（认不出就绝不放宽）',
     isReleaseAgeBlock('ERR_PNPM_MINIMUM_RELEASE_AGE_VIOLATION: x') === true && isReleaseAgeBlock('boom') === false)
 
+  // 未知选项降级（2026-09-27 CI 实测：CI 的 corepack 解析到 pnpm 12，`--fetch-timeout/--fetch-retries`
+  // 在 pnpm 12 上是 `error: unexpected argument` 直接退出 —— 加固不允许变成"动作跑不成"）。
+  // 桩：带加固选项就抛 pnpm 12 的文案，去掉后再跑必须成功。
+  const seenArgv = []
+  const resilient = await runSuggestedAction({
+    body: { action: 'pin-dependency', packageName: '@fake/demo', version: '1.0.0' },
+    profileDir: PROFILE, registries: ['https://registry.npmmirror.com'],
+    deps: {
+      runAdd: async (args) => {
+        seenArgv.push(args.join(' '))
+        if (args.some((a) => a.startsWith('--fetch-timeout') || a.startsWith('--fetch-retries'))) {
+          const e = new Error("error: unexpected argument '--fetch-timeout' found\n\nUsage: pnpm add --registry <REGISTRY> <PACKAGE_NAMES>...")
+          e.code = 2
+          e.stderr = "error: unexpected argument '--fetch-timeout' found"
+          throw e
+        }
+        // 真 pnpm 成功后会把 link 条目写进 lock（这一段要验的是"降级后动作成功"，所以桩也要写）
+        writeFileSync(join(PROFILE, 'pnpm-lock.yaml'), `lockfileVersion: '9.0'\n\nimporters:\n\n  .:\n    dependencies:\n      '@fake/demo':\n        specifier: ${String(args[1])}\n        version: link:../../plugin-src/@fake/demo\n`, 'utf8')
+        return { stdout: 'Done in 300ms using pnpm v12.6.0\n', stderr: '' }
+      },
+    },
+  })
+  check('★ pnpm 12 文案（unexpected argument）触发未知选项降级：去掉加固选项重试后动作成功',
+    resilient.ok === true && resilient.exitCode === 0 && seenArgv.length === 2
+    && /--fetch-timeout/u.test(seenArgv[0]) && !/--fetch-timeout/u.test(seenArgv[1]), JSON.stringify(seenArgv))
+
   // reconcile-lock：复用 lockfile-health 的 repair（唯一 argv 产出点）
   const repairView = { ok: true, action: 'repaired', command: 'install --lockfile-only --no-frozen-lockfile --registry https://registry.npmmirror.com', reason: '只重写了 pnpm-lock.yaml；package.json 与 node_modules 未改动。', hint: 'lock 已按清单重建', stderrTail: null, packages: [] }
   const recon = await runSuggestedAction({ body: { action: 'reconcile-lock', profile: 'web' }, profileDir: PROFILE, registries: ['https://registry.npmmirror.com'], deps: { repair: async () => repairView } })
@@ -170,12 +196,13 @@ console.log('\n=== C1 真机路径（真 pnpm、不出外网）：动作的 pnpm
       profileDir: PROFILE, registries: ['https://registry.npmmirror.com'],
     })
     const spec = JSON.parse(readFileSync(join(PROFILE, 'package.json'), 'utf8')).dependencies[REAL_PKG]
-    const lockText = readFileSync(join(PROFILE, 'pnpm-lock.yaml'), 'utf8')
-    check('★ 真 pnpm：动作执行成功（ok=true、exitCode=0、清单是 link:、lock 有条目、stdout/命令原样回显）',
+    // 防御式读取：pnpm 没写成 lock 时，要报"动作失败 + 原始输出"，而不是让用例自己崩掉（首版 CI 就是这么红的）
+    const lockText = existsSync(join(PROFILE, 'pnpm-lock.yaml')) ? readFileSync(join(PROFILE, 'pnpm-lock.yaml'), 'utf8') : ''
+    check('★ 真 pnpm：动作执行成功（ok=true、exitCode=0、清单是 link:、lock 有条目、命令原样回显）',
       real.ok === true && real.exitCode === 0 && real.manifest.pinned === true && real.lock.synced === true
       && real.relaxedReleaseAge === false && String(real.command).startsWith('pnpm add link:')
       && String(spec).startsWith('link:') && lockText.includes(`'${REAL_PKG}':`),
-      JSON.stringify({ ok: real.ok, exit: real.exitCode, spec, lock: real.lock, stderr: String(real.stderr).slice(-160) }))
+      JSON.stringify({ ok: real.ok, exit: real.exitCode, spec, lock: real.lock, stderr: String(real.stderr).slice(-200) }))
     let linkType = null
     try {
       const { lstatSync } = await import('node:fs')

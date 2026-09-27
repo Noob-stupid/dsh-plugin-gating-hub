@@ -2,6 +2,35 @@
 
 All notable changes to dsh-plugin-hub.
 
+## v0.5.22 — 动作执行器补上「未知 pnpm 选项降级」+ 一组真 pnpm 断言（改错，2026-09-27）
+
+0.5.21 的动作执行器自己拼 `pnpmAddArgs`（带 `--fetch-timeout/--fetch-retries` 两个加固选项），
+却**绕过了** `infra/exec.js#runPnpmAdd` 的未知选项降级 —— 而 CI 的 corepack 解析到 **pnpm 12**，
+这两个选项在 pnpm 12 上是 `error: unexpected argument`（直接退出）。CI 实测（run 36297375092，Unit 硬门槛）：
+
+```
+=== C1 真机路径（真 pnpm、不出外网）：动作的 pnpm 那一步真的跑起来 ===
+Error: ENOENT: no such file or directory, open '…/profiles/web/pnpm-lock.yaml'
+```
+
+—— 动作的 pnpm 那一步在 pnpm 12 上必然失败（于是 lock 根本没被写出来）。这正是仓库里 0.3.x 那条
+「**加固不允许变成装不上**」的教训在动作通道上的复现。
+
+改错（`domain/plugin-actions.js#runAddWithReleaseAgeRetry`）：与 `runPnpmAdd` 同一条规矩 ——
+第一次原样跑；失败且文案是 `Unknown option` / `unexpected argument` 时，**去掉加固选项重试一次**；
+再看失败原因是不是供应链闸，是才为这一条命令追加 `--config.minimumReleaseAge=0` 重试并如实回报
+（放宽的判断顺序不变，绝不因为"选项不认识"就误放宽）。
+
+加法（测试，进 CI 硬门槛）：
+- `tests/test-plugin-actions.mjs` 新增**真 pnpm** 组：动作走真实执行器（不注入 runner），断言
+  `ok=true` / `exitCode=0` / 清单是 `link:` / lock 里真有这条条目 / `node_modules/<包名>` 被 pnpm
+  **真的**换成指向 `plugin-src` 的链接（`lstatSync().isSymbolicLink()`）——证明"执行"不是只写两个文本文件；
+- 同文件新增 pnpm 12 文案的降级断言（带加固选项 → 抛 `unexpected argument`；去掉后必须成功，
+  且断言第二次 argv 里确实没有加固选项）；
+- 真 pnpm 组的 lock 读取改成防御式（写不出来时报"动作失败 + 原始输出"，而不是让用例自己崩）。
+
+验收：本机全量 **55 套全绿**；CI `tests` 双 step 全绿（含上面那组真 pnpm）。
+
 ## v0.5.21 — 依赖锁体检不再把来源型依赖（`link:` / `file:` / URL / git）当"解析不到"（改错，2026-09-27）
 
 0.5.20 的写回规则把 registry 上查无此包的依赖钉成 `link:<DSH_HOME>/plugin-src/<包名>` 之后，
