@@ -141,6 +141,51 @@ console.log('\n=== C1 执行器：pin-dependency 走产品路径（注入桩，�
   check('主源优先的 registry 列表非空（探测/执行共用一份口径）', preferredRegistries().length > 0, JSON.stringify(preferredRegistries()))
 }
 
+console.log('\n=== C1 真机路径（真 pnpm、不出外网）：动作的 pnpm 那一步真的跑起来 ===')
+// 为什么单开一段：上面那段把 runAdd 换成了桩（为了钉住"失败也要如实回报"），但**动作真的会执行 pnpm**
+// 这件事必须由真 pnpm 证一次 —— 用隔离 profile + 一个只在本地存在的包（link: 不经 registry），
+// 断言：exitCode=0、清单/lock 都是 link:、且 node_modules/<包名> 真的被 pnpm 换成了指向 plugin-src 的链接。
+{
+  const REAL_PKG = '@dsh-probe/pin-only-7c1f9a'
+  const realDir = join(PROFILE, 'node_modules', ...REAL_PKG.split('/'))
+  mkdirSync(realDir, { recursive: true })
+  writeFileSync(join(realDir, 'package.json'), JSON.stringify({ name: REAL_PKG, version: '0.0.1-rc9', main: 'index.js' }), 'utf8')
+  writeFileSync(join(realDir, 'index.js'), 'export const ok = true\n', 'utf8')
+  writeManifest({ ...JSON.parse(readFileSync(join(PROFILE, 'package.json'), 'utf8')).dependencies, [REAL_PKG]: '0.0.1-rc9' })
+  rmSync(join(PROFILE, 'pnpm-lock.yaml'), { force: true })
+  let pnpmUsable = true
+  let pnpmError = null
+  try {
+    const { runPnpmWithFallback } = await import('../lib/server/infra/exec.js')
+    await runPnpmWithFallback(['--version'], { execOpts: { cwd: PROFILE, timeout: 60000, windowsHide: true } })
+  } catch (error) {
+    pnpmUsable = false
+    pnpmError = String(error?.message ?? error).slice(0, 300)
+  }
+  if (!pnpmUsable) {
+    console.log(`SKIP 真 pnpm 组（动作的 pnpm 那一步） —— 真 pnpm 通道不可用：${pnpmError}`)
+  } else {
+    const real = await runSuggestedAction({
+      body: { action: 'pin-dependency', packageName: REAL_PKG, version: '0.0.1-rc9', profile: 'web' },
+      profileDir: PROFILE, registries: ['https://registry.npmmirror.com'],
+    })
+    const spec = JSON.parse(readFileSync(join(PROFILE, 'package.json'), 'utf8')).dependencies[REAL_PKG]
+    const lockText = readFileSync(join(PROFILE, 'pnpm-lock.yaml'), 'utf8')
+    check('★ 真 pnpm：动作执行成功（ok=true、exitCode=0、清单是 link:、lock 有条目、stdout/命令原样回显）',
+      real.ok === true && real.exitCode === 0 && real.manifest.pinned === true && real.lock.synced === true
+      && real.relaxedReleaseAge === false && String(real.command).startsWith('pnpm add link:')
+      && String(spec).startsWith('link:') && lockText.includes(`'${REAL_PKG}':`),
+      JSON.stringify({ ok: real.ok, exit: real.exitCode, spec, lock: real.lock, stderr: String(real.stderr).slice(-160) }))
+    let linkType = null
+    try {
+      const { lstatSync } = await import('node:fs')
+      linkType = lstatSync(realDir).isSymbolicLink() ? 'symlink' : 'dir'
+    } catch { linkType = 'missing' }
+    check('★ 真 pnpm：node_modules/<包名> 被真的换成了指向 plugin-src 的链接（不是只写了两个文本文件）',
+      linkType === 'symlink', `linkType=${linkType}`)
+  }
+}
+
 console.log('\n=== C3/C4-③ 离线渲染：用假 React 真渲染安装结果里的执行框 ===')
 {
   // ── 假 React：真实极小的 hooks 运行时（useState 真能重渲染），其余 API 只做形状兼容 ──
