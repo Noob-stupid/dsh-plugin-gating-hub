@@ -2,6 +2,69 @@
 
 All notable changes to dsh-plugin-hub.
 
+## v0.5.24 — 构建脚本未获批准不再算失败 + 显式「允许这些构建脚本」（改错 + 加法 + 文档，2026-09-27）
+
+上接 0.5.23：桌面端实例的 pnpm 终于能跑起来之后，**同一个 pin 动作仍然 exitCode=1**。
+真机定位（官方桌面端实例、pnpm 11.7.0）：根因**不是 runner**，而是 pnpm 11 的 `strictDepBuilds`
+默认为 true + pnpm 自己写在 profile `pnpm-workspace.yaml` 里的 `allowBuilds` 占位
+（`cloudflared` / `cpu-features` / `ssh2`）→ 装完之后抛 `ERR_PNPM_IGNORED_BUILDS` 并以 1 退出，
+而这次操作真正要做的事（写清单 + 对齐 lock）**其实已经做完了**。本版三件事（A/B/C）+ 过程中发现的
+一个真缺陷一并修掉。
+
+### A. 改错：把 `ERR_PNPM_IGNORED_BUILDS` 如实呈现为「目标状态已达成」
+
+- `domain/install-diagnose.js`（加法）新增分类 **`ignored-builds`**（识别 `ERR_PNPM_IGNORED_BUILDS`
+  与 `Ignored build scripts` 全部文案变体；排在泛化的 `allowBuilds` 之前，后者语义一字未动）+
+  纯函数 `ignoredBuildsFrom(text)` 从 `Ignored build scripts: cloudflared@0.7.3, …` 里**点名**依赖
+  （scoped 包名不吃错；认不出就返回空数组，绝不编造）。
+- 动作执行路径（`domain/plugin-actions.js`）：**清单与 lock 已达目标状态**（读回核实：清单是 `link:` 且
+  lock 里有该 `link:` 条目）时，这类报错**不再报成失败** → `ok:true`、结果里带 `kind:'ignored-builds'`
+  与 `ignoredBuilds:[…]`，`exitCode` **如实回报（1 就是 1，绝不抹成 0）**，note 就是这句话：
+  「依赖已钉住（清单+lock 已就位）；pnpm 因构建脚本未获批准而报错 —— 这不会执行任何脚本，也不影响加载；
+  如需放行请点「允许这些构建脚本」」。反例（清单/lock 未就位）仍如实报失败（`ok:false` + `partial`）。
+
+### B. 加法（选项 2 的核心）：显式动作「允许这些构建脚本」
+
+- 新的白名单动作 `action: 'allow-builds'`（`domain/allow-builds.js`）：在 profile 的
+  `pnpm-workspace.yaml` 里补上**具体包名**的放行项（`allowBuilds: <name>: true`；只有
+  `onlyBuiltDependencies` 就补进那个列表；两个键都没有就新建 `allowBuilds` 块；形态不允许——例如写成
+  行内 flow 映射——才退回 `strictDepBuilds: false` 并在 note 里写清副作用）。要求逐条落地：
+  ①改前备份 `.bak-<时间戳>` ②保持 LF / 无 BOM ③写后读回核实并回报
+  `{changed, added[], file, sha256Before/After, backup, verified}` ④其它字段一字不动（写后按行比对核实）
+  ⑤**只有用户点击才执行**（安装/检测路径绝不调用它）。
+- 安全边界（写进注释 + 测试钉死）：**绝不自动执行；绝不下载/执行任何脚本** —— 该模块只做文本改写
+  （readFile/writeFile/copyFile），不 spawn 任何进程、不碰 argv；动作只影响"pnpm 下次安装是否还会因未
+  批准而报错"。真正的构建由 pnpm 在用户之后自己发起的安装里执行，note 里如实说明。
+- 客户端（`lib/client.js`）：动作框在**这个场景**下多出第二个动作「允许这些构建脚本」（+ 既有「复制命令」），
+  短句进面板、长解释进悬浮 title、中英双语；点它发的是**结构化 payload**（`{action:'allow-builds'}`），
+  仍不接受任何命令字符串。
+- 测试：`tests/test-allow-builds.mjs`（新增，进 CI 硬门槛）钉死最小改动/备份/读回核实/未点击时文件
+  sha256 不变/点名不在名单里的包必须 400/源码无 exec·spawn；`tests/test-plugin-actions.mjs` 追加
+  A-③ 的**真 pnpm** 证据（pnpm 自己产出 `ERR_PNPM_IGNORED_BUILDS` → `ok:true`、exitCode 如实、
+  note 逐字）与按钮渲染断言（有/无、执行中、成功、失败、中英切换）。
+
+### 过程中发现的真缺陷（一并修）
+
+- **放行之后，pnpm 那一步会真的构建，时间远超原先 180s 的等待上限**：真机实测
+  `pnpm add link:…`（`allowBuilds` 全 true）**18m59.6s** 才结束、exitCode=0（cpu-features 走 node-gyp
+  编译、cloudflared 下二进制、ssh2 编原生绑定）——旧的 180s 上限会把一次**成功**的安装杀成"失败"。
+  修法：profile 处于"已放行但还没构建过"时把这一步的等待上限提到 30 分钟（其余情况一个字不变，仍是 180s），
+  并在 note 里说明本次会真的构建。
+
+### C. 文档（随本版发出）
+
+`README.md` / `README.zh.md` 的「多源 / Multiple sources」章节新增
+**「下载安装通道与依赖形态 / Download-install channels and dependency forms」**：五条通道
+（① pnpm registry ② curl tarball ③ GitHub Release 资产 ④ git 克隆 ⑤ archive）的对照表、
+「有 npm 包走 ①/② 写版本号、没有就降级 ③/④/⑤ 写 `link:`」的结论，以及加速器/镜像的环境提醒。
+
+### 未验证 / 不确定
+
+- 30 分钟的等待上限只在真机验证到"19 分钟那次能跑完"这一侧；一次**真正卡死**的安装最坏会占住请求
+  30 分钟（客户端此刻显示「执行中…」；浏览器自身若在 ~5 分钟丢弃连接，服务端仍会跑完并把结果留在下一次
+  调用里 —— 未在本机造出该场景）。
+- 形态兜底 `strictDepBuilds: false` 只有单测覆盖（本机的真机 profile 一直是 `allowBuilds` 占位形态）。
+
 ## v0.5.23 — 桌面端实例「所有 pnpm 操作跑不了」两处根因（改错 + 加法，2026-09-27）
 
 用户报告：**官方桌面端实例**（`D:\dsh-desktop`，Electron 跑的 `@deepseek-ai/dsh-desktop-host`）里，
