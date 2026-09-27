@@ -142,10 +142,15 @@ console.log('\n=== B1 执行器：allow-builds 默认放行"当前被忽略的�
 {
   writeWorkspace(LIVE_WORKSPACE)
   writeModules(LIVE_MODULES)
-  check('白名单里确实有第二种动作 allow-builds', ACTION_KINDS.includes('allow-builds') && ACTION_KINDS.length === 3, JSON.stringify(ACTION_KINDS))
+  check('白名单里确实有 allow-builds（0.5.26 起还有 overwrite-preset，见 test-preset-overwrite.mjs）',
+    ACTION_KINDS.includes('allow-builds') && ACTION_KINDS.includes('overwrite-preset'), JSON.stringify(ACTION_KINDS))
   const parsed = parseActionRequest({ action: 'allow-builds', profile: 'desktop' })
-  check('allow-builds 可以不带 packageName（= 放行全部），payload 仍无任何命令位置',
-    parsed.ok === true && parsed.packageName === null && Object.keys(parsed).sort().join(',') === 'action,error,ok,packageName,profile,status,version')
+  // 断言改成**实质要求**（"解析结果里没有任何命令字段"），而不是把键名清单写死：
+  // 写死只会让每次加动作都要改这里，且完全挡不住真正该挡的东西。
+  check('allow-builds 可以不带 packageName（= 放行全部），解析结果里仍无任何命令位置',
+    parsed.ok === true && parsed.packageName === null
+    && ['command', 'cmd', 'argv', 'args', 'exec', 'shell', 'script', 'run', 'spawn', 'bin'].every((k) => !(k in parsed))
+    && Object.keys(parsed).sort().join(',') === 'action,error,ok,packageName,presetName,profile,status,version', JSON.stringify(parsed))
   const before = shaFile(WS)
   const all = await runSuggestedAction({ body: { action: 'allow-builds' }, profileDir: PROFILE, registries: ['https://registry.npmmirror.com'] })
   check('★ 缺省：按 pnpm 自己记的 ignoredBuilds 放行全部三个包（added 与之一致）',

@@ -4,3 +4,8 @@ node_modules/
 Thumbs.db
 .testdir/
 .tmp-commit-msg.txt
+
+# 本地调试/校准脚本（不得进仓库、更不得进发布物；2026-09-26 曾有 tests/.calib.mjs 被误提交）
+tests/.calib*.mjs
+tests/.dbg-*.mjs
+tests/.fullrun.csv

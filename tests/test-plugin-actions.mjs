@@ -48,15 +48,28 @@ console.log('=== C4-① 结构契约：路由清单 + 白名单动作 + payload 
   check('路由 /plugin-console/run-suggested 已在路由表里注册（与路由清单测试同一口径）',
     routeSrc.includes('`${ROUTE_PREFIX}/run-suggested`'), 'routes/index.js')
   const actionSrc = readFileSync(join(ROOT, '..', 'lib', 'server', 'domain', 'plugin-actions.js'), 'utf8')
-  check('白名单只有我们定义的动作类型（pin-dependency / reconcile-lock / allow-builds）',
-    ACTION_KINDS.length === 3 && ACTION_KINDS.includes('pin-dependency') && ACTION_KINDS.includes('reconcile-lock') && ACTION_KINDS.includes('allow-builds'), JSON.stringify(ACTION_KINDS))
+  check('白名单只有我们定义的动作类型（pin-dependency / reconcile-lock / allow-builds / overwrite-preset）',
+    ACTION_KINDS.length === 4 && ['pin-dependency', 'reconcile-lock', 'allow-builds', 'overwrite-preset'].every((k) => ACTION_KINDS.includes(k)), JSON.stringify(ACTION_KINDS))
   check('服务端**自己**拼 argv（pnpmAddArgs / repairArgsFor），源码里没有拼客户端字符串的位置',
     actionSrc.includes('pnpmAddArgs(') && !/exec\(|spawn\(/u.test(actionSrc), 'plugin-actions.js')
   check('危险字段清单覆盖 command/cmd/argv/args/exec/shell/script/run/spawn/bin',
     ['command', 'cmd', 'argv', 'args', 'exec', 'shell', 'script', 'run', 'spawn', 'bin'].every((k) => COMMAND_KEYS.includes(k)), JSON.stringify(COMMAND_KEYS))
   const parsed = parseActionRequest({ action: 'pin-dependency', packageName: '@fake/demo', version: '1.0.0', profile: 'web' })
-  check('合法请求解析出仅四类信息（action/packageName/version/profile），没有任何命令字段',
-    parsed.ok === true && Object.keys(parsed).sort().join(',') === 'action,error,ok,packageName,profile,status,version', JSON.stringify(parsed))
+  // 0.5.26 加法：多了一个 presetName 字段（overwrite-preset 用）—— 断言改成**实质要求**
+  // （"解析结果里没有任何命令字段"），而不是把键名清单写死：写死只会让每次加动作都要改这里，
+  // 且完全挡不住真正该挡的东西。
+  check('合法请求解析出的字段里**没有任何命令字段**（command/cmd/argv/args/exec/shell/script/run/spawn/bin）',
+    parsed.ok === true && ['command', 'cmd', 'argv', 'args', 'exec', 'shell', 'script', 'run', 'spawn', 'bin'].every((k) => !(k in parsed))
+    && Object.keys(parsed).sort().join(',') === 'action,error,ok,packageName,presetName,profile,status,version', JSON.stringify(parsed))
+  check('★ overwrite-preset：presetName 只认**目录名**形状（空/路径分隔符/点目录/控制字符/超长 → 400）',
+    parseActionRequest({ action: 'overwrite-preset', presetName: 'router-standard' }).ok === true
+    && parseActionRequest({ action: 'overwrite-preset', presetName: '' }).status === 400
+    && parseActionRequest({ action: 'overwrite-preset', presetName: '../../etc' }).status === 400
+    && parseActionRequest({ action: 'overwrite-preset', presetName: 'a/b' }).status === 400
+    && parseActionRequest({ action: 'overwrite-preset', presetName: '..' }).status === 400
+    && parseActionRequest({ action: 'overwrite-preset', presetName: 'x\u0000y' }).status === 400
+    && parseActionRequest({ action: 'overwrite-preset', presetName: 'y'.repeat(200) }).status === 400,
+    JSON.stringify(parseActionRequest({ action: 'overwrite-preset', presetName: 'router-standard' })))
 }
 
 console.log('\n=== C4-② 服务端拒绝任意命令（400 且一次都不执行）===')

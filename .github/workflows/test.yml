@@ -99,13 +99,21 @@ jobs:
           node tests/test-repo-size-gate.mjs
           # 批次 D-②/D-③（2026-09-27 加法）：稀疏/定向取源码 + 预设型子包按 preset 装配。
           # 全离线（真 git + 本机裸仓库）：稀疏骨架只落地目标子目录（graded//injector/ 必须缺席）、
-          # 不支持时降级普通 clone（两条触发路径）、assemblePreset 备份+合并绝不静默覆盖、
-          # git 规格装成"别的包名"必须被识破。33+ 断言。
+          # 不支持时降级普通 clone（两条触发路径）、assemblePreset 的**默认只补不覆盖**语义、
+          # git 规格装成"别的包名"必须被识破。80+ 断言。
           node tests/test-preset-source.mjs
           # 批次 D-③ 的**接线**验收：预设源码通道真的接进候选循环（顺序：… release → 冻结展开 →
           # 预设装配；预设成功时 git 一次都不调）；runInstallJob 全链路**绝不写补丁行/绝不声明依赖**
-          # （否则补丁行指向不存在的模块 → 启动崩溃），预设真的落盘 + presetNote 含"新建会话时选择"。
+          # （否则补丁行指向不存在的模块 → 启动崩溃），预设真的落盘 + presetNote 含"新建会话时选择"；
+          # 0.5.26 追加 F1：**用户点的那一件排最前**（点第三件就装第三件）+ 点名件已安装时如实报"已安装"。
           node tests/test-preset-channel-wiring.mjs
+          # 0.5.26 改错+加法（F2/F3/F4，独立对抗式复核抓到）：预设装配**默认只补不覆盖**（与上游
+          # install.ps1 语义一致：已存在 → 跳过），覆盖必须由用户显式点「覆盖该预设」→ 白名单动作
+          # overwrite-preset（服务端自己重新取源码 + 改前整目录备份 + 写后读回核实 + **绝不接受客户端
+          # 命令串**，任意命令仍 400 且零改动）；写盘前校验 agent.cordis.yml 结构（不合法就跳过不写，
+          # 绝不把原本可用的预设写坏）；备份路径唯一（同一毫秒两次装配不再互相覆盖）。
+          # 全离线：真 git + 本机裸仓库 + 真 runInstallJob / runSuggestedAction。
+          node tests/test-preset-overwrite.mjs
 
       # 真装真卸冒烟：在 CI 的 Linux 宿主上跑（临时 DSH_HOME，不碰真实目录）。
       # 为什么单独一步且**不带** DSH_TEST_SKIP_NETWORK：环境相关测试"没 profile 就整体 SKIP"，
