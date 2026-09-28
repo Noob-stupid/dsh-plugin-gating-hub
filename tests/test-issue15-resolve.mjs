@@ -14,9 +14,10 @@
 //   官方包必须在真框架树里解得出来；本机没有真框架树（隔离/CI）时**整段响亮 SKIP 并打印原因**，
 //   绝不静默 PASS（为什么是整段而不是逐条，见 §② 的注释）。
 import fs from 'node:fs'
-import os from 'node:os'
 import path from 'node:path'
+import { fileURLToPath } from 'node:url'
 
+const TESTS_DIR = path.dirname(fileURLToPath(import.meta.url))
 const { resolvePackageJson, dshHome } = await import('../lib/server/infra/paths.js')
 const { frameworkBases, isFrameworkModuleName } = await import('../lib/server/infra/framework-root.js')
 
@@ -44,8 +45,13 @@ function report() {
 
 // ── ① 判据回归（离线，任何环境都跑得到）：单基准失败 + 多基准并集命中 ─────────────
 // 本次常年红的判据缺口就是「只认一个基准」；这条不依赖真机框架树，CI 也跑得到。
+// 沙箱放仓库内（tests/.testdir/，已 gitignore）—— 与 test-harness / test-framework-upgrade /
+// test-skill-toggle 同一惯例，依据是仓库早已记录的实测事实：系统 tmpdir 在部分环境下
+// rmSync 递归删除会**静默落空**（不抛错、目录仍在；2026-09-20 演练记录，2026-09-29 本机复现：
+// %TEMP% 下删不掉、仓库内删得掉）。放 tmpdir 会每次运行都给用户留垃圾。
 {
-  const sandbox = fs.mkdtempSync(path.join(os.tmpdir(), 'dsh-issue15-'))
+  const sandbox = path.join(TESTS_DIR, '.testdir', 'issue15-offline-fixture')
+  fs.rmSync(sandbox, { recursive: true, force: true })
   try {
     const name = '@issue15-fixture/probe'
     const emptyBase = path.join(sandbox, 'empty')
