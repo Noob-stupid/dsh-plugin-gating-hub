@@ -2,6 +2,150 @@
 
 All notable changes to dsh-plugin-hub.
 
+## v0.5.30 — 补丁自愈误禁用真存在包（改错）+ 两条只读体检（加法，2026-09-29）
+
+> ### ⚠️ 真机现象：用户的 `preset-router-*` 三条预设**在补丁里被自动停用**
+>
+> `~/.dsh/profiles/web/cordis.patch.yml` 尾部在 **2026-09-29 01:05:44** 被追加了 4 个块：
+>
+> ```yaml
+> - id: preset-router-spec
+>   disabled: true
+> - id: workflow-worker-thread
+>   disabled: true
+> - id: preset-router-standard
+>   disabled: true
+> - id: preset-router-react
+>   disabled: true
+> ```
+>
+> 这 4 条**不是用户写的**，是 `healPatchSafety()`（`GET /state` 每 ≤2 分钟触发一次的补丁自愈）
+> 自己写进去的。同一时刻 desktop profile **没有**被写。
+>
+> ### 根因：自愈判定"模块缺失"只用了**单基准**
+>
+> 旧实现：`resolvePackageJson(moduleName, profileDir) !== null` —— 只拿 **profile 目录**当解析基准。
+> 而框架 0.2.0-rc.1 把 `@deepseek-ai/*` 的实体全部搬进 `.pnpm` **内部**那层
+> （`<npx 缓存>\node_modules\.pnpm\@deepseek-ai+dsh@0.2.0-rc.1_<hash>\node_modules\@deepseek-ai\…`），
+> profile 顶层只剩 0.1.5-rc.2 的残影（本机实测 239 个 `*.stale-*` 目录）。于是：
+>
+> | 包 | 单基准（profile 目录）| 真机事实 |
+> |---|---|---|
+> | `@deepseek-ai/dsh-agent-preset` | ❌ 解析不到 → 写 `disabled: true` | ✅ 真存在（`preset-router-*` 声明行全靠它）|
+> | `@deepseek-ai/dsh-workflow-ptc` | ❌ 解析不到 → 写 `disabled: true` | ✅ 真存在（框架新工作流引擎）|
+>
+> 也就是：**自愈把"框架真带、但不在 profile 顶层"的包一律当成"用户引用了不存在的包"，
+> 然后把用户正在用的行关掉了**。这不是提示，是写盘。
+>
+> ### 附带查实：`patch-audit` 的框架基准也差一层（同一 bug 的第二个副本）
+>
+> 只读体检 `routes/patch-audit.js` 里同样有取框架基准的代码，写的是
+> `dirname(dirname(pkgPath))` —— `pkgPath` 形如 `<…>/node_modules/@deepseek-ai/dsh/package.json`，
+> **两层 dirname 只退到 scope 目录** `<…>/node_modules/@deepseek-ai`（实测该路径下没有 `dsh`）。
+> 于是 `bases` 里那一项永远解析不到任何包，只剩兜底值 —— 体检结论看着"有基准"，其实那一维是空的。
+
+### 1. 改错：补丁自愈改**多基准并集** + 语义收紧 + 幂等零写盘
+
+- **新模块 `lib/server/infra/framework-root.js`**（L0 infra，只依赖 `infra/paths.js`）：
+  - `frameworkBases(baseDir, profileDir)` —— 框架运行时解析基准，**有序取并集**：
+    ① `@deepseek-ai/dsh` 所在那层 `node_modules`（= `.pnpm` 实体内部，框架内置包真正的家）
+    ② 从 ① 向上第一个含 `.pnpm` 的目录 ③ 都拿不到时用 profile 目录兜底（**绝不返回空数组**）。
+    取层用 **`dirname` × 3**（package.json → dsh → `@deepseek-ai` → `node_modules`），
+    并对"基准本身就叫 node_modules"的写法退一级再试。
+  - `isFrameworkModuleName()` / `basePackageName()` / `isUnder()` / `FRAMEWORK_SCOPE`。
+  - **`routes/patch-audit.js` 改为复用它** —— 两处判据从此只有一份（各写一份的话，
+    框架下次再挪目录只会有一处被修好；本次事故正是"一处跟上了、另一处没跟上"）。
+- **`lib/server/domain/patch.js` · `healPatchSafety(patchPath, deps)`** 三条硬约束：
+  - **确证缺失才禁用**：解析器报 `uncertain` / 一个基准都没有 / 解析器抛异常 → 只进 `uncertain` 报告，**不写盘**。
+  - **框架命名空间 `@deepseek-ai/*` 永不自动禁用**：命中只进 `skipped: [{reason:'framework-owned'}]`。
+    它们是框架自带包，随版本增删由框架自己管；写 `disabled: true` 等于用旧判断把新框架的组件停掉。
+  - **幂等零写盘**：没有真正需要修复的内容时一个字节都不写（`healedAt=0`）；算出的新内容先与原文
+    **逐字节比较**才落盘。`GET /state` 每 ≤2 分钟就调一次本函数，过去即使无事也整份重写用户补丁。
+  - **写盘失败如实回报**：`written:false` + `writeError` 带真因 + `healedAt=0`（不谎报"已修复"）；
+    写盘后**读回核实**，不一致也算 `writeError`。
+  - 返回值扩展为 `{ healed, autoDisabled, skipped, uncertain, healedAt, written, writeError }`。
+- **`lib/server/infra/package-resolve.js`**：`makePackageResolver` 收纳两种基准写法 ——
+  base 是"含 `node_modules` 的目录"（如 profile 目录）时探针放 `<base>/__patch_audit_probe__.js`，
+  base 本身就叫 `node_modules` 时探针放它内部（否则会去找 `<…>/node_modules/node_modules`，
+  把真存在的包判成不存在）。`listAvailablePackages` 行为不变。
+- **`lib/server/routes/state.js`**：`patchHeal` 下发 `written` / `writeError` / `skippedFrameworkOwned` / `uncertain`；
+  自愈本身抛异常也如实进 `patchHeal`（过去是 `catch {}`，面板看不出任何异常）。
+- **新测试 `tests/test-patch-heal-safety.mjs`**（278 行，全离线：私有临时沙箱 + 自造桩包树，
+  **不碰真实 profile、不用网络**），8 段 35 断言，已接进 CI 硬门槛：
+  ① 多基准解析器（`.pnpm` 内层命中 / 两种基准写法 / `dirname×3` 而非 `×2` 的取层回归 / 空基准不假装命中）
+  ② **单基准失败不再导致禁用**（profile 顶层解析不到、框架树能解析 → 零写盘零禁用）——本事故的直接回归
+  ③ **无缺失时零写盘**（文件 SHA256 逐字节比对 + 连续两次幂等）+ 解析器抛异常/无基准只报告
+  ④ **真缺失时仍如实禁用**（判据不许被修松）+ 二次调用幂等
+  ⑤ 框架自带包永不自动禁用 + 不误伤第三方包
+  ⑥ 写盘失败如实回报（`written=false` / `writeError` 带真因 / `healedAt=0` / 文件确实没变）
+  ⑦ 核心行误禁用仍会被恢复（既有语义不回归）
+  ⑧ 本机有真实 profile 时**真调真机框架树**（`dsh-agent-preset` / `dsh-workflow-ptc` 必须解析到，
+  已移除的 `dsh-workflow-worker-thread` 必须仍报"解析不到"）；CI 无 profile 则**响亮 SKIP**
+
+### 2. 改错：desktop 补丁 3 处行仍指向**已被框架移除**的包
+
+- 框架 0.2.0-rc.1 移除了 `@deepseek-ai/dsh-workflow-worker-thread`（引擎重构为 `…-workflow-ptc`），
+  而 `~/.dsh/profiles/desktop/cordis.patch.yml` 的 **L312 / L610 / L916** 仍写着旧包名。
+  该行解析失败 → 隔离组里 `workflowEngine` 没有提供方 → `dsh-tool-workflow` / `dsh-tool-ralph`
+  （`inject` 含 `workflowEngine`）永久 waiting → 老会话 resume 失败，真机报错原文：
+  `RemoteError: tool-workflow (@deepseek-ai/dsh-tool-workflow): waiting for workflowEngine …`
+- 只改这 3 行的包名 → `@deepseek-ai/dsh-workflow-ptc`（**以实测为准**：registry 上
+  `dsh-workflow-ptc` 有 7 个版本、含框架实际使用的 `0.2.0-rc.1`；`dsh-workflow-worker-thread`
+  已从框架 `.pnpm` 树消失）。备份 + 严格 YAML 解析 + 读回核实 + 逐行 diff（只 3 行变）。
+- 体检前后对比（隔离实例，真分发器 + 真框架树）：**desktop `patch-audit` blockers 4 → 0**；
+  web profile 的 3 条同名 blocker 同批修掉 → 也 **0**。
+
+### 3. 加法：两条**只读**体检接口 + 框架残留识别
+
+- **`GET /plugin-console/patch-audit`**（`domain/patch-composition-audit.js` + `routes/patch-audit.js`）：
+  把补丁里的每一行"行 → 包"拿到**真实 Node 解析器 + 多基准**上核对，分四类输出：
+  解析失败=blocker（已 `disabled` 的降级为 warning）、`file://` 目标缺失=blocker、
+  子路径解析失败=warning、只改配置的行=合法补丁形态。**只报告、绝不代改**；
+  改名建议只来自真机确证表（`KNOWN_RENAMES`，逐条带证据），猜不到的只列候选。
+- **`GET /plugin-console/preset-audit`**（`domain/preset-audit.js` + `routes/preset-audit.js`）：
+  磁盘预设（`.agent-presets/*/agent.cordis.yml`）的**文件型**自声明 ↔ profile 补丁里的
+  `file:///` 声明行跨源对账，输出 stale / missing / orphan / targetMissing。
+  **目标按目录归属匹配**（`router-*` 三个预设各有同名 id `router-bootstrap`，只能靠目录区分）。
+- **`domain/framework-residuals.js` / `domain/framework-cleanup.js`**：识别框架升级留下的
+  `*.stale-<版本>-<时间戳>` 残影目录与 `framework-backups`，区分"可清 / 在用"，**只报告不代删**。
+- **`infra/registry-versions.js`**：registry 版本查询（多源、超时、只读）。
+- **`domain/compat.js` / `routes/compat.js` + `lib/client.js`**：兼容提示可手动关闭
+  （按版本 ack + 展示模式；**只影响展示，不改 `supported` 判定**）。
+- **`routes/framework-preflight.js` / `domain/exec.js` / `routes/plugins.js`**：升级前预检接线与
+  pnpm 通道健壮性。
+- **测试**：新增 `tests/test-patch-composition-audit.mjs`（177 行，含真机抓到的"缩进 2 时假绿"回归、
+  89 条假缺失回归）、`tests/test-preset-audit.mjs`（126 行）、`tests/test-framework-residuals.mjs`（141 行）、
+  `tests/test-compat-notice.mjs`（71 行）、`tests/test-patch-heal-safety.mjs`（278 行）；
+  `tests/test-route-inventory.mjs` +72 行固化**方法契约**（声明 GET 的路由必须住在 405 守卫之前，
+  否则恒 405 —— 0.5.29 活体实例上这两条接口正是如此）。
+  **五套新测试全部接进 `.github/workflows/test.yml` 的硬门槛**（此前只在本机 `tests/run-all.mjs` 里跑，
+  等于没进门禁）。
+
+- 标志/行为不变：**所有既有写入形态、既有备份命名、既有判据语义一字未改**；
+  只有"什么算确证缺失"与"要不要写盘"这两处被收紧。`CORE_PATCH_ROW_IDS` 与核心行恢复逻辑原样保留。
+
+### 4. 本版一并收口的既有成果（此前工作区内的 22 项改动）
+
+第 3 节里的 `patch-composition-audit` / `preset-audit` / `framework-residuals` / `framework-cleanup` /
+`registry-versions` / `compat-notice` / 405 修复等内容，对应此前工作区里那 22 项未提交改动；
+本版把它们与本节的 A/B/C 三项修复**一起**发出去（`0.5.30` 是唯一一版）。
+
+### 未验证 / 已知项（如实列出，不粉饰）
+
+- **`tests/test-issue15-resolve.mjs` 在本机红**（`官方: @deepseek-ai/dsh-settings: noFallback=null withFallback=null`）。
+  这是**环境漂移**、与本批改动无关：把 `lib/server/infra/paths.js` 换成 **clean HEAD** 的版本逐条重跑，
+  四个 case 结果**逐字相同**（三个第三方 FOUND、官方那个 null）。真因是框架 0.2.0-rc.1 把
+  `dsh-settings` 实体留在 `.pnpm` 内部（顶层只有 `dsh-settings.stale-0.1.5-rc.2-*` 残影），
+  而该测试硬编码的 `frameworkBase` 指向框架包自身（`…/@deepseek-ai/dsh`，不是 `node_modules`）。
+  CI 上该测试因无本机 profile 而 **SKIP**（`DSH_TEST_FRAMEWORK_BASE` 未设）。
+- **`GET /state` 的 `patchHeal` 新字段（`written`/`writeError`/`skippedFrameworkOwned`/`uncertain`）
+  只在隔离实例上验过**；3080 本体未重启（由用户自行重启），所以线上尚未产生这两个字段。
+- **preset-audit 报 web profile 有 1 条 `stale`**（`router-spec` 的 `router-bootstrap` 行指向 v1，
+  而预设目录自己声明 v10）。这是**既有真实差异**，本版**只报告不代改** —— 改哪一边要用户定。
+- **desktop 补丁 L38 的 `@linxin666/dsh-client-ui-skin-center`** 在"没有第三方 node_modules"的
+  纯净隔离沙箱里会报 blocker；接上真实 `node_modules` 后为 0 blocker（该包是用户装的第三方插件）。
+- 未做：把 `healPatchSafety` 的新返回值接进 `lib/client.js` 的界面展示（本版只保证接口如实下发）。
+
 ## v0.5.29 — 预设卡片「加载失败」：写声明行前校验插件契约（改错 + 加法，2026-09-27）
 
 > ### ⚠️ 真机现象：`router-spec` 卡片红框「加载失败」，另两条同来源的预设却正常
