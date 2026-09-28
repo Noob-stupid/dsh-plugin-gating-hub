@@ -1,0 +1,20 @@
+# 统一行尾（2026-09-29：仓库行尾卫生，消除 CRLF blob 潜伏异常）
+#
+# 背景：本仓库此前**没有** .gitattributes，而本机全局 core.autocrlf=true 只是让
+# 工作区「看起来」干净（stat 缓存短路）；索引里却真实存着 CRLF blob
+# （lib/index.js = 30f383ab / 11646 B，LF 版应为 6eba9932 / 11505 B）。
+# 将来任何 git add -f 或重新 checkout 都会让这类文件「突然整文件变脏」。
+# 这里显式钉死：文本文件一律以 LF 入库、以 LF 检出（属性优先于 core.autocrlf，
+# 不修改用户的全局/仓库配置）；二进制文件按字节原样存取。
+* text=auto eol=lf
+
+*.js   text eol=lf
+*.mjs  text eol=lf
+*.cjs  text eol=lf
+*.json text eol=lf
+*.yml  text eol=lf
+*.yaml text eol=lf
+*.md   text eol=lf
+
+*.png binary
+*.exe binary

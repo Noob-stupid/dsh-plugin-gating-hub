@@ -71,7 +71,7 @@ disposeDir(ROOTDIR)
     try {
       await gitCloneRepo('zhu1090093659/dsh-web', DEST, 'github', 120, {
         spawnFn: fakeHangingSpawn(seen, 4096),
-        killTree: (pid) => { kills.push(pid); return true },
+        killTree: (pid) => { kills.push(pid); return true },
 
         archive: null, // 专测 git 路径：不让 archive 通道接上真网络
         probe: async () => true,
@@ -107,7 +107,7 @@ disposeDir(ROOTDIR)
     try {
       await gitCloneRepo('zhu1090093659/dsh-web', DEST2, 'github', 120, {
         spawnFn: fakeHangingSpawn(seen, 0), // 一个字节都不写 = 0 进度
-        killTree: () => true,
+        killTree: () => true,
 
         archive: null, // 专测 git 路径：不让 archive 通道接上真网络
         probe: async () => true,
@@ -132,7 +132,7 @@ disposeDir(ROOTDIR)
     try {
       await gitCloneRepo('zhu1090093659/dsh-web', DEST, 'github', 120, {
         spawnFn: fakeFailingSpawn(seen),
-        killTree: () => true,
+        killTree: () => true,
 
         archive: null, // 专测 git 路径：不让 archive 通道接上真网络
         probe: async () => true,
@@ -160,7 +160,7 @@ disposeDir(ROOTDIR)
     try {
       await gitCloneRepo('a/b', DEST2, 'github', 120, {
         spawnFn: fakeFailingSpawn(seen),
-        killTree: () => true,
+        killTree: () => true,
 
         archive: null, // 专测 git 路径：不让 archive 通道接上真网络
         probe: async () => false,
@@ -186,7 +186,7 @@ disposeDir(ROOTDIR)
       setImmediate(() => handlers.close?.(0))
       return { pid: 7777, stderr: { on() {} }, on(event, cb) { handlers[event] = cb } }
     },
-    killTree: () => true,
+    killTree: () => true,
 
     archive: null, // 专测 git 路径：不让 archive 通道接上真网络
     probe: async () => true,
