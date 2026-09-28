@@ -2,6 +2,92 @@
 
 All notable changes to dsh-plugin-hub.
 
+## v0.5.31 — 通用性/去本机化批次（3 条本机写死 + 去标识化，2026-09-29）
+
+> 本版是**可移植性专项**：把源码、注释、文案、文档里残留的「开发机色彩」（本机盘符、本机用户名、
+> 本机缓存目录、仓库外私有方案稿路径）清出去，并修掉三条**只因本机环境恰好满足才没爆**的真缺陷。
+> **win32 上的现有行为一字不改**；非 win32 从"静默假成功"改为"明确拒绝"。
+> 判据不是"肉眼看着干净"，而是对**所有已跟踪文件**（208 个，202 个可解码文本）跑同一份扫描：
+> 本机用户名 `花火`、其百分号编码 `%E8%8A%B1%E7%81%AB`、`/home/`、`_authToken`、`PRIVATE KEY`
+> **各 0 命中**；剩余命中全部落在下面的允许清单里（第三方包名 / npm 环境变量名 / token 形状正则 /
+> 通用示例路径 / `homedir()` 派生）。
+
+### 改错：三条 🔴（本机写死 / 非 Windows 假成功）
+
+- 🔴① **`lib/server/domain/framework.js` 把开发机的 npx 缓存盘符写进了源码**
+  （`'D:\node_cache\_npx'`，随 npm 发给所有用户）。缓存根改为**全部由「环境变量 / 用户自己的配置 /
+  用户目录」派生**：`NODE_CACHE` → `npm_config_cache` / `NPM_CONFIG_CACHE` → 用户级 `~/.npmrc` 的
+  `cache=`（npm 自己的配置来源）→ `~/.npm/_npx` → `%LOCALAPPDATA%\node_cache\_npx`。
+  顺带修掉同族的两处：`LOCALAPPDATA` 缺失时旧代码会拼出**相对路径** `node_cache/_npx`（相对 CWD）；
+  `readdirSync` 失败会把异常抛给调用方（本函数契约是「定位不到返回 null，不抛」）。
+  `scripts/apply-framework-patch.cjs` 里同一份候选同步改掉。
+
+- 🔴② **`lib/server/domain/ai.js` 的 Python 解释器候选全是 Windows 形态**，且第一条写死本机绝对路径
+  （`<盘符>:\python314\python.exe`）—— 非 Windows 上永远解析不到，`${python}` 会退化成 Windows 专有名字。
+  改为**按平台分支**：win32 用 `homedir()/AppData/Local/Programs/Python/Python314/python.exe` + PATH 上的
+  `python.exe`；POSIX 用 `/usr/bin/python3`、`/usr/local/bin/python3`、PATH 上的 `python3`/`python`；
+  解析不到时返回**本平台的命令名**（由执行阶段如实报错），不在解析期抛。配套：run-cmd 白名单补 `python3`
+  （否则非 win32 上 `${python}=python3` 会被自己的白名单拒掉）。
+  同一文件里 OpenViking 数据根由「无条件返回 `'D:/OpenVikingData'`」改为三分支：环境变量
+  `DSH_OPENVIKING_DATA_ROOT` → win32 保留历史默认 → 其他平台 `${home}/.openviking/ascii-data`；
+  AI 提示词改用占位符 `${asciiData}`，文案里不再写盘符。旧实现在非 Windows 上返回的是**相对路径**，
+  会被写进服务进程的 CWD（"ASCII 数据根"根本没生效）。写盘白名单同步收敛到同一条派生。
+
+- 🔴③ **非 Windows 上「一键框架升级/回滚」会假成功**（`lib/server/routes/framework-upgrade.js`、
+  `lib/server/routes/framework.js`）。该通道整体建立在 Windows 机制上（`schtasks.exe` 计划任务 +
+  PowerShell + `Get-NetTCPConnection`），非 Windows 上 `execFile('schtasks.exe')` 必然 ENOENT，
+  而旧实现会：先 `writeFileSync` 一个「脚本已通过 detached 启动」的状态文件 → 再 exec 不存在的
+  `powershell.exe`（静默失败）→ **照样** `upgraded = true` 并回 `ok: true, steps: ['框架升级脚本已启动…']`。
+  用户看到"已启动"，实际一个字节都没动。现在把平台守卫插在**入参校验（400 分支）之后、任何副作用
+  （备份 / 预禁用 / 写脚本 / 建计划任务）之前**：非 win32 → `501` + 结构化拒绝载荷
+  （`code: 'unsupported-platform'` + 手动升级出路），**绝不返回 `ok:true`**、不写状态文件、不 spawn；
+  回滚路由挂同一个守卫。"请求本身不合法"仍如实 400，"平台做不到"绝不假成功。
+
+### 加法
+
+- **新测试 `tests/test-framework-upgrade-platform.mjs`**（18 断言，进 CI 硬门槛）：用 `process.platform`
+  注入 + 注入 `fetchJson` **真跑**两条路由，断言非 win32 → 501、`ok !== true`、`upgraded` 不存在、
+  备份/预禁用**零调用**、不写 detached 状态文件、不生成脚本；win32 → 判据返回 `null`、路由包装器返回
+  `false` 且不写响应（行为不变）；外加接线顺序（校验 → 守卫 → 副作用）与 `deps.fetchJson` 真通道兜底。
+  全程离线，本机与 Linux CI 两侧都能验"另一侧"的行为。
+- `lib/server/routes/index.js`：deps 表增 `fetchJson: fetchJsonUrl` 注入缝（默认即真通道，生产行为不变）。
+- `tests/test-preset-declare.mjs` 新增 **③′**：原夹具路径全是 ASCII，导致「不吃空格、不出现裸中文」
+  两条断言**恒真**（空断言）→ 补一个真含空格 + 非 ASCII 的目录夹具把它变成有效断言，
+  并断言编码后 `fileURLToPath` 仍指回真实文件。
+- `tests/test-preset-migration.mjs`：yaml 解析基准不再写死 `C:/Users/<本机用户名>/…`，改由 `dshHome()`
+  派生；原来的静默 `console.log('SKIP …')` 改为**计数 SKIP** 并在汇总行点明「N 段未验证」。
+- `.gitignore` 预防性规则：`*.bak-*`、`_tmp_*`、`.trash-*`、`.npmrc`、`.env`（都是"本机残留/私密配置"
+  形态；当前仓库没有被跟踪的此类文件）。
+- **去标识化（只动注释/文案/文档，不动逻辑）**：24 个 `lib/**` 文件里指向仓库外私有方案稿的分层注释 →
+  改指仓库内**有约束力**的落点（`tests/test-architecture-guard.mjs` 的分层断言）；另清掉 8 处别的机器
+  路径注释（`components` / `github-login` / `release-source` / `exec` / `fsx` / `framework` / `dep-source`
+  / `client.js` 的本地裸仓库示例）。README / README.zh / CONTRIBUTING / SECURITY 的仓库 URL 统一为现名
+  `Noob-stupid/dsh-plugin-gating-hub`（**保留** `-refactor` 预览线仓名不动），两处过期版本文案改
+  "最新发布版"；12 套测试夹具的本机用户名/盘符 → 中性占位（`C:\Users\user`、
+  `file:///C:/Users/%E7%94%A8%E6%88%B7/…`、`C:\Harness\…`、`C:\nodejs`、`C:\npx-cache`），
+  路径形状/空格/怪字符保留，断言语义不变。
+
+### 测试与门槛
+
+- 本机 `node tests/run-all.mjs` → **71 套，失败 0 套**（exit 0；70 个测试文件，其中 `test-dep-pin`
+  按设计跑两遍：带 `DSH_TEST_SKIP_NETWORK` 与不带各一次）。
+- 架构守卫 ALL PASS：`lib/index.js` **142 行**（棘轮 142，未上调）；`lib/server/**` 76 个 `.js` 只有
+  `routes/framework-upgrade.js` 超 600（**699 / 例外上限 700**，仍是唯一受限例外）。
+- 1 红测试修复：`tests/test-issue15-resolve.mjs` 框架基准改用 `frameworkBases()` 多基准（`25fb988`），
+  离线沙箱改放 `tests/.testdir` 而不是 `%TEMP%`（`c89578e`）。
+
+### 未验证 / 已知项
+
+- **非 Windows 的升级/回滚只做了平台注入验证，没有真机 Linux/macOS 运行**：本机与 CI 都是
+  `process.platform` 注入 + 假 ctx 真跑路由，证明的是「判定与拒绝路径正确」，不是「非 Windows 上能升级」
+  ——本来也不支持。
+- `%LOCALAPPDATA%\node_cache\_npx` 这条候选保留了 `node_cache` 这个**目录名**（本机把 npm cache 重定向到
+  那里的历史形态；npm 默认是 `%LOCALAPPDATA%\npm-cache`）。它是"够用的启发式"，未穷举所有重定向形态；
+  稳妥判据是读 npm 自己配置的 `cache=`（已实现）与 `~/.npm/_npx`。
+- **`D:/OpenVikingData` 是有意保留的例外**（1 处代码 + 2 处文档说明）：win32 下的历史默认值，保留是为了
+  **不动用户既有数据位置**；想换位置可设 `DSH_OPENVIKING_DATA_ROOT`，非 win32 一律走 `homedir()` 派生。
+- 两个 live profile 只做**文件级同步（未重启）**：服务端路由要等对应实例重启才生效。
+
 ## v0.5.30 — 补丁自愈误禁用真存在包（改错）+ 两条只读体检（加法，2026-09-29）
 
 > ### ⚠️ 真机现象：用户的 `preset-router-*` 三条预设**在补丁里被自动停用**
