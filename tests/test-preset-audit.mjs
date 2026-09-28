@@ -13,7 +13,7 @@
 //      目标文件不存在；`disabled` 的悬空只算 warning 不算 blocker
 //   ④ collectPresetAudit：端到端（注入 deps）；缺预设目录时如实返回 ok:false 而不是假绿
 import { strict as assert } from 'node:assert'
-import { dirname, join } from 'node:path'
+import { dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const ROOT = dirname(fileURLToPath(import.meta.url))
@@ -54,10 +54,15 @@ check('② 回归（假绿缺陷）：name 在 id 下一行、缩进 2 → 必�
   assert.equal(mods[0].target, './a.mjs')
 })
 
+// 夹具的路径**必须自洽**：`toLocalPath` 把 file URL 归一成 `\`，那么 `joinPath` 也必须在同一套分隔符下
+// 拼路径，否则"按目录归属匹配"（`dirnameOf(row.local) === preset.dir`）永远不成立。
+// 2026-09-29 改错（CI 抓到，本机 Windows 假绿）：原来 `joinPath` 直接用平台的 `path.join` ——
+// 在 Linux runner 上拼出 `/`、而 `toLocalPath` 拼出 `\`，于是 ③④⑤ 三段的断言全部反向
+// （陈旧/目标不存在恒为空、缺失列表多出两条）。这里改成与 `toLocalPath` 同源的分隔符。
 const io = {
   toLocalPath: (url) => url.replace('file:///', '').replace(/\//gu, '\\'),
-  joinPath: (dir, rel) => join(dir, rel.replace(/^\.\//u, '')),
-  dirnameOf: (p) => dirname(p),
+  joinPath: (dir, rel) => `${dir}\\${rel.replace(/^\.\//u, '').replace(/\//gu, '\\')}`,
+  dirnameOf: (p) => p.replace(/\\[^\\]+$/u, ''),
   exists: () => true,
 }
 
