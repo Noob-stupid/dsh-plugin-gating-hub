@@ -85,7 +85,7 @@ check('幂等（禁用块不重复）', (patch2.match(/- id: bad-plugin/gu) ?? [
 
 // 日志分析器：用 2026-09-10 事故的真实日志文本
 const realLog = `
-2026-09-11 10:00:00 resume failed for session "session-d5d540e7": RemoteError: agent-presets: preset "router-spec" failed to mount: failed to apply loader entry persona (@deepseek-ai/dsh-persona): invalid config: - $.prefix missing required value (at prefix) (C:\\Users\\花火\\.dsh\\.agent-presets\\router-spec\\agent.cordis.yml) (gateway/internal)
+2026-09-11 10:00:00 resume failed for session "session-d5d540e7": RemoteError: agent-presets: preset "router-spec" failed to mount: failed to apply loader entry persona (@deepseek-ai/dsh-persona): invalid config: - $.prefix missing required value (at prefix) (C:\\Users\\user\\.dsh\\.agent-presets\\router-spec\\agent.cordis.yml) (gateway/internal)
 2026-09-11 10:00:01 Error: plugin tree failed to load
 2026-09-11 10:00:02 Cannot find module '@linxin666/dsh-web-all/plugin-manager'
 2026-09-11 10:00:03 failed to apply loader entry web-ui-liangshen (@linxin666/dsh-web-all/liangshen)

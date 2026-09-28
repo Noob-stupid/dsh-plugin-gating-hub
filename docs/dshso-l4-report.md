@@ -5,12 +5,12 @@
 - Node：v24.13.0
 - DSH：`@deepseek-ai/dsh@0.1.1-rc.2`
 - 插件：`@noob-stupid/dsh-plugin-console@0.3.20`
-- 隔离 DSH_HOME：`D:\dsh\.testdir\dshso-l4`
+- 隔离 DSH_HOME：`C:\work\.testdir\dshso-l4`
 - profile：web（仅官方 base + web-app + 本插件）
 
 ## 安装步骤（在隔离环境执行）
 ```sh
-DSH_HOME=D:\dsh\.testdir\dshso-l4 \
+DSH_HOME=C:\work\.testdir\dshso-l4 \
 node .../@deepseek-ai/dsh/lib/bin.js plugin --profile web add @noob-stupid/dsh-plugin-console@0.3.20
 ```
 
@@ -23,7 +23,7 @@ Done in 2.9s using pnpm v11.21.0
 
 ## 配置解析验证
 ```sh
-DSH_HOME=D:\dsh\.testdir\dshso-l4 \
+DSH_HOME=C:\work\.testdir\dshso-l4 \
 node .../@deepseek-ai/dsh/lib/bin.js --profile web --dump-config
 ```
 

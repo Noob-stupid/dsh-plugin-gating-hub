@@ -25,7 +25,7 @@ const require = createRequire(import.meta.url)
 const mod = await import(new URL('../lib/index.js', import.meta.url).href)
 
 const ctx = {
-  baseUrl: 'file:///C:/Users/%E8%8A%B1%E7%81%AB/.dsh/profiles/web/cordis.yml',
+  baseUrl: 'file:///C:/Users/%E7%94%A8%E6%88%B7/.dsh/profiles/web/cordis.yml',
   loader: { entries: () => [] },
   webServer: { register: (route) => { globalThis.__route = route; return () => {} } },
   effect: (fn) => { fn() },

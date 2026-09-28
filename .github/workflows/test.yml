@@ -165,6 +165,12 @@ jobs:
           node tests/test-preset-audit.mjs
           node tests/test-framework-residuals.mjs
 
+          # 2026-09-29 改错：非 win32 平台守卫 —— 「一键框架升级/回滚」通道依赖 schtasks.exe + PowerShell，
+          # 旧行为在非 Windows 上先写 detached 状态文件、再 exec 不存在的 powershell.exe，**却仍回 ok:true**
+          # （假成功）。本套用平台注入 + 注入 fetchJson 真跑路由：断言 501 拒绝、绝不 ok:true、零副作用
+          # （备份/预禁用都没被调用、不写状态文件、不生成脚本）+ win32 判据放行（行为不变）。全离线。
+          node tests/test-framework-upgrade-platform.mjs
+
           # 0.5.30 改错（**真机事故 2026-09-29 01:05:44**）：`healPatchSafety()` 误判「模块缺失」→ 自动禁用。
           # 现场：web profile 补丁尾部被追加 4 个 `disabled: true` 块（preset-router-spec /
           # workflow-worker-thread / preset-router-standard / preset-router-react），用户的 preset-router-* 三条被停掉。

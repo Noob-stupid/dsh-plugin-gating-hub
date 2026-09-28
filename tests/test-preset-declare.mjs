@@ -9,7 +9,7 @@
 //
 // 本套把新模块 preset-declare.js 的判据与落盘全部钉死（**全离线**，复用真 DSH_HOME 之外的一次性临时 home）：
 //   ① 声明行的形状：行 id `preset-<id>`、模块名、config 五个字段、plugins 缩进 10 空格
-//   ② 相对文件 `./x.mjs` → `file:///` 绝对 URL（**基准是 profile 目录**，不是预设目录；中文用户名要百分号编码）
+//   ② 相对文件 `./x.mjs` → `file:///` 绝对 URL（**基准是 profile 目录**，不是预设目录；非 ASCII/含空格路径要百分号编码）
 //   ③ 预设目录里不存在同名文件 → **原样保留**（不猜路径）
 //   ④ 幂等：同 id 行已存在且内容一致 → 一个字节都不写、不建备份
 //   ⑤ 更新：同 id 行内容变了 → 原地替换（不重复插入），改前留 `.bak-preset-<ts>` 备份
@@ -28,8 +28,8 @@ import { fileURLToPath, pathToFileURL } from 'node:url'
 
 const ROOT = dirname(fileURLToPath(import.meta.url))
 const HOME = join(ROOT, '.testdir', 'preset-declare-home')
-// 中文用户名是**真机事实**（本机就是 C:\Users\花火）：'…/用户 花火/…' 里的空格与非 ASCII
-// 正好一起验"file: URL 必须百分号编码"与"空格不能被截断"。
+// 非 ASCII 用户名 + 带空格的目录在真机上很常见（如 `C:\Users\<非 ASCII 名>`）：
+// 这种路径正好一起验"file: URL 必须百分号编码"与"空格不能被截断"（见 ③′）。
 const PROFILE = join(HOME, 'profiles', 'web')
 const AGENT_PRESET = '@deepseek-ai/dsh-agent-preset'
 
@@ -153,6 +153,23 @@ check('① 备份路径唯一：同毫秒第二次不覆盖第一次',
   const abs = absolutizeComposition("  name: file:///C:/x/y.mjs\n  name: /abs/y.mjs\n  name: 'pkg-name'\n", presetDir)
   check('③ 已是绝对路径 / 裸包名 → 一动不动',
     abs.text === "  name: file:///C:/x/y.mjs\n  name: /abs/y.mjs\n  name: 'pkg-name'\n" && abs.rewritten.length === 0)
+}
+
+// ── ③′ 非 ASCII + 含空格的目录（真机常见：用户名非 ASCII）→ 必须百分号编码 ──────────────
+// 为什么单列：上面 ③ 的夹具路径全是 ASCII，「不吃空格、不出现裸中文」那两条在那种夹具上
+// 是**空断言**（恒真）。这里用一个真含空格 + 非 ASCII 的目录把它变成有效断言。
+{
+  const cjkDir = makePreset('用户 测试', {
+    composition: 'plugins:\n  - id: cjk\n    name: ./cjk-core.mjs\n',
+    files: { 'cjk-core.mjs': 'export const c = 3\n' },
+  })
+  check('③′ 夹具前提：目录名同时含空格与非 ASCII', cjkDir.includes(' ') && /[\u4e00-\u9fff]/u.test(cjkDir), cjkDir)
+  const built = buildPresetDeclaration(cjkDir, 'cjk-preset')
+  const urls = built.rewritten.map((r) => r.to)
+  check('③′ 含空格/非 ASCII 的绝对路径被百分号编码（不吃空格、不出现裸中文）',
+    built.ok === true && urls.length === 1 && !urls[0].includes(' ') && !/[\u4e00-\u9fff]/u.test(urls[0]), urls[0])
+  check('③′ 编码后仍能还原成真实文件（fileURLToPath 指回夹具里的 .mjs）',
+    urls.length === 1 && fileURLToPath(urls[0]) === join(cjkDir, 'cjk-core.mjs'), urls[0])
 }
 
 // ── ④ 声明行形状（与官方内置行 `preset-standard` 同一命名法与缩进）─────────────────────

@@ -50,9 +50,9 @@ const kinds = (runners) => runners.map((r) => r.kind).join(',')
 
 // ── ② 桌面端形态：resourcesPath → node --expose-internals <pnpm.mjs>（照抄 host 的 packageManager）──
 {
-  const resourcesPath = join('D:', 'dsh-desktop', 'resources')
+  const resourcesPath = join('C:', 'Harness', 'resources')
   const pnpmMjs = join(resourcesPath, 'runtime', 'pnpm', 'bin', 'pnpm.mjs')
-  const execPath = join('D:', 'dsh-desktop', 'DeepSeek Harness.exe')
+  const execPath = join('C:', 'Harness', 'DeepSeek Harness.exe')
   const exists = (p) => p === pnpmMjs
   const runners = resolvePnpmRunners({ platform: 'win32', execPath, comspec: 'cmd.exe', exists, env: { PATH: '' }, resourcesPath })
   check('② 桌面端形态优先于 cmd-corepack（排在 node-corepack 之后）',
@@ -66,7 +66,7 @@ const kinds = (runners) => runners.map((r) => r.kind).join(',')
   check('② 必须带 ELECTRON_RUN_AS_NODE=1（不带会把 Electron 当 GUI 应用启动 = 假成功）',
     desktop.env?.ELECTRON_RUN_AS_NODE === '1', JSON.stringify(desktop.env ?? null))
   // DSH_DESKTOP_NODE_EXECUTABLE 优先（桌面端运行时给自己 node 的声明）
-  const desktopNodeExe = join('D:', 'dsh-desktop', 'runtime-node.exe')
+  const desktopNodeExe = join('C:', 'Harness', 'runtime-node.exe')
   const viaEnv = resolvePnpmRunners({ platform: 'win32', execPath, comspec: 'cmd.exe', exists, env: { PATH: '', DSH_DESKTOP_NODE_EXECUTABLE: desktopNodeExe }, resourcesPath })
   check('② 有 DSH_DESKTOP_NODE_EXECUTABLE 时用它当 node（没有才回落 execPath）',
     viaEnv[0]?.run(['x']).bin === desktopNodeExe, viaEnv[0]?.run(['x']).bin)
@@ -105,17 +105,17 @@ const kinds = (runners) => runners.map((r) => r.kind).join(',')
   check('③ posix：PATH 命中 <dir>/pnpm 直接执行（不经 cmd）',
     kinds(linux) === 'path-pnpm,corepack,pnpm' && linux[0].run(['add', 'x']).bin === linuxPnpm, kinds(linux))
   // 环境线索（③）：桌面端 host 把 <…>\runtime\bin 拼进 PATH → 同级 runtime\pnpm\bin\pnpm.mjs
-  const runtimeBin = join('D:', 'dsh-desktop', 'resources', 'runtime', 'bin')
-  const siblingMjs = join('D:', 'dsh-desktop', 'resources', 'runtime', 'pnpm', 'bin', 'pnpm.mjs')
+  const runtimeBin = join('C:', 'Harness', 'resources', 'runtime', 'bin')
+  const siblingMjs = join('C:', 'Harness', 'resources', 'runtime', 'pnpm', 'bin', 'pnpm.mjs')
   const byEnv = resolvePnpmRunners({
-    platform: 'win32', execPath: join('D:', 'dsh-desktop', 'DeepSeek Harness.exe'), comspec: 'cmd.exe',
+    platform: 'win32', execPath: join('C:', 'Harness', 'DeepSeek Harness.exe'), comspec: 'cmd.exe',
     exists: (p) => p === siblingMjs, env: { PATH: runtimeBin }, resourcesPath: '',
   })
   check('③ 环境线索：PATH 里的 <…>\\runtime\\bin → 同级 runtime\\pnpm\\bin\\pnpm.mjs 也被认出来',
     kinds(byEnv) === 'desktop-pnpm-mjs,cmd-corepack' && byEnv[0].note.includes(siblingMjs), kinds(byEnv))
-  const runtimePnpmBin = join('D:', 'dsh-desktop', 'resources', 'runtime', 'pnpm', 'bin')
+  const runtimePnpmBin = join('C:', 'Harness', 'resources', 'runtime', 'pnpm', 'bin')
   const byEnv2 = resolvePnpmRunners({
-    platform: 'win32', execPath: join('D:', 'dsh-desktop', 'DeepSeek Harness.exe'), comspec: 'cmd.exe',
+    platform: 'win32', execPath: join('C:', 'Harness', 'DeepSeek Harness.exe'), comspec: 'cmd.exe',
     exists: (p) => p === siblingMjs, env: { PATH: runtimePnpmBin }, resourcesPath: '',
   })
   check('③ 环境线索：PATH 里直接就是 <…>\\runtime\\pnpm\\bin 也认',

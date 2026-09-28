@@ -1,6 +1,6 @@
 # 安全政策 Security Policy
 
-本文件说明 `@noob-stupid/dsh-plugin-console`（仓库 [Noob-stupid/dsh-plugin-hub](https://github.com/Noob-stupid/dsh-plugin-hub)）的安全政策：这个插件**能做什么**（能力清单）、已内置哪些护栏、自动化静态扫描容易误报的地方，以及如何报告漏洞。
+本文件说明 `@noob-stupid/dsh-plugin-console`（仓库 [Noob-stupid/dsh-plugin-gating-hub](https://github.com/Noob-stupid/dsh-plugin-gating-hub)）的安全政策：这个插件**能做什么**（能力清单）、已内置哪些护栏、自动化静态扫描容易误报的地方，以及如何报告漏洞。
 
 英文能力摘要见文末 [Capability summary (English)](#capability-summary-english)。
 
@@ -15,7 +15,7 @@
 
 **请勿在公开 Issue 中披露安全漏洞**。请通过以下方式私下报告：
 
-1. 通过 GitHub 的 [Security Advisory](https://github.com/Noob-stupid/dsh-plugin-hub/security/advisories/new)（推荐，私密）
+1. 通过 GitHub 的 [Security Advisory](https://github.com/Noob-stupid/dsh-plugin-gating-hub/security/advisories/new)（推荐，私密）
 2. 或给仓库 owner 发 GitHub 私信
 
 请在报告中包含：

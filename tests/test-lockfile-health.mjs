@@ -119,9 +119,9 @@ const STALE_LOCK = [
       lockText: "importers:\n\n  .:\n    dependencies:\n      x:\n        specifier: ^1.0.0\n        version: 1.2.3\n\npackages:\n",
     }).upToDate === true)
   check('specSatisfiedBy：非 registry 来源（link:/file:/git+）交给 specifier 判定，不误报版本不满足',
-    specSatisfiedBy('link:D:/x', '1.0.0') && specSatisfiedBy('git+https://x/y.git', null) && specSatisfiedBy('^1.0.0', '1.2.0') && !specSatisfiedBy('^1.0.0', '2.0.0'))
+    specSatisfiedBy('link:C:/x', '1.0.0') && specSatisfiedBy('git+https://x/y.git', null) && specSatisfiedBy('^1.0.0', '1.2.0') && !specSatisfiedBy('^1.0.0', '2.0.0'))
   check('exactVersionOf：只有精确版本才取出来（范围/来源规格返回 null）',
-    exactVersionOf('0.1.0') === '0.1.0' && exactVersionOf('^0.1.0') === null && exactVersionOf('link:D:/x') === null)
+    exactVersionOf('0.1.0') === '0.1.0' && exactVersionOf('^0.1.0') === null && exactVersionOf('link:C:/x') === null)
 }
 
 // ── ⑤ 供应链年龄（纯函数）：只看 dist-tags.latest 的发布时间 ────────────────────

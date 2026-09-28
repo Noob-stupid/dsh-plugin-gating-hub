@@ -66,7 +66,7 @@
 dsh plugin --profile web add @noob-stupid/dsh-plugin-console
 
 # or install from GitHub source (needs git; allowBuilds authorization on first add)
-dsh plugin --profile web add github:Noob-stupid/dsh-plugin-hub
+dsh plugin --profile web add github:Noob-stupid/dsh-plugin-gating-hub
 ```
 
 Then restart the dsh service → refresh the page → **Settings → Plugins → Plugin Console**.
@@ -78,13 +78,13 @@ Then restart the dsh service → refresh the page → **Settings → Plugins →
 Windows (PowerShell):
 
 ```powershell
-git clone https://github.com/Noob-stupid/dsh-plugin-hub "$env:TEMP\dsh-plugin-console" 2>$null; & "$env:TEMP\dsh-plugin-console\deploy.ps1"
+git clone https://github.com/Noob-stupid/dsh-plugin-gating-hub "$env:TEMP\dsh-plugin-console" 2>$null; & "$env:TEMP\dsh-plugin-console\deploy.ps1"
 ```
 
 Linux / macOS:
 
 ```bash
-git clone https://github.com/Noob-stupid/dsh-plugin-hub /tmp/dsh-plugin-console 2>/dev/null; bash /tmp/dsh-plugin-console/deploy.sh
+git clone https://github.com/Noob-stupid/dsh-plugin-gating-hub /tmp/dsh-plugin-console 2>/dev/null; bash /tmp/dsh-plugin-console/deploy.sh
 ```
 
 The script copies the plugin into `$DSH_HOME/profiles/<profile>/node_modules/` and
@@ -96,7 +96,7 @@ idempotently appends an enable entry to `cordis.patch.yml`. Afterwards:
 
 ### Option 3: hand it to an AI in one sentence
 
-> Install the DSH plugin hub (dsh-plugin-hub): run `dsh plugin --profile web add @noob-stupid/dsh-plugin-console` (npm release); if there is no dsh CLI, clone https://github.com/Noob-stupid/dsh-plugin-hub to `~/.dsh/profiles/web/node_modules/` and register it in `cordis.patch.yml` (id: plugin-console, name: @noob-stupid/dsh-plugin-console). Restart dsh web afterwards.
+> Install the DSH plugin hub (dsh-plugin-hub): run `dsh plugin --profile web add @noob-stupid/dsh-plugin-console` (npm release); if there is no dsh CLI, clone https://github.com/Noob-stupid/dsh-plugin-gating-hub to `~/.dsh/profiles/web/node_modules/` and register it in `cordis.patch.yml` (id: plugin-console, name: @noob-stupid/dsh-plugin-console). Restart dsh web afterwards.
 
 Requires: DSH ≥ 0.1.0-rc.6 (web profile, with `dsh-client-modules` / `dsh-host-plugin-inventory`).
 
@@ -384,7 +384,7 @@ If this panel saves you time or makes DSH more fun to use:
 - ⭐ **Star this repo** — it directly helps more DSH users find it;
 - Share it with DSH users or in DSH communities;
 - Submit your own plugin (tag it `dsh-plugin`) to grow the ecosystem;
-- Found a bug or want a feature? [Open an issue](https://github.com/Noob-stupid/dsh-plugin-hub/issues).
+- Found a bug or want a feature? [Open an issue](https://github.com/Noob-stupid/dsh-plugin-gating-hub/issues).
 
 ---
 
@@ -395,7 +395,7 @@ Contributions of all kinds are welcome — issues, PRs, docs, translations.
 - **Guidelines**: [CONTRIBUTING.md](CONTRIBUTING.md)
 - **Code of Conduct**: [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md)
 - **Security policy**: [SECURITY.md](SECURITY.md) (report vulnerabilities privately)
-- **Issue templates**: bug reports & feature requests via the [new issue](https://github.com/Noob-stupid/dsh-plugin-hub/issues/new/choose) page
+- **Issue templates**: bug reports & feature requests via the [new issue](https://github.com/Noob-stupid/dsh-plugin-gating-hub/issues/new/choose) page
 
 ---
 
@@ -420,4 +420,4 @@ The layered-refactor preview lives in its **own repository**: [**`Noob-stupid/ds
 - **What it is**: the monolithic `lib/index.js` (8547 lines) split into layers — `lib/index.js` **141 lines** + `lib/server/**` **38 modules**; **feature-equivalent to `0.3.57`**, maintainability only;
 - **Verified**: 19 test suites green · 8 architecture-guard assertions · **route inventory identical** (`status` + response fields) against the stable build;
 - **Not yet exercised**: real framework upgrade / rollback, restart guardian, component start/stop, real AI run, Gitee OAuth (~10–25% long-tail risk, subjective);
-- **For everyday use** stick to npm `@noob-stupid/dsh-plugin-console@0.3.67`, or `main` of this repo.
+- **For everyday use** stick to the **latest npm release** of `@noob-stupid/dsh-plugin-console` (`npm view @noob-stupid/dsh-plugin-console version`), or `main` of this repo.

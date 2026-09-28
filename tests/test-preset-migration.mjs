@@ -46,18 +46,25 @@ const already = write('already', [
 ])
 
 const { migrateAgentConfigsForUpgrade } = await import('../lib/server/domain/presets.js')
+const { dshHome } = await import('../lib/server/infra/paths.js')
 const require2 = createRequire(join(ROOT, '..', 'package.json'))
 let YAML = null
-try { YAML = require2('yaml') } catch {}
-if (YAML === null) {
-  try { YAML = createRequire('C:/Users/花火/.dsh/profiles/web/package.json')('yaml') } catch {}
+// yaml 不是本仓库的依赖：先按仓库解析，再按**用户自己的 DSH profile**解析
+// （路径由 DSH_HOME/~/.dsh 派生，不写死任何机器目录）。
+const yamlBases = [join(ROOT, '..', 'package.json'), join(dshHome(), 'profiles', 'web', 'package.json')]
+for (const base of yamlBases) {
+  if (YAML !== null) break
+  try { YAML = createRequire(base)('yaml') } catch {}
 }
 
 let failed = 0
+let skipped = 0
 const check = (label, cond, extra) => {
   console.log(`${cond ? 'PASS' : 'FAIL'} ${label}${extra === undefined ? '' : ' — ' + extra}`)
   if (!cond) failed += 1
 }
+// 响亮 SKIP：打印原因 + 计入汇总（绝不假装 PASS，也不静默吞掉）
+const skip = (label, reason) => { skipped += 1; console.log(`SKIP ${label} —— ${reason}`) }
 
 // 1) 低于引入版本 → 不迁移
 const none = migrateAgentConfigsForUpgrade(join(HOME, 'profiles', 'web'), '0.1.2-rc.1')
@@ -88,7 +95,7 @@ if (YAML !== null) {
     }
   }
 } else {
-  console.log('SKIP YAML 校验（未找到 yaml 包）')
+  skip('YAML 校验（迁移后能否被真 yaml 解析）', `未找到 yaml 包（已尝试：${yamlBases.join(' / ')}；yaml 不是本仓库依赖）—— 该段未验证，不假装 PASS`)
 }
 
 // 3) 幂等：再跑一次不应重复迁移
@@ -96,5 +103,7 @@ const again = migrateAgentConfigsForUpgrade(join(HOME, 'profiles', 'web'), '0.1.
 check('幂等（第二次无迁移）', again.length === 0, `migrations=${again.length}`)
 
 rmSync(HOME, { recursive: true, force: true })
-console.log(failed === 0 ? '\nALL PASS' : `\n${failed} FAILED`)
+console.log(failed === 0
+  ? `\nALL PASS${skipped > 0 ? `（**${skipped} 段未验证** —— 见上面的 SKIP 原因）` : ''}`
+  : `\n${failed} FAILED${skipped > 0 ? `（另有 ${skipped} 段 SKIP 未验证）` : ''}`)
 process.exit(failed === 0 ? 0 : 1)

@@ -50,7 +50,7 @@ const stub = (impl) => async () => impl()
   const gone = await probeSourceAliveDetail('https://mirror/o/r.git', 100, { fetch: stub(() => ({ ok: false, status: 404 })) })
   check('404 → 不存活（域名在但仓库/路径没了）', gone.alive === false && gone.kind === 'http', JSON.stringify(gone))
 
-  const local = await probeSourceAliveDetail('file:///D:/repos/o/r.git', 100, { fetch: stub(() => { throw new Error('fetch 不该被调用') }) })
+  const local = await probeSourceAliveDetail('file:///C:/repos/o/r.git', 100, { fetch: stub(() => { throw new Error('fetch 不该被调用') }) })
   check('★ file:// 本地裸仓库直接算活着（旧代码一律判死 → 完全离线/内网共享盘场景永远用不上）',
     local.alive === true && local.kind === 'local', JSON.stringify(local))
 }

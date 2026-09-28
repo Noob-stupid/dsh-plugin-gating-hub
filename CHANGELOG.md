@@ -318,7 +318,7 @@ All notable changes to dsh-plugin-hub.
     **缺省有合理默认**：name 回退目录名、description 不回退（可选字段，不编）、order 回退 `1000`（不抢内置预设位置））；
     `plugins` 取自 `agent.cordis.yml`；
   - `plugins` 里所有**确实存在于预设目录**的相对文件（`./x.mjs`）→ `file:///` + 绝对路径
-    （`pathToFileURL`，中文用户名按 URL 规则百分号编码，例：`file:///C:/Users/%E8%8A%B1%E7%81%AB/…`）；
+    （`pathToFileURL`，中文用户名按 URL 规则百分号编码，例：`file:///C:/Users/%E7%94%A8%E6%88%B7/…`）；
     预设目录里**不存在**的同名文件**原样保留** —— 那种相对引用在 profile 下本来就不通，没有依据替它猜路径，不猜；
   - 行 id 固定 `preset-<id>`（与官方内置 `preset-standard` / `preset-minimal` / `preset-ptc` / `preset-cordis` 同一命名法）；
   - **同 id 行已存在 → 原地更新，绝不重复插入**（重复会让注册表 `Duplicate agent preset: <id>` 直接抛）；
@@ -368,9 +368,9 @@ All notable changes to dsh-plugin-hub.
 
 ### 3. 改错：两处"本机色彩"的文案通用化（纯文案）
 
-- `lib/server/domain/ai.js`：`用户名含中文（花火）` → `用户名/路径含非 ASCII 字符`（规则本来就是通用的：
+- `lib/server/domain/ai.js`：`用户名含中文` → `用户名/路径含非 ASCII 字符`（规则本来就是通用的：
   路径里有非 ASCII 字符时各语言的 Rust/原生向量库会报 `UnicodeDecodeError`，与用户名具体是不是中文无关）。
-- `lib/server/routes/components.js`：报错示例 `D:\dsh\repos`（本机真实目录）→
+- `lib/server/routes/components.js`：报错示例（本机真实目录）→
   `C:\repos 或 \\server\share\repos`，并说明"任意绝对路径均可"。
 
 ### 测试与门槛
@@ -771,7 +771,7 @@ ignored-builds 分类、allow-builds 显式动作）。
 
 ## v0.5.23 — 桌面端实例「所有 pnpm 操作跑不了」两处根因（改错 + 加法，2026-09-27）
 
-用户报告：**官方桌面端实例**（`D:\dsh-desktop`，Electron 跑的 `@deepseek-ai/dsh-desktop-host`）里，
+用户报告：**官方桌面端实例**（桌面端安装目录，Electron 跑的 `@deepseek-ai/dsh-desktop-host`）里，
 凡是走 pnpm 的功能一律失败，报 `Error: ENOENT … pnpm-lock.yaml`。真机定位到两处根因，一处**改错**、
 一处**加法**，既有候选与兜底语义一个字没动。
 
@@ -811,7 +811,7 @@ ignored-builds 分类、allow-builds 显式动作）。
 桌面端 host 自己就是用这套形态跑 pnpm 的（`dsh-desktop-host` 的 `packageManager`，真机命令行原样）：
 
 ```
-command: process.execPath                                  // D:\dsh-desktop\DeepSeek Harness.exe
+command: process.execPath                                  // <桌面端安装目录>\DeepSeek Harness.exe
 args:    ['--expose-internals', <resources>\runtime\pnpm\bin\pnpm.mjs]
 env:     { ELECTRON_RUN_AS_NODE: '1', PATH: '<resources>\runtime\bin;<原 PATH>' }
 ```
@@ -841,8 +841,8 @@ host 二进制旁边没有 `corepack.js`，PATH 里只有 `runtime\bin`（没有
 - **进程内**（`POST /plugin-console/run-suggested` → `pin-dependency`）跑的那一步已经是桌面端自带的 pnpm：
 
   ```
-  Command failed: D:\dsh-desktop\DeepSeek Harness.exe --expose-internals
-    D:\dsh-desktop\resources\runtime\pnpm\bin\pnpm.mjs add link:C:/Users/花火/.dsh/plugin-src/… 
+  Command failed: <桌面端安装目录>\DeepSeek Harness.exe --expose-internals
+    <桌面端安装目录>\resources\runtime\pnpm\bin\pnpm.mjs add link:%USERPROFILE%/.dsh/plugin-src/… 
   ｜真实输出：Progress: resolved 55, reused 46, downloaded 0, added 45, done …
   ```
 
@@ -1540,7 +1540,7 @@ CI（run `36246293996`）只红一条：`④ 链路父子进程同样已被回�
 ### 未验证 / 不确定项（如实列出）
 
 - **用户真实 profile 未做任何修复**：本轮只在隔离 profile 验证能力。live web profile 里那个 404 依赖
-  （`dsh-github-login@0.1.0`）仍需用户自己决定（该包源码在本地 `D:\dsh\dsh-github-login`，是否修好再发版由用户定）。
+  （`dsh-github-login@0.1.0`）仍需用户自己决定（该包源码在本地有检出，是否修好再发版由用户定）。
 - **两个 live profile 只做了文件同步（未重启）**：服务端路由与客户端 i18n 要等用户重启对应实例才生效；
   浏览器里的实际像素（新面板那一行、按钮点击）未人工验证。
 - `minimumReleaseAge` 的判定口径是"registry 的 `dist-tags.latest` 发布时间 < 24h"（pnpm 自身策略更复杂，
@@ -1921,7 +1921,7 @@ CI（run `36246293996`）只红一条：`④ 链路父子进程同样已被回�
 「该包只存在于 GitHub release，已按 link: 形式记录依赖（`link:<路径>`）—— 不经 npm registry 解析、
 不经 tarball 完整性校验，pnpm 重建 lock 也能装上」。
 
-**实测对照**（真 pnpm 10.34.5 + 真 corepack，临时 profile；详见 `D:\dsh\dsh-plugin-hub-plan\refactor-bugs.zh.md` 第 23 节）：
+**实测对照**（真 pnpm 10.34.5 + 真 corepack，临时 profile；详见仓库外私有方案稿第 23 节）：
 
 | 步骤 | 修前 | 修后 |
 |---|---|---|
@@ -2072,7 +2072,7 @@ git-hosted 包自动写 `onlyBuiltDependencies`（issue #5，pnpm 10.34+ 要求�
 > 无 npm 仓库 / 套装 / 技能 / 聚合仓库 / 仓库落地 / 服务器组件），不是纸面推断。
 
 - **删除不再谎报**：`/skill-remove`、`/clean-residuals`、`/repo-remove`、克隆重试前清理、装包前清旧目录
-  一律改为「删完**核实**再报成功」。本机实测同一个 `rmSync` 在 `D:\` 删得掉、在 `C:\Users\…\.dsh\…` 与
+  一律改为「删完**核实**再报成功」。本机实测同一个 `rmSync` 在盘根删得掉、在 `C:\Users\…\.dsh\…` 与
   `%TEMP%` 下会**静默落空**（不抛错、目录还在），旧代码删完直接 `{ok:true}` → "技能删了还在""残留清理
   假装清干净"。现在删不掉就如实报错并给出目录路径；装包路径宁可直接报错，也不把新包合并进旧目录。
 - **克隆失败说人话**：多源重试的失败汇总带上 **git 自己说的原因**（stderr 末两行，如 `HTTP 502`、无法解析
@@ -2462,7 +2462,7 @@ if ($binNow -ne '' -and (Test-Path $binNow)) { … }
 **当时的真实故障**：升级后服务反复拉不起来（自动回滚崩了、两次手动回滚也拉不起来），最后靠手动拉起 0.1.5 + 手改预设才恢复。复盘出四类问题，本版全部修掉：
 
 - **启动器版本错配**：npx 缓存顶层的 `@deepseek-ai/dsh` 是 npm 时代的**真实目录**，pnpm 只能把新版装进 `.pnpm/`、换不掉顶层入口 → 桌面端 / `npx dsh` 拉起的仍是旧框架（版本错配 → 拉起失败 → 又提示升级，循环）。升级脚本现在校验**启动器可见版本**，发现是实体目录就改名备份（`dsh.npm-backup-<时间戳>`）后重装一次，让 pnpm 重建链接；版本校验也从 `.pnpm` 内部路径改为顶层可见路径（原先因此误报「pnpm 退出码 0 但版本未更新」，白等两轮）。
-- **回滚脚本自身崩溃**：生成的回滚 PowerShell 里有 4 处把已带引号的路径又套了一层单引号（`'"D:\…"'`），空串还被写成字面量 `""` → 全树恢复被静默跳过；回滚体没有 try/catch，崩了只留一句 trap 消息、旧树半新半旧。现已修正引号/空串处理（含路径里 `$` 的转义），回滚体包 try/catch 并记录**出错位置**。
+- **回滚脚本自身崩溃**：生成的回滚 PowerShell 里有 4 处把已带引号的路径又套了一层单引号（`'"<盘符>:\…"'`），空串还被写成字面量 `""` → 全树恢复被静默跳过；回滚体没有 try/catch，崩了只留一句 trap 消息、旧树半新半旧。现已修正引号/空串处理（含路径里 `$` 的转义），回滚体包 try/catch 并记录**出错位置**。
 - **拉起失败无日志**：升级后拉起子进程的输出被丢弃，出问题只能盲调。现在统一经 `cmd /c … >> fw-relaunch.log 2>&1` 落盘（升级后 / 回滚后 / 异常兜底三处）。
 - **预设不在适配门范围内（本次真正的坑）**：0.1.5 把 `@deepseek-ai/dsh-persona` 的配置字段 `text` 改名为 `prefix`（必填），而适配门只扫「已装插件包」，扫不到 `~/.dsh/.agent-presets/*/agent.cordis.yml` → 升级后预设挂载失败、服务起不来。新增**预设配置迁移门禁**：升级前按目标版本扫描全部预设与 profile host 组合，把新版不再接受的旧字段就地改名（留 `.bak`），并在升级步骤里逐条展示。
 
@@ -2588,7 +2588,7 @@ if ($binNow -ne '' -and (Test-Path $binNow)) { … }
 
 - **新增「AI 赋能」按钮**（AI 兜底按钮下方）：输入 npm 包名 / GitHub 仓库，本地 AI 读取文档自动生成部署计划；
 - **计划-执行分离**：生成的结构化计划（纯插件 / 服务器组件 / 仅配置）在面板弹窗逐步骤勾选确认后执行，实时回显日志、可中断；
-- **安全护栏**：命令白名单（curl/git/node/python/gh/npm/ov）、写入路径白名单（profile、~/.dsh、~/.openviking、~/.cache/openviking、D:/OpenVikingData）、破坏性命令拦截、日志密钥脱敏；
+- **安全护栏**：命令白名单（curl/git/node/python/gh/npm/ov）、写入路径白名单（profile、~/.dsh、~/.openviking、~/.cache/openviking、ASCII 数据根）、破坏性命令拦截、日志密钥脱敏；
 - **服务器组件自动控制**：识别为 service 类型的组件注册到组件清单，面板自动出现「启动/停止/状态」按钮（`~/.dsh/plugin-console/components.json`）；
 - **内置预案**：OpenViking 等已知组件的部署事实（国内镜像、hf-mirror、中文路径 Unicode 坑、DeepSeek 凭据复用）随计划提示固化，避免 AI 重复踩坑；
 - 新增接口：`/plugin-console/ai-empower/plan|status|run|cancel`、`/plugin-console/components`、`/plugin-console/component/start|stop|status`。

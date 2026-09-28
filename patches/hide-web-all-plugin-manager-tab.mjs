@@ -3,10 +3,16 @@
 // 而 web-all 客户端是无条件注册此 tab（无行态门控），点开会报「操作失败：load」。
 // 等待上游 0.3.15 提供行态门控后删除本补丁（并恢复该行的启用位）。
 // 用法：node hide-web-all-plugin-manager-tab.mjs [目标client.js路径]
+//   （默认 <DSH_HOME 或 ~/.dsh>/profiles/web/node_modules/@linxin666/dsh-web-all/lib/client.js）
 // 幂等：已打过补丁则直接退出；找不到注入块或边界不符则报错退出，绝不盲改。
 import { readFileSync, writeFileSync, existsSync } from 'node:fs'
+import { join } from 'node:path'
+import { homedir } from 'node:os'
 
-const target = process.argv[2] ?? 'C:/Users/花火/.dsh/profiles/web/node_modules/@linxin666/dsh-web-all/lib/client.js'
+// 默认值由用户目录派生（DSH_HOME 优先，与 host 端 dshHome() 同一判据）——不写死任何机器路径。
+const dshHome = process.env.DSH_HOME?.trim() || join(homedir(), '.dsh')
+const target = process.argv[2]
+  ?? join(dshHome, 'profiles', 'web', 'node_modules', '@linxin666', 'dsh-web-all', 'lib', 'client.js')
 const START = 'ctx.slots.inject("settings.plugins.tab"'
 const REGISTER_MARK = '}, PluginManagerTab);'
 const END = '});' // 锚点：register 调用之后出现的第一个 `});` = inject 箭头调用自身的闭合

@@ -9,3 +9,11 @@ Thumbs.db
 tests/.calib*.mjs
 tests/.dbg-*.mjs
 tests/.fullrun.csv
+
+# 预防性规则（2026-09-29 加法）：这些形态都是"本机残留/私密配置"，一旦被 git add -A 卷进来
+# 就会把开发机信息带进公开仓库（当前仓库里没有此类文件被跟踪，属纯预防）。
+*.bak-*
+_tmp_*
+.trash-*
+.npmrc
+.env

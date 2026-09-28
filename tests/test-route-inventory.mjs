@@ -128,7 +128,7 @@ const SCHEMAS = [
   ['POST', '/plugin-console/github-login', { token: '' }, 400, ['error', 'ok']],
   // github-open-login 不能进这张表：它的响应随环境分两种形状（成功 {ok,started,status} / 不可用
   // {ok,started,reason}），逐字段钉死必然误报；更要紧的是**它会真的去 fetch 本机 web 端口**，
-  // 而本机装了 dsh-github-login 且 exe 在（D:\dsh\dsh-github-login\dist\DSH-GitHub-Login.exe），
+  // 而某个 profile 装了 dsh-github-login 且 exe 就在该插件自己的 dist/ 下，
   // 默认端口 3080 又正是本机在跑的宿主 —— 真调一次会弹出登录窗口，测试不该有可见副作用。
   // 所以它改用下面的「②c 弱断言」：把端口临时指到没人监听的空端口，走真实的降级分支。
   // 0.5.30 加法（2026-09-28）：两条**只读体检**接口，靠 GET 调用（诊断/子代理直接 curl）。
@@ -390,9 +390,9 @@ for (const [method, path, body, wantStatus, wantKeys] of SCHEMAS) {
   check('★ 超时失败文案：说清 10 分钟超时 + 清掉了什么',
     timeoutText.includes('等待授权超时（10 分钟）') && timeoutText.includes('已清理本次落盘残留：@a/one'),
     timeoutText)
-  const cancelText = aiConsentFailureText({ approved: false }, { cleaned: [], failed: [{ name: '@a/two', path: 'D:/p/node_modules/@a/two', error: 'EPERM' }] })
+  const cancelText = aiConsentFailureText({ approved: false }, { cleaned: [], failed: [{ name: '@a/two', path: 'C:/p/node_modules/@a/two', error: 'EPERM' }] })
   check('★ 取消失败文案：说清用户取消 + 没清掉的那项与路径',
-    cancelText.startsWith('用户取消本地 AI 兜底') && cancelText.includes('有 1 项没能清理') && cancelText.includes('D:/p/node_modules/@a/two'),
+    cancelText.startsWith('用户取消本地 AI 兜底') && cancelText.includes('有 1 项没能清理') && cancelText.includes('C:/p/node_modules/@a/two'),
     cancelText)
   for (const id of ['job-consent-1', 'job-consent-2', 'job-consent-3']) installJobs.delete(id)
 }

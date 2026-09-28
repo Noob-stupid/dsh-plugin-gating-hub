@@ -42,7 +42,7 @@ const fakeEntries = [
   { id: 'include:llm', options: { name: '@deepseek-ai/dsh-llm' }, disabled: false, fiber: { state: 2 } },
 ]
 const ctx = {
-  baseUrl: 'file:///C:/Users/%E8%8A%B1%E7%81%AB/.dsh/profiles/web/cordis.yml',
+  baseUrl: 'file:///C:/Users/%E7%94%A8%E6%88%B7/.dsh/profiles/web/cordis.yml',
   loader: {
     entries: () => fakeEntries,
   },

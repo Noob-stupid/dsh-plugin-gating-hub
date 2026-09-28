@@ -11,6 +11,28 @@
  */
 const fs = require('node:fs')
 const path = require('node:path')
+const os = require('node:os')
+
+/** npm 缓存下的 npx 缓存目录候选（**不写死盘符/用户名**）。
+ *  npm 的 cache 位置是用户配置（把 cache 指到别的盘很常见）→ 按 npm 自己的来源读：
+ *  环境变量 npm_config_cache / NPM_CONFIG_CACHE + 用户级 ~/.npmrc 的 `cache=`。
+ *  （原实现第一条写死开发机上的缓存绝对路径：某个盘符下的 node_cache\_npx。） */
+function npmNpxCacheRoots() {
+  const roots = []
+  const push = (value) => {
+    if (typeof value !== 'string') return
+    const dir = value.trim().replace(/^["']|["']$/g, '').replace(/^~(?=[\\/]|$)/, os.homedir())
+    if (dir !== '') roots.push(path.join(dir, '_npx'))
+  }
+  for (const key of ['npm_config_cache', 'NPM_CONFIG_CACHE']) push(process.env[key])
+  try {
+    for (const line of fs.readFileSync(path.join(os.homedir(), '.npmrc'), 'utf8').split(/\r?\n/)) {
+      const hit = /^\s*cache\s*=\s*(.*?)\s*$/i.exec(line)
+      if (hit) push(hit[1])
+    }
+  } catch {}
+  return roots
+}
 
 // 定位 @deepseek-ai/dsh-app-boot（与 @deepseek-ai/dsh 同级）
 function locateAppBoot() {
@@ -20,21 +42,17 @@ function locateAppBoot() {
     const candidate = path.join(aiDir, 'dsh-app-boot', 'lib', 'index.js')
     if (fs.existsSync(candidate)) return candidate
   } catch {}
-  // 兜底：扫描常见 npx 缓存
-  const roots = [path.join(process.env.USERPROFILE || '', '.dsh'), process.env.DSH_HOME || ''].filter(Boolean)
-  for (const root of roots) {
-    const p = path.join(root, '..')
-    void p
-  }
   const cacheRoots = [
     process.env.NODE_CACHE || '',
-    'D:\\node_cache\\_npx',
-    path.join(process.env.USERPROFILE || '', '.npm', '_npx'),
-    path.join(process.env.LOCALAPPDATA || '', 'node_cache', '_npx'),
+    ...npmNpxCacheRoots(),
+    path.join(os.homedir(), '.npm', '_npx'),
+    process.env.LOCALAPPDATA ? path.join(process.env.LOCALAPPDATA, 'node_cache', '_npx') : '',
   ].filter(Boolean)
   for (const root of cacheRoots) {
     if (!fs.existsSync(root)) continue
-    for (const entry of fs.readdirSync(root, { withFileTypes: true })) {
+    let entries = []
+    try { entries = fs.readdirSync(root, { withFileTypes: true }) } catch { continue }
+    for (const entry of entries) {
       if (!entry.isDirectory()) continue
       const candidate = path.join(root, entry.name, 'node_modules', '@deepseek-ai', 'dsh-app-boot', 'lib', 'index.js')
       if (fs.existsSync(candidate)) return candidate

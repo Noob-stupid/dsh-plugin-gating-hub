@@ -89,41 +89,41 @@ const scope = {
   port: 3080,
   target: '0.1.5-rc.1',
   current: '0.1.2-rc.1',
-  fwRoot: 'D:\\tmp dir\\$weird\\node_modules',
-  dshDir: 'D:\\tmp dir\\$weird\\node_modules\\.pnpm\\@deepseek-ai+dsh@0.1.2-rc.1_x\\node_modules\\@deepseek-ai\\dsh',
-  fwCheckpoint: { dest: 'C:\\Users\\花火\\.dsh\\plugin-console\\framework-backups\\0.1.2-rc.1\\fw-tree\\1789022284780' },
-  backupDir: 'C:\\Users\\花火\\.dsh\\plugin-console\\framework-backups\\0.1.2-rc.1',
-  rollbackDir: 'C:\\Users\\花火\\.dsh\\plugin-console\\framework-backups\\0.1.2-rc.1\\dsh-package-backup',
+  fwRoot: 'C:\\tmp dir\\$weird\\node_modules',
+  dshDir: 'C:\\tmp dir\\$weird\\node_modules\\.pnpm\\@deepseek-ai+dsh@0.1.2-rc.1_x\\node_modules\\@deepseek-ai\\dsh',
+  fwCheckpoint: { dest: 'C:\\Users\\user\\.dsh\\plugin-console\\framework-backups\\0.1.2-rc.1\\fw-tree\\1789022284780' },
+  backupDir: 'C:\\Users\\user\\.dsh\\plugin-console\\framework-backups\\0.1.2-rc.1',
+  rollbackDir: 'C:\\Users\\user\\.dsh\\plugin-console\\framework-backups\\0.1.2-rc.1\\dsh-package-backup',
   taskName: 'DSH-FW-Upgrade-1234',
-  corepackJs: 'D:\\nvm4w\\nodejs\\node_modules\\corepack\\dist\\corepack.js',
+  corepackJs: 'C:\\nodejs\\node_modules\\corepack\\dist\\corepack.js',
   pkgArgs: ["'@deepseek-ai/dsh-base'"],
-  profileDir2: 'C:\\Users\\花火\\.dsh\\profiles\\web',
-  nodePath: 'D:\\nvm4w\\nodejs\\node.exe',
-  stateFile: 'C:\\Users\\花火\\.dsh\\plugin-console\\fw-upgrade-state.txt',
-  logFile: 'C:\\Users\\花火\\.dsh\\plugin-console\\fw-upgrade.log',
-  ps1: 'C:\\Users\\花火\\AppData\\Local\\Temp\\fw-upgrade-1234.ps1',
-  rec: { from: '0.1.2-rc.1', checkpointDir: 'C:\\Users\\花火\\.dsh\\plugin-console\\framework-backups\\0.1.2-rc.1\\fw-tree\\1789022284780', fwRoot: 'D:\\tmp dir\\$weird\\node_modules' },
-  resolveDshBin: () => 'D:\\tmp dir\\$weird\\node_modules\\.pnpm\\@deepseek-ai+dsh@0.1.5-rc.1_x\\node_modules\\@deepseek-ai\\dsh\\lib\\bin.js',
-  fileURLToPath: () => 'file:///D:/dsh/dsh-plugin-hub/lib/index.js',
+  profileDir2: 'C:\\Users\\user\\.dsh\\profiles\\web',
+  nodePath: 'C:\\nodejs\\node.exe',
+  stateFile: 'C:\\Users\\user\\.dsh\\plugin-console\\fw-upgrade-state.txt',
+  logFile: 'C:\\Users\\user\\.dsh\\plugin-console\\fw-upgrade.log',
+  ps1: 'C:\\Users\\user\\AppData\\Local\\Temp\\fw-upgrade-1234.ps1',
+  rec: { from: '0.1.2-rc.1', checkpointDir: 'C:\\Users\\user\\.dsh\\plugin-console\\framework-backups\\0.1.2-rc.1\\fw-tree\\1789022284780', fwRoot: 'C:\\tmp dir\\$weird\\node_modules' },
+  resolveDshBin: () => 'C:\\tmp dir\\$weird\\node_modules\\.pnpm\\@deepseek-ai+dsh@0.1.5-rc.1_x\\node_modules\\@deepseek-ai\\dsh\\lib\\bin.js',
+  fileURLToPath: () => 'file:///C:/work/dsh-plugin-hub/lib/index.js',
   selfName: '@noob-stupid/dsh-plugin-console',
-  binPath: 'D:\\tmp dir\\$weird\\node_modules\\.pnpm\\@deepseek-ai+dsh@0.1.5-rc.1_x\\node_modules\\@deepseek-ai\\dsh\\lib\\bin.js',
+  binPath: 'C:\\tmp dir\\$weird\\node_modules\\.pnpm\\@deepseek-ai+dsh@0.1.5-rc.1_x\\node_modules\\@deepseek-ai\\dsh\\lib\\bin.js',
   // 启动失败隔离相关（新）
-  qHelperPath: 'C:\\Users\\花火\\.dsh\\plugin-console\\fw-analyze-boot.mjs',
-  qCandidatesPath: 'C:\\Users\\花火\\.dsh\\plugin-console\\fw-quarantine-candidates.json',
-  qRecordPath: 'C:\\Users\\花火\\.dsh\\plugin-console\\fw-quarantine.json',
-  patchFilePath: 'C:\\Users\\花火\\.dsh\\profiles\\web\\cordis.patch.yml',
+  qHelperPath: 'C:\\Users\\user\\.dsh\\plugin-console\\fw-analyze-boot.mjs',
+  qCandidatesPath: 'C:\\Users\\user\\.dsh\\plugin-console\\fw-quarantine-candidates.json',
+  qRecordPath: 'C:\\Users\\user\\.dsh\\plugin-console\\fw-quarantine.json',
+  patchFilePath: 'C:\\Users\\user\\.dsh\\profiles\\web\\cordis.patch.yml',
   thirdPartyRows: ['dsh-routing-suite', 'dsh-github-login'],
   // 重启路由（v0.3.43）用到的局部变量
-  restartLog: 'C:\\Users\\花火\\.dsh\\plugin-console\\console-restart.log',
-  consoleDir: 'C:\\Users\\花火\\.dsh\\plugin-console',
+  restartLog: 'C:\\Users\\user\\.dsh\\plugin-console\\console-restart.log',
+  consoleDir: 'C:\\Users\\user\\.dsh\\plugin-console',
   taskName: 'DSH-Restart-1234',
   guardName: 'DSH-RestartGuard-1234',
-  guardCount: 'C:\\Users\\花火\\.dsh\\plugin-console\\restart-guard-1234.count',
+  guardCount: 'C:\\Users\\user\\.dsh\\plugin-console\\restart-guard-1234.count',
   killLine: 'Stop-Process -Id 1234 -Force -ErrorAction SilentlyContinue',
   prelude: '',
   // Step 1（L0 分层）之后：包根统一走 lib/server/infra/paths.js 的 pluginRoot()
   // （原来是 join(dirname(fileURLToPath(import.meta.url)), '..')，搬进子目录后会指错）
-  pluginRoot: () => 'D:\\dsh\\dsh-plugin-hub',
+  pluginRoot: () => 'C:\\work\\dsh-plugin-hub',
 }
 
 // 未知标识符用桩兜底（只为跑通生成、验证 PowerShell 语法；名字会打印出来供人工核对）
@@ -141,7 +141,7 @@ const scoped = new Proxy(scope, {
 
 function build(expr) {
   // import.meta 在 new Function 里不可用：把所有 import.meta.url 换成字面量桩（语法校验不受影响）
-  const stubUrl = "D:/dsh/dsh-plugin-hub/lib/index.js"
+  const stubUrl = "C:/work/dsh-plugin-hub/lib/index.js"
   const prep = (text) => text.replace(/import\.meta\.url/gu, JSON.stringify(stubUrl))
   const extras = launchSnippetSrc === '' ? '' : `${prep(launchSnippetSrc)};`
   const fn = new Function('scope', `with (scope) { ${psImpl}; ${extras} return (${prep(expr)}); }`)
@@ -170,7 +170,7 @@ if (makePrelude !== null) scope.relaunchPrelude = makePrelude
 }
 // 重启脚本数组里是 `${prelude}`（已生成好的整段），这里给一份真货，否则会生成 <stub:prelude> 破坏语法
 if (makePrelude !== null) {
-  scope.prelude = makePrelude({ nodePath: scope.nodePath, pluginDir: 'C:\\Users\\花火\\.dsh\\profiles\\web\\node_modules\\@noob-stupid\\dsh-plugin-console', fwRoot: scope.fwRoot, target: scope.target, ps: realPs })
+  scope.prelude = makePrelude({ nodePath: scope.nodePath, pluginDir: 'C:\\Users\\user\\.dsh\\profiles\\web\\node_modules\\@noob-stupid\\dsh-plugin-console', fwRoot: scope.fwRoot, target: scope.target, ps: realPs })
 }
 
 // 按**唯一**特征挑选块（升级脚本含 Install-Framework；一键回滚脚本含「一键回滚脚本启动」——

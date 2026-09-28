@@ -25,27 +25,27 @@ function check(name, ok, info = '') {
 
 // ── 真机取样的两个形态（原样抄自 2026-09-26 的 Win32_Process.CommandLine）──────────
 const STANDALONE = { // 3080：node …\dsh\lib\bin.js web --no-open（pid 32464）
-  execPath: 'D:\\nvm4w\\nodejs\\node.exe',
-  argv: ['D:\\nvm4w\\nodejs\\node.exe', 'D:\\node_cache\\_npx\\1e7f6d9597241db0\\node_modules\\@deepseek-ai\\dsh\\lib\\bin.js', 'web', '--no-open'],
+  execPath: 'C:\\nodejs\\node.exe',
+  argv: ['C:\\nodejs\\node.exe', 'C:\\npx-cache\\_npx\\0123456789abcdef\\node_modules\\@deepseek-ai\\dsh\\lib\\bin.js', 'web', '--no-open'],
   env: { PATH: 'C:\\Windows' },
   versions: { node: '24.13.0' },
   resourcesPath: undefined,
   ppid: 28660, // 真实父进程 = %TEMP%\…\DeepSeek Harness.exe（用户启动器）—— 刻意不参与判定
 }
 const DESKTOP_HOST = { // 19387：DeepSeek Harness.exe --expose-internals …\app.asar\dsh\node_modules\…\dsh-desktop-host\lib\index.js（pid 32252）
-  execPath: 'D:\\dsh-desktop\\DeepSeek Harness.exe',
+  execPath: 'C:\\Harness\\DeepSeek Harness.exe',
   argv: [
-    'D:\\dsh-desktop\\DeepSeek Harness.exe',
-    'D:\\dsh-desktop\\resources\\app.asar\\dsh\\node_modules\\@deepseek-ai\\dsh-desktop-host\\lib\\index.js',
-    'D:\\dsh-desktop\\resources\\app.asar\\dsh',
-    'C:\\Users\\花火\\.dsh\\profiles\\desktop',
-    'D:\\dsh-desktop\\resources\\runtime\\primary-runtime',
-    'D:\\dsh-desktop\\resources\\runtime\\pnpm\\bin\\pnpm.mjs',
-    'D:\\dsh-desktop\\resources\\runtime\\bin',
+    'C:\\Harness\\DeepSeek Harness.exe',
+    'C:\\Harness\\resources\\app.asar\\dsh\\node_modules\\@deepseek-ai\\dsh-desktop-host\\lib\\index.js',
+    'C:\\Harness\\resources\\app.asar\\dsh',
+    'C:\\Users\\user\\.dsh\\profiles\\desktop',
+    'C:\\Harness\\resources\\runtime\\primary-runtime',
+    'C:\\Harness\\resources\\runtime\\pnpm\\bin\\pnpm.mjs',
+    'C:\\Harness\\resources\\runtime\\bin',
   ],
   env: { ELECTRON_RUN_AS_NODE: '1' },
   versions: { node: '24.18.1', electron: '44.0.0' },
-  resourcesPath: 'D:\\dsh-desktop\\resources',
+  resourcesPath: 'C:\\Harness\\resources',
   ppid: 28776,
 }
 
@@ -72,7 +72,7 @@ const DESKTOP_HOST = { // 19387：DeepSeek Harness.exe --expose-internals …\ap
   check('单证据：execPath 是 electron.exe', detectHostShape({ ...STANDALONE, execPath: 'C:\\app\\electron.exe' }).hosted === true)
   check('单证据：resourcesPath + 非 node 可执行文件', only({ execPath: 'C:\\x\\some-app.exe', resourcesPath: 'C:\\x\\resources' }).hosted === true)
   check('反向：resourcesPath 存在但 execPath 是 node.exe → 不判（保守）', only({ resourcesPath: 'C:\\x\\resources' }).hosted === false)
-  check('反向：argv 里没有 asar 时不会命中该条', only({ argv: ['C:\\node.exe', 'D:\\dsh\\lib\\bin.js'] }).reasons.every((r) => !/app\.asar/u.test(r)))
+  check('反向：argv 里没有 asar 时不会命中该条', only({ argv: ['C:\\node.exe', 'C:\\work\\dsh\\lib\\bin.js'] }).reasons.every((r) => !/app\.asar/u.test(r)))
 }
 // ④ 父进程证据不参与判定（本机真实陷阱：3080 的父进程也是 Electron 启动器）
 {

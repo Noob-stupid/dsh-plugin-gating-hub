@@ -208,7 +208,7 @@ check('★ 改名降级成功时：汇总文案带上「目录正被占用，已
   && !trashedMsg.includes('请手动删除') && !trashedMsg.includes('Remove-Item'), trashedMsg)
 
 // ── ⑨ 删除必须核实：rmSync 在本机某些环境下会「静默落空」（不抛错、目录仍在） ──────────
-// 演练实测（2026-09-20）：同一个 rmSync 在 D:\dsh\repos 删得掉，在 C:\Users\<user>\.dsh\… 下
+// 演练实测（2026-09-20）：同一个 rmSync 在短路径下删得掉，在 C:\Users\<user>\.dsh\… 下
 // 返回成功但目录原封不动；旧代码删完直接 {ok:true} → 对用户撒谎（技能删不掉、残留清理假装清干净）。
 {
   const probe = join(dirname(fileURLToPath(import.meta.url)), '.testdir', 'rm-verify-probe')

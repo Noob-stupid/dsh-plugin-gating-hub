@@ -45,7 +45,7 @@
 dsh plugin --profile web add @noob-stupid/dsh-plugin-console
 
 # 或直接装 GitHub 源码（需 git，首次需 allowBuilds 授权）
-dsh plugin --profile web add github:Noob-stupid/dsh-plugin-hub
+dsh plugin --profile web add github:Noob-stupid/dsh-plugin-gating-hub
 ```
 
 然后重启 dsh 服务 → 刷新页面 → **设置 → 插件 → 插件控制台**。
@@ -57,13 +57,13 @@ dsh plugin --profile web add github:Noob-stupid/dsh-plugin-hub
 Windows（PowerShell）：
 
 ```powershell
-git clone https://github.com/Noob-stupid/dsh-plugin-hub "$env:TEMP\dsh-plugin-console" 2>$null; & "$env:TEMP\dsh-plugin-console\deploy.ps1"
+git clone https://github.com/Noob-stupid/dsh-plugin-gating-hub "$env:TEMP\dsh-plugin-console" 2>$null; & "$env:TEMP\dsh-plugin-console\deploy.ps1"
 ```
 
 Linux / macOS：
 
 ```bash
-git clone https://github.com/Noob-stupid/dsh-plugin-hub /tmp/dsh-plugin-console 2>/dev/null; bash /tmp/dsh-plugin-console/deploy.sh
+git clone https://github.com/Noob-stupid/dsh-plugin-gating-hub /tmp/dsh-plugin-console 2>/dev/null; bash /tmp/dsh-plugin-console/deploy.sh
 ```
 
 脚本会做两件事：把插件包拷进 `$DSH_HOME/profiles/<profile>/node_modules/`，
@@ -74,7 +74,7 @@ git clone https://github.com/Noob-stupid/dsh-plugin-hub /tmp/dsh-plugin-console 
 
 ### 方式三：一句话交给 AI
 
-> 安装 DSH 插件中心（dsh-plugin-hub）：运行 `dsh plugin --profile web add @noob-stupid/dsh-plugin-console`（npm 发布版）；若没有 dsh CLI，则克隆 https://github.com/Noob-stupid/dsh-plugin-hub 到 `~/.dsh/profiles/web/node_modules/`，在 `cordis.patch.yml` 注册（id: plugin-console，name: @noob-stupid/dsh-plugin-console）。完成后重启 dsh web。
+> 安装 DSH 插件中心（dsh-plugin-hub）：运行 `dsh plugin --profile web add @noob-stupid/dsh-plugin-console`（npm 发布版）；若没有 dsh CLI，则克隆 https://github.com/Noob-stupid/dsh-plugin-gating-hub 到 `~/.dsh/profiles/web/node_modules/`，在 `cordis.patch.yml` 注册（id: plugin-console，name: @noob-stupid/dsh-plugin-console）。完成后重启 dsh web。
 
 要求：DSH ≥ 0.1.0-rc.6（web profile，含 `dsh-client-modules` / `dsh-host-plugin-inventory`）。
 
@@ -287,7 +287,7 @@ git clone https://github.com/Noob-stupid/dsh-plugin-hub /tmp/dsh-plugin-console 
 
 ## 帮助 / Help
 
-遇到问题先看这里；仍有疑问请到 [议题](https://github.com/Noob-stupid/dsh-plugin-hub/issues) 提问。
+遇到问题先看这里；仍有疑问请到 [议题](https://github.com/Noob-stupid/dsh-plugin-gating-hub/issues) 提问。
 
 - **面板没出现**：重启 dsh 服务 → 刷新页面 → 设置 → 插件 → 插件管理。
 - **点开关没反应**：基础设施行带"受保护"标签（禁止开关，这是保护机制）；普通插件开关经
@@ -318,7 +318,7 @@ git clone https://github.com/Noob-stupid/dsh-plugin-hub /tmp/dsh-plugin-console 
 - ⭐ **给本仓库点个 Star**——直接帮助更多 DSH 用户发现它；
 - 分享给身边的 DSH 用户或社区；
 - 提交你自己的插件（打上 `dsh-plugin` 标签）一起壮大生态；
-- 发现 bug 或有新需求？[开一个 Issue](https://github.com/Noob-stupid/dsh-plugin-hub/issues)。
+- 发现 bug 或有新需求？[开一个 Issue](https://github.com/Noob-stupid/dsh-plugin-gating-hub/issues)。
 
 ---
 
@@ -329,7 +329,7 @@ git clone https://github.com/Noob-stupid/dsh-plugin-hub /tmp/dsh-plugin-console 
 - **贡献指南**：[CONTRIBUTING.md](CONTRIBUTING.md)
 - **行为准则**：[CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md)
 - **安全政策**：[SECURITY.md](SECURITY.md)（漏洞私下报告）
-- **Issue 模板**：从 [新建 Issue](https://github.com/Noob-stupid/dsh-plugin-hub/issues/new/choose) 页面选择 Bug / 功能建议
+- **Issue 模板**：从 [新建 Issue](https://github.com/Noob-stupid/dsh-plugin-gating-hub/issues/new/choose) 页面选择 Bug / 功能建议
 
 ---
 
@@ -355,5 +355,5 @@ MIT
 - **已验证**：19 套测试全绿 · 8 条架构守卫断言 · 与稳定版逐条对打**路由清单一致**（`status` + 响应字段）；
 - **已实测**（2026-09-20 真装真卸演练）：普通插件 / bundle 插件 / 无 npm 仓库 / 套装 / 技能 / 聚合仓库子包 / 仓库落地 / 服务器组件启停；
 - **尚未实测**：真框架升级 / 真回滚、重启守护链路、AI 真跑、Gitee OAuth 回调（长尾风险主观估计 **10%~25%**）；
-- **日常使用请继续用**：npm `@noob-stupid/dsh-plugin-console@0.3.67`，或本仓库 `main`。
+- **日常使用请继续用**：npm `@noob-stupid/dsh-plugin-console` 的**最新发布版**（`npm view @noob-stupid/dsh-plugin-console version`），或本仓库 `main`。
 - 请多反馈问题

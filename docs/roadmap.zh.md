@@ -83,7 +83,7 @@
 
 | # | 债务 | 建议 |
 |---|---|---|
-| 1 | `lib/index.js` 6818 行、`lib/client.js` 3956 行单文件 | 按域拆分：sources / install / ai / framework / market（**详细分层方案稿在仓库外维护**：`D:\dsh\dsh-plugin-hub-plan\architecture.zh.md`，刻意不入 git；执行从其中的 Step 1「抽 `infra/*` + 路径常量惰性化」开始，每步一个 commit + 部署实测） |
+| 1 | `lib/index.js` 6818 行、`lib/client.js` 3956 行单文件 | 按域拆分：sources / install / ai / framework / market（**详细分层方案稿在仓库外维护、刻意不入 git**；执行从其中的 Step 1「抽 `infra/*` + 路径常量惰性化」开始，每步一个 commit + 部署实测） |
 | 2 | `test-harness` 依赖真实网络 | 改为可 mock，去掉 CI 的 `DSH_TEST_SKIP_NETWORK` 开关 |
 | 3 | 无类型 / 无 lint | 引入 JSDoc + ESLint（渐进式，不阻塞发版） |
 | 4 | 客户端 `call()` 无 body 时发 GET，易踩 405 | 已修（`market-index`）；建议后续统一约定：只读接口显式声明 GET |

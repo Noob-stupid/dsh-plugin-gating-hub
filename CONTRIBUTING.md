@@ -4,7 +4,7 @@
 
 ## 提 Issue
 
-- **Bug 报告**：请使用 [Issue 模板](https://github.com/Noob-stupid/dsh-plugin-hub/issues/new/choose)，附上：
+- **Bug 报告**：请使用 [Issue 模板](https://github.com/Noob-stupid/dsh-plugin-gating-hub/issues/new/choose)，附上：
   - DSH 版本与插件版本（面板「已安装」里可见）
   - 复现步骤（尽量最小化）
   - 期望与实际的差异
@@ -18,7 +18,7 @@
 3. 服务端改动请自测：`node --check lib/index.js` + `node test-harness.mjs` + `node test-framework-upgrade.mjs`；
 4. 客户端改动请自测：`node --check lib/client.js`，并尽量附上改动前后的截图；
 5. 提交信息用中文/英文均可，说明动机；
-6. PR 描述使用 [PR 模板](https://github.com/Noob-stupid/dsh-plugin-hub/blob/main/.github/PULL_REQUEST_TEMPLATE.md)。
+6. PR 描述使用 [PR 模板](https://github.com/Noob-stupid/dsh-plugin-gating-hub/blob/main/.github/PULL_REQUEST_TEMPLATE.md)。
 
 ## 本地开发
 
