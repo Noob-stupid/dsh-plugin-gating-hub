@@ -8,14 +8,14 @@ All notable changes to dsh-plugin-hub.
 > 本机缓存目录、仓库外私有方案稿路径）清出去，并修掉三条**只因本机环境恰好满足才没爆**的真缺陷。
 > **win32 上的现有行为一字不改**；非 win32 从"静默假成功"改为"明确拒绝"。
 > 判据不是"肉眼看着干净"，而是对**所有已跟踪文件**（208 个，202 个可解码文本）跑同一份扫描：
-> 本机用户名 `花火`、其百分号编码 `%E8%8A%B1%E7%81%AB`、`/home/`、`_authToken`、`PRIVATE KEY`
+> 本机用户名（含中文）与其百分号编码、POSIX 家目录前缀、npm 凭据键名、私钥块头
 > **各 0 命中**；剩余命中全部落在下面的允许清单里（第三方包名 / npm 环境变量名 / token 形状正则 /
 > 通用示例路径 / `homedir()` 派生）。
 
 ### 改错：三条 🔴（本机写死 / 非 Windows 假成功）
 
 - 🔴① **`lib/server/domain/framework.js` 把开发机的 npx 缓存盘符写进了源码**
-  （`'D:\node_cache\_npx'`，随 npm 发给所有用户）。缓存根改为**全部由「环境变量 / 用户自己的配置 /
+  （`'<盘符>:\node_cache\_npx'`，随 npm 发给所有用户）。缓存根改为**全部由「环境变量 / 用户自己的配置 /
   用户目录」派生**：`NODE_CACHE` → `npm_config_cache` / `NPM_CONFIG_CACHE` → 用户级 `~/.npmrc` 的
   `cache=`（npm 自己的配置来源）→ `~/.npm/_npx` → `%LOCALAPPDATA%\node_cache\_npx`。
   顺带修掉同族的两处：`LOCALAPPDATA` 缺失时旧代码会拼出**相对路径** `node_cache/_npx`（相对 CWD）；
