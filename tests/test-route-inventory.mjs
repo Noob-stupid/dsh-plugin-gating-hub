@@ -82,6 +82,13 @@ const ROUTES = [
   '/lockfile-repair',
   // 结构化建议动作（2026-09-27 加法）：只认白名单动作类型，argv 由服务端自拼
   '/run-suggested',
+  // 补丁体检（2026-09-28 加法）：只读；补丁里引用的包在当前框架树里是否还在（真机事故：
+  // 框架 0.2.0-rc.1 移除 worker-thread 后，补丁旧包名 → workflowEngine 无提供方 → 老会话 resume 失败）
+  '/patch-audit',
+  // 预设声明行体检（2026-09-28 加法）：只读；磁盘预设 ↔ profile 声明行 对账
+  '/preset-audit',
+  // 兼容提示可手动关闭（2026-09-28 加法）：按版本 ack + 展示模式（只影响展示，不改 supported）
+  '/compat-ack',
 ]
 // 分层后路由可能写在 lib/server/routes/**（表项）或 index.js（内联分支）—— 两种写法都要认
 const walkSrc = (dir) => readdirSync(dir, { withFileTypes: true }).flatMap((e) => {
@@ -124,12 +131,75 @@ const SCHEMAS = [
   // 而本机装了 dsh-github-login 且 exe 在（D:\dsh\dsh-github-login\dist\DSH-GitHub-Login.exe），
   // 默认端口 3080 又正是本机在跑的宿主 —— 真调一次会弹出登录窗口，测试不该有可见副作用。
   // 所以它改用下面的「②c 弱断言」：把端口临时指到没人监听的空端口，走真实的降级分支。
+  // 0.5.30 加法（2026-09-28）：两条**只读体检**接口，靠 GET 调用（诊断/子代理直接 curl）。
+  // 夹具 profile 里补丁只有一行注释、且没有 .agent-presets 目录 → 两条都走「零行 / 无需体检」的确定分支。
+  // ⚠ 这两行同时是**方法契约的回归断言**：路由若被登记到 405 守卫之后（真机曾经的实现），
+  //   这里拿到的会是 405「不支持的方法」而不是 200 —— 契约断言与下面的 ②a-1 判据互为双保险。
+  ['GET', '/plugin-console/preset-audit', undefined, 200, ['blockers', 'error', 'missing', 'ok', 'orphan', 'patchPath', 'presetCount', 'presetsRoot', 'stale', 'targetMissing']],
+  ['GET', '/plugin-console/patch-audit', undefined, 200, ['bases', 'blockerCount', 'blockers', 'ok', 'patchPath', 'rows', 'warningCount', 'warnings']],
 ]
 for (const [method, path, body, wantStatus, wantKeys] of SCHEMAS) {
   const r = await call(method, path, body)
   const keys = r.json === null ? [] : Object.keys(r.json).sort()
   const same = r.status === wantStatus && JSON.stringify(keys) === JSON.stringify([...wantKeys].sort())
   check(`响应契约 ${method} ${path.replace('/plugin-console', '')}`, same, `status=${r.status} keys=${keys.join(',')}`)
+}
+
+// ── ②a-1 方法契约：路由**声明的方法**必须真的"走得到"（2026-09-28 真机 405 事故的固化）──────
+// 真机现场（0.5.29 活体实例）：`GET /plugin-console/preset-audit` 与 `.../patch-audit` 恒 405
+// 「不支持的方法」，而 `POST` 同路径恒 404「未知接口」—— 两句都是 handle() 自己发出的话，
+// 说明**查表根本没参与**：405 来自守卫
+//     if (method !== 'POST' && !(method === 'GET' && GET_COMPAT.has(pathname))) → 405
+// 它跑在 `ROUTES` 查表**之前**，而两条新接口被登记进了守卫之后那张表 → GET 永远到不了 handler。
+// 判据比"路由清单里有没有这条"更严：**任何声明 GET 的路由都必须住在守卫之前（ROUTES_EARLY），
+// 或进 GET_COMPAT 白名单**；否则它声明的那个方法根本走不到（只有 POST 能过守卫）。
+{
+  const routerSrc = readFileSync(join(ROOT, '..', 'lib', 'server', 'routes', 'index.js'), 'utf8')
+  const earlySrc = routerSrc.slice(routerSrc.indexOf('const ROUTES_EARLY'), routerSrc.indexOf('function routeDeps'))
+  const lateSrc = routerSrc.slice(routerSrc.indexOf('const ROUTES = ['))
+  const declsOf = (block) => [...block.matchAll(/\{\s*methods:\s*\[([^\]]+)\],\s*path:\s*`\$\{ROUTE_PREFIX\}([^`]*)`/gu)]
+    .map((m) => ({ methods: m[1].split(',').map((s) => s.trim().replace(/['"]/gu, '')).filter(Boolean), path: m[2] }))
+  const early = declsOf(earlySrc)
+  const late = declsOf(lateSrc)
+  const compat = new Set([...((routerSrc.match(/const GET_COMPAT = new Set\(\[([^\]]*)\]/u) ?? [])[1] ?? '')
+    .matchAll(/`\$\{ROUTE_PREFIX\}([^`]*)`/gu)].map((m) => m[1]))
+
+  const unreachable = late.filter((d) => d.methods.includes('GET') && !compat.has(d.path))
+  check('★ 方法契约：声明 GET 的路由不许登记在 405 守卫之后的表里（preset-audit/patch-audit 恒 405 的根因）',
+    unreachable.length === 0,
+    unreachable.length === 0
+      ? `守卫前的表 ${early.length} 条 / 守卫后的表 ${late.length} 条，声明的方法都可达`
+      : `GET 会被 405 拦死，永远到不了 handler：${unreachable.map((d) => d.path).join(', ')}`)
+
+  // 反向（客户端↔服务端对齐）：client.js 的 call(path, body) —— **无 body → fetch(path, {}) = GET；
+  // 有 body → POST**。每个调用点用的方法都必须被路由声明，且真的能过守卫。
+  // （这正是不该只靠"路由清单"的原因：清单只查路径存在，不查"那个方法走得到"。）
+  const earlyPaths = new Set(early.map((d) => d.path))
+  const all = [...early, ...late]
+  const clientSrc = readFileSync(join(ROOT, '..', 'lib', 'client.js'), 'utf8')
+  const used = new Map()
+  for (const m of clientSrc.matchAll(/call\(\s*["'`]\/plugin-console\/([\w\-/]*)["'`](\s*[,)])/gu)) {
+    const path = '/' + m[1]
+    const method = m[2].trim() === ')' ? 'GET' : 'POST'
+    if (!used.has(path)) used.set(path, new Set())
+    used.get(path).add(method)
+  }
+  const bad = []
+  for (const [path, methods] of used) {
+    for (const method of methods) {
+      if (!all.some((d) => d.path === path && d.methods.includes(method))) bad.push(`${method} ${path}（路由表没有声明这个方法）`)
+      else if (method === 'GET' && !earlyPaths.has(path) && !compat.has(path)) bad.push(`GET ${path}（不在守卫前的表/白名单里 → 恒 405）`)
+    }
+  }
+  check(`★ 方法契约：client.js 每个调用点的方法都被路由声明且真的走得到（${used.size} 个调用点）`,
+    bad.length === 0, bad.length === 0 ? '全部对齐（无 body → GET；有 body → POST）' : bad.join('; '))
+
+  // 方法唯一性：两条只读接口**只认 GET** —— POST 不许被当成"另一种调用方式"悄悄放行
+  for (const p of ['/plugin-console/preset-audit', '/plugin-console/patch-audit']) {
+    const r = await call('POST', p, {})
+    check(`★ 方法唯一性：POST ${p.replace('/plugin-console', '')} 不被接受（只读接口只声明 GET）`,
+      r.status !== 200, `status=${r.status}`)
+  }
 }
 
 // ── ②a-0 依赖锁体检必须是**只读**的（2026-09-27 加法）─────────────────────────────

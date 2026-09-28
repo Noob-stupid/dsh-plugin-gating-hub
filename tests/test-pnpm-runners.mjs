@@ -30,12 +30,12 @@ const kinds = (runners) => runners.map((r) => r.kind).join(',')
   const command = cmdCorepackCommand(['add', 'left-pad', '--registry', 'https://registry.npmmirror.com'])
   // 「不含 \"」就是本轮的判据：旧实现用 JSON.stringify 拼串 → Node 再转义 → cmd 收到 \"corepack\"
   check('① cmdCorepackCommand 不含 \\" 转义（也不含任何反斜杠）', !command.includes('\\"') && !command.includes('\\'), JSON.stringify(command))
-  check('① 段内各段都正确加了引号（无空格裸串）', command === '"corepack" "pnpm" "add" "left-pad" "--registry" "https://registry.npmmirror.com"', command)
+  check('① 段内各段**按需**加引号（干净 token 不加 —— 2026-09-28 改错：.cmd shim 会把引号透给 %*）', command === 'corepack pnpm add left-pad --registry https://registry.npmmirror.com', command)
   const argv = cmdShellArgv(command)
   check('① argv 形如 [\'/d\',\'/s\',\'/c\', <命令串>]（4 段、前 3 段是 cmd 开关）',
     argv.length === 4 && argv[0] === '/d' && argv[1] === '/s' && argv[2] === '/c' && typeof argv[3] === 'string', JSON.stringify(argv))
   check('① argv[3] 不含 \\" 且是"整条再包一层引号"的形态（/s 会剥掉最外层）',
-    !argv[3].includes('\\"') && argv[3] === `"${command}"` && argv[3].startsWith('""corepack"') && argv[3].endsWith('"'), JSON.stringify(argv[3]))
+    !argv[3].includes('\\"') && argv[3] === `"${command}"` && argv[3].startsWith('"corepack ') && argv[3].endsWith('"'), JSON.stringify(argv[3]))
   // cmd 元字符：`& | < > ( )` 在引号内仍是 cmd 的操作符（实测 "a&b" 会在 & 处断开），必须 ^ 转义；
   // `^` 自身在引号内也生效（实测 "a^b" → 到程序手里变 "ab"）→ 写成 ^^
   const meta = cmdCommandLine(['a&b', 'c|d', 'e<f', 'g>h', 'i(j)', 'k^l'])
@@ -43,7 +43,7 @@ const kinds = (runners) => runners.map((r) => r.kind).join(',')
     meta === '"a^&b" "c^|d" "e^<f" "g^>h" "i^(j^)" "k^^l"', meta)
   // 已知边界（如实断言当前行为，别假装覆盖）：% 变量展开任何引号/^ 都挡不住
   check('① 已知边界：%VAR% 不做（也无法做）转义 —— 我们生成的 argv 本身不含 % 与 !',
-    cmdCommandLine(['x%y%']) === '"x%y%"'
+    cmdCommandLine(['x%y%']) === 'x%y%'
     && !/[%!]/u.test(command)
     && !/[%!]/u.test(cmdCommandLine(['add', 'left-pad', '--registry', 'https://registry.npmmirror.com', '--fetch-timeout=60000'])), cmdCommandLine(['x%y%']))
 }
