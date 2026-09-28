@@ -156,6 +156,29 @@ jobs:
           #    真机形状写成且行里是 prefix、file: URL 改写正确、读回核实 6 项全过、二次声明幂等
           node tests/test-preset-rows.mjs
 
+          # 0.5.30 批次（2026-09-28）四套新测试接入 CI —— 此前它们只在 tests/run-all.mjs 本机跑，
+          # 等于没进门禁（本批新增的 preset-audit / patch-audit 路由被登记到 405 守卫之后，没人拦得住）。
+          # 全部离线：纯判据 / 注入 IO / 私有 DSH_HOME（临时目录），不碰真实 profile、不用网络。
+          # 路由级的方法契约另固化在 test-route-inventory.mjs（声明 GET 的路由必须住在 405 守卫之前）。
+          node tests/test-compat-notice.mjs
+          node tests/test-patch-composition-audit.mjs
+          node tests/test-preset-audit.mjs
+          node tests/test-framework-residuals.mjs
+
+          # 0.5.30 改错（**真机事故 2026-09-29 01:05:44**）：`healPatchSafety()` 误判「模块缺失」→ 自动禁用。
+          # 现场：web profile 补丁尾部被追加 4 个 `disabled: true` 块（preset-router-spec /
+          # workflow-worker-thread / preset-router-standard / preset-router-react），用户的 preset-router-* 三条被停掉。
+          # 真因：自愈只用**单基准** `resolvePackageJson(name, profileDir)`，而框架 0.2.0-rc.1 起
+          # `@deepseek-ai/*` 的实体全在 `.pnpm` **内部**那层 → 框架真存在的内置包（dsh-agent-preset /
+          # dsh-workflow-ptc）被判成"缺失"。本套把它钉死（全离线：私有临时沙箱 + 自造桩包树）：
+          # ① 多基准解析器（`.pnpm` 内层 / 「node_modules 本身」基准写法 / dirname×3 而非 ×2 的取层回归）
+          # ② 单基准失败**不再**导致禁用（profile 顶层解析不到、框架树能解析 → 零写盘零禁用）
+          # ③ 无缺失时**零写盘**（文件 SHA256 逐字节比对；GET /state 每 ≤2min 就调一次本函数）
+          # ④ 真缺失时**仍如实禁用**（判据不许被修松）+ 框架自带包永不自动禁用 + 解析不确定只报告
+          # ⑤ 写盘失败如实回报（written=false / writeError 带真因 / healedAt=0，不谎报"已修复"）
+          # ⑥ 本机有真实 profile 时真调真机框架树（CI 无 profile 则**响亮 SKIP**，不假装 PASS）
+          node tests/test-patch-heal-safety.mjs
+
       # 真装真卸冒烟：在 CI 的 Linux 宿主上跑（临时 DSH_HOME，不碰真实目录）。
       # 为什么单独一步且**不带** DSH_TEST_SKIP_NETWORK：环境相关测试"没 profile 就整体 SKIP"，
       # 正是这个缺口让 `git.exe`、corepack Windows 路径这类硬编码在 Linux CI 上一直活着（2026-09-20 复盘）。
