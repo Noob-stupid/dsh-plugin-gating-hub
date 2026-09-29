@@ -2,6 +2,107 @@
 
 All notable changes to dsh-plugin-hub.
 
+## v0.5.32 — 别的更新通道改了框架也守住门（自动预检 + 有证据自动禁用 + 安全启动快照 + 桌面端自动回观察者，2026-09-29）
+
+> 用户诉求（原话）：「走**别的**更新通道（官方桌面端更新器 / 手动 pnpm / npx 缓存变化）改了框架后，
+> 我们**仍要自动守门**」，并且要「能挽救『改完打不开』的局面」。
+> 本版**只做加法与改错**：不改变 observer / managed 的既有语义，不动 `/framework-upgrade` 的接管行为，
+> **常驻 UI 与 0.5.31 逐像素一致**（i18n 键零净增），新信息全部走既有的瞬时提示通道。
+>
+> ### 边界（据实说明，别指望它做不到的事）
+>
+> **服务已经彻底起不来那一刻，我们的代码不在运行** → 无法由我们执行禁用。本版能做的是：
+> ①「知道该拦谁」（指纹变化即自动预检）；②在**服务还能起来**（或下次启动前）把有**确证证据**的行禁掉；
+> ③每次自动禁用都留了**一条命令回滚**的本钱。「服务之外的全自动看门狗」（计划任务 / 启动器钩子）
+> 本版**未做** —— 那要动用户的启动器或系统计划任务，需单独授权。
+> 框架侧确有"不杀宿主"机制：`packages/boot/app-boot/src/index.ts:658-663` 的 `assertEntriesLoaded()`
+> 只把 `entry.fiber === undefined && !entry.disabled` 判为致命（`:698` 同语义）⇒ 给坏行写
+> `disabled: true` 它就不再让启动断言失败，这正是本版买的那张票。
+
+### 加法
+
+- **D1 · 指纹变化 → 自动预检（只读）**：新增 `lib/server/domain/auto-preflight.js`（判定/节流/超时/记录）
+  与 `lib/server/domain/auto-preflight-run.js`（只读扫描器）。`GET /plugin-console/compat-status` 在
+  `compareFingerprint` 报 `changed=true` 时**后台**跑一次预检（**不下载、不安装、不改补丁、不联网**），
+  产成「兼容清单（受影响行）+ 隔离计划（建议禁用哪些行及理由）+ 本次变更摘要（框架版本 from→to、
+  新增/消失的包、指纹 reasons）」。**同一指纹只自动跑一次**（以指纹为 key 持久化到
+  `dshHome()/plugin-console/auto-preflight.json`）；失败/超时**如实记录原因**（`state=failed|timeout`，
+  「未完成，可手动重跑」）且允许重试；**绝不阻塞状态查询**（预检在后台，响应先回）。
+- **D5 · 有确证证据 → 自动禁用会拖垮服务的行**（触发源从「我们升级」扩到「指纹变化 / 启动失败记录」）：
+  新增 `lib/server/domain/auto-disable.js`。**只禁有证据的行**：行引用的包**确证解析不到**
+  （`package-unresolvable`）/ `file://` 目标确实不存在（`file-target-missing`）/ 启动失败日志**点名**；
+  证据不足的形态（子路径解析不到、依赖副本陈旧）与**解析不确定**（没有基准、解析器抛错）一律
+  **只报告不写盘**。0.5.30 已立的安全栏逐条带上：`@deepseek-ai/*`（框架自带）与**受保护/核心行永不禁用**
+  （复用 `framework.js:483/493` 的两类判据）、**禁前先写 last-known-good 快照**（快照失败则**放弃禁用**）、
+  **幂等零写盘**、**每次留一条可读记录**（`dshHome()/plugin-console/auto-disable.log`，追加式 JSONL：
+  时间/行 id/证据/快照 id/备份路径/恢复命令）。开关 `compat-gate.json#autoDisableOnEvidence`
+  **默认启用**；关掉 = **只报告 + 等用户点**（零写盘），走既有 `POST /plugin-console/compat-ack`。
+- **D2 · 安全启动材料（只作为自动禁用的回滚本钱）**：新增 `lib/server/domain/safe-boot.js`。
+  每次确认服务正常（状态查询成功 + 指纹未变 + 补丁结构合法）落一份快照：补丁**逐字节副本** +
+  框架版本 + 环境指纹 + 此刻启用/禁用行清单 + 时间戳；写在 `dshHome()/plugin-console/safe-boot/`
+  （**不是** profile 目录，不污染用户 profile）；**原子写**（临时文件 + rename）+ sha256；
+  保留最近 3 份 + **永不删**「用户标记为良好」的那份；同名同毫秒冲突自动加序号（不静默覆盖）。
+- **D3 · 恢复原语（路由 + 离线脚本共用同一套判据）**：新增 `lib/server/routes/safe-boot.js`
+  （`POST /plugin-console/safe-boot`，白名单动作 `list` / `restore-last-good` / `disable-suspects` /
+  `mark-good`；只认动作名，**绝不接受命令串**）与 `scripts/safe-boot.mjs`（零依赖、
+  **服务未运行也能跑**）。`restore-last-good` = 改前再备份 + 严格校验 + 逐字节恢复 + 读回核实；
+  `disable-suspects` = **只**给点名行追加 `disabled: true`（**不删任何行**）。
+- **D4 · 桌面端宿主启动 → 自动拨回观察者**：`compat-mode.json` 增 `source`
+  （`manual` / `auto:console-upgrade` / `auto:desktop-host`，**缺字段按 `manual` 兼容**）。
+  复用既有 `detectHostShape()` 判据；**只在「上次不是用户手动设定」时才自动改** —— 用户手动拨过
+  之后**永不自动改**；已是 observer（或本次已判定过）→ **零写盘**。
+- 新增 `lib/server/domain/patch-yaml-check.js`：严格但**不误杀**的补丁结构校验
+  （真机两份 56 KB 补丁实测 0 误报；`preset-yaml` 那把尺子是按预设文件校准的，量补丁会整片假红）。
+
+### 改错
+
+- **`writeCompatMode` 幂等零写盘**：模式与来源都没变时不再重写状态文件（此前"每次自动判定都写一份"）。
+- **`readCompatMode` 增 `fileSource`**：把「记录来源（file/default）」与新增的「模式来源
+  （manual/auto:*）」分开，避免把两件事塞进同一个字段名。
+- **自动预检记录的终态写入只 upsert 自己那一条**：实测踩到过"多指纹并发收尾互相覆盖"，
+  被覆盖的那条会**永远停在 pending**（面板永远显示"正在自动预检…"）。
+- **指纹 key 路径归一**：`C:\x` 与 `c:/x` 是同一棵树 —— 不归一会把"同一个环境"算成两次变更。
+- **`planDisableRows` 增两道安全栏**（框架自带行 / 受保护模块行）：自动与手动两条禁用路径一并受保护。
+- **关掉自动禁用开关后不再冒出旧提示**（真机路径实测发现）：`lastAutoDisable` 是内存里的"上一次结果"，
+  开关关掉后那条"已自动禁用 N 行"还会继续冒 —— 看起来像"刚刚又被禁了一次"，而补丁其实一个字节都没动。
+  现改为**读时判据**（关闭且上次是 `auto-disabled` → 不下发提示）。
+- **`preflightRoots` 抽成可注入形式**（`routes/framework-preflight.js`）：让自动预检与既有手动预检
+  **共用同一套扫描面推导**，避免两套推导分叉成"自动预检看不见用户装的那个包"的静默漏报。
+- **测试改错**：`tests/test-compat-state.mjs` 的"没有记录"断言改判 `fileSource`（`source` 已成为模式来源）。
+
+### 测试与门槛（全部离线，进 CI 硬门槛）
+
+- `tests/test-auto-preflight.mjs`：D1（同指纹只跑一次 / 失败与超时如实报 / **不阻塞**（慢桩下响应仍先回）/
+  指纹未变不下发上个环境的结论 / 真实扫描器结构完整且标注"不联网" / 受影响行排序与隔离计划剔除核心行）。
+- `tests/test-safe-boot.mjs`：D2/D5（原子写无 `.tmp` 残留 / sha256 可校验 / 保留 3 份 + 永不删良好 /
+  逐字节恢复 + **改前再备份** / 被改坏的快照**拒绝使用**且零字节改动 / 只禁点名行且其余逐字节不变 /
+  框架包与核心行永不禁用 / 解析不确定不写盘 / **禁前先快照** / 幂等零写盘 / 可读记录 /
+  开关关闭只报告 / 补丁不存在时如实拒绝不创建文件 / 快照落在 `dshHome()` 而非 profile）。
+- `tests/test-desktop-host-mode.mjs`：D4（四种结局 / **手动优先** / 老记录按 manual 兼容 /
+  **零写盘（内容 + mtime 双判据）**）+ **本机绝对路径与用户名 0 出现**的扫描断言（本轮 17 个文件，
+  允许清单逐条写理由；含"扫描断言本身有效"的反向自证）。
+- `tests/test-route-inventory.mjs`：`/safe-boot` 进路由清单（62 条）与 client↔server 方法契约
+  （55 个调用点：无 body → GET / 有 body → POST 都必须被声明且走得到）。
+- 本机 `node tests/run-all.mjs` → **74 套，失败 2 套**（`test-bundle-guard` / `test-issue15-resolve`）；
+  这 2 套**已用 `git stash` 在干净树上复现同样失败**：跑测试的会话在桌面端实例里、`DSH_PROFILE_DIR`
+  指向 desktop profile，而 `dsh-better-sidebar` 只在 web profile → 与本次改动无关。
+- 架构守卫 ALL PASS：`lib/index.js` **142 行**（棘轮 142，未上调）；`lib/server/**` 82 个 `.js`
+  只有 `routes/framework-upgrade.js` 超 600（仍是唯一受限例外）。
+
+### 未验证 / 已知项
+
+- **服务已彻底起不来那一刻我们执行不了禁用**（代码不在运行）—— 这是物理边界，不是缺陷；
+  「服务外全自动看门狗」（计划任务 / 启动器钩子 / 桌面端按钮）**本版未做**，需用户单独授权。
+- **D5 的"启动失败点名"证据链在生产环境仍拿不到**：启动失败隔离只由**我们自己的升级脚本**触发
+  （`routes/framework-upgrade.js:213-214` 生成 `fw-analyze-boot.mjs` + 候选快照，`:572` 起在生成的
+  PowerShell 里调用 `planQuarantine`）—— 官方更新器 / 手动 pnpm / 桌面端 `/restart` 都不走这段。
+  因此"别人升级把服务搞挂"时，这条证据来源目前是空的（指纹变化那条证据照常可用）。
+- **自动禁用未在真实故障现场复现"确证缺失"**：全部是离线夹具（私有 `DSH_HOME` + 自造补丁/包树）。
+- **桌面端真机上的 D4 自动回观察者未实测**：只做了判据注入 + 假 ctx 真跑路由（离线），
+  真机 IPC/进程形态与注入不同。
+- `scripts/safe-boot.mjs` 的 `--home` / `--profile` 推导只做了夹具级验证，未在真实 `DSH_HOME` 上跑恢复。
+- 两个 live profile 只做**文件级同步（未重启）**：服务端路由要等对应实例重启才生效。
+
 ## v0.5.31 — 通用性/去本机化批次（3 条本机写死 + 去标识化，2026-09-29）
 
 > 本版是**可移植性专项**：把源码、注释、文案、文档里残留的「开发机色彩」（本机盘符、本机用户名、
