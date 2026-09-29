@@ -89,6 +89,9 @@ const ROUTES = [
   '/preset-audit',
   // 兼容提示可手动关闭（2026-09-28 加法）：按版本 ack + 展示模式（只影响展示，不改 supported）
   '/compat-ack',
+  // 安全启动材料（2026-09-29 加法 D3，0.5.32）：白名单动作 list / restore-last-good /
+  // disable-suspects / mark-good（自动禁用的回滚本钱由它兑现）
+  '/safe-boot',
 ]
 // 分层后路由可能写在 lib/server/routes/**（表项）或 index.js（内联分支）—— 两种写法都要认
 const walkSrc = (dir) => readdirSync(dir, { withFileTypes: true }).flatMap((e) => {

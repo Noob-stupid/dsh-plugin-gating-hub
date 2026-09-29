@@ -49,9 +49,10 @@ const callRoute = async (handler, body = {}) => {
   return res.captured
 }
 
-// ① 纯加法：默认托管
+// ① 纯加法：没设置过 → 默认观察者（`fileSource` = 记录是否存在；0.5.32 起新增的 `source` 是**模式来源**，
+//    与"记录来源"是两件事，故这里断言 `fileSource` —— 既有的"没有记录"语义一个字没变）
 const boot = readCompatMode()
-check('默认运行模式 = observer（用户 2026-09-24 定：默认只守门、不接管升级）', boot.mode === 'observer' && boot.source === 'default', JSON.stringify(boot))
+check('默认运行模式 = observer（用户 2026-09-24 定：默认只守门、不接管升级）', boot.mode === 'observer' && boot.fileSource === 'default', JSON.stringify(boot))
 
 // ② 模式白名单 + 往返
 check('切到 managed 成功', writeCompatMode('managed').ok === true && readCompatMode().mode === 'managed')

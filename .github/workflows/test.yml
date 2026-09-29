@@ -185,6 +185,22 @@ jobs:
           # ⑥ 本机有真实 profile 时真调真机框架树（CI 无 profile 则**响亮 SKIP**，不假装 PASS）
           node tests/test-patch-heal-safety.mjs
 
+          # ── 0.5.32 批次（2026-09-29）：**别的更新通道改了框架也要守住门** ──────────────────────
+          # 用户诉求原话：「走别的更新通道（官方桌面端更新器 / 手动 pnpm / npx 缓存变化）改了框架后，
+          # 我们仍要自动守门」+「有确证证据时自动禁用会拖垮服务的行」。四套（全离线、私有 DSH_HOME）：
+          # ① D1 指纹变化 → 自动预检：同一指纹只跑一次、失败/超时如实报且**不阻塞状态查询**、
+          #    指纹没变不下发上一个环境的结论；含**真实扫描器**（只读、不联网）的结构断言；
+          # ② D2/D5：快照（原子写 / sha256 校验 / 保留 3 份 + 永不删"良好"）+ `restore-last-good`
+          #    逐字节恢复且改前再备份 + `disable-suspects` 只动点名行（其余逐字节不变）+
+          #    自动禁用只认确证证据（框架包/核心行/受保护行永不禁用、解析不确定不写盘、
+          #    禁前先写快照、幂等零写盘、留可读记录、开关关闭只报告）；
+          # ③ D4 桌面端宿主 → 自动拨回观察者（不抢手动 / 幂等零写盘 / 老记录按 manual 兼容）
+          #    + **本机绝对路径与用户名 0 出现**的扫描断言（本轮 17 个文件，允许清单逐条写理由）；
+          # ④ 路由契约（/safe-boot 白名单动作 + 新字段）另由 test-route-inventory 固化。
+          node tests/test-auto-preflight.mjs
+          node tests/test-safe-boot.mjs
+          node tests/test-desktop-host-mode.mjs
+
       # 真装真卸冒烟：在 CI 的 Linux 宿主上跑（临时 DSH_HOME，不碰真实目录）。
       # 为什么单独一步且**不带** DSH_TEST_SKIP_NETWORK：环境相关测试"没 profile 就整体 SKIP"，
       # 正是这个缺口让 `git.exe`、corepack Windows 路径这类硬编码在 Linux CI 上一直活着（2026-09-20 复盘）。
