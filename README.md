@@ -311,8 +311,40 @@ The mode decides **who leads framework upgrades** — nothing else:
 
 - **Observer (default)**: the console only preflights, gates, and guards the rollback point. It does not take over upgrades.
 - **Managed**: framework upgrade and rollback are owned by this console. It switches to managed automatically when you upgrade through this console, and records the reason.
+- **Switches back to Observer automatically (0.5.32)**: when the **desktop-host shape** is detected (the existing `detectHostShape()` criteria), a mode that was **not set by hand** (`compat-mode.json` `source` is `auto:*`; a missing field counts as `manual`) is switched back to Observer on startup / first status query, with a one-line notice. **Once you switch it by hand it is never changed automatically again**; when it is already Observer nothing is written.
 
 **Boot-failure quarantine is not affected by the mode.** When the service cannot start, the console locates the culprit from the boot log and disables it (broken presets are renamed to `.broken-*`; with no clear culprit it falls back to safe mode so the service can start). A console that cannot boot cannot gate anything — so this rescue path always runs.
+
+**Auto-disable on confirmed evidence (0.5.32)**: when the fingerprint-triggered auto-preflight, or a
+boot-failure record, provides **confirmed evidence** (the row's package resolves on **none** of the
+resolution bases, a `file://` target truly does not exist, or the boot log names the row), the console
+writes `disabled: true` for those rows **itself** (no click needed). Safety rails: **only rows with
+evidence**; `@deepseek-ai/*` (framework-owned) and protected/core rows are **never** auto-disabled;
+a **safe-boot snapshot is written first**, so any auto-disable is one command away from a rollback;
+when there is nothing to write, **not a single byte is written**; every auto-disable leaves a record in
+`dshHome()/plugin-console/auto-disable.log` (time / row id / evidence / restore command).
+
+Prefer "report only, let me click" (enabled by default) — replace `<host:port>` with your instance
+(the default `dsh web` profile listens on `127.0.0.1:3080`):
+
+```bash
+curl -X POST http://<host:port>/plugin-console/compat-ack \
+  -H 'Content-Type: application/json' -d '{"autoDisableOnEvidence":false}'
+```
+
+**How to roll an auto-disable back**: the route `POST /plugin-console/safe-boot` with
+`{"action":"restore-last-good"}` (the current state is backed up first), or — when the service will not
+start — from the plugin directory:
+
+```bash
+node scripts/safe-boot.mjs --list                 # see which snapshots exist
+node scripts/safe-boot.mjs --restore-last-good    # restore the newest good snapshot byte-for-byte
+node scripts/safe-boot.mjs --disable-suspects     # or: append disabled: true to named rows only (nothing deleted)
+node scripts/safe-boot.mjs --mark-good            # mark a snapshot as good (never removed by retention)
+```
+
+Safe-boot snapshots live under `dshHome()/plugin-console/safe-boot/` (**not** in the profile directory),
+keeping the newest 3 plus the one you marked as good.
 ## Framework compatibility
 
 Measured on isolated instances (fresh `DSH_HOME`, real HTTP probes) — **supported: framework ≥ `0.1.5-rc.2`**, no workarounds needed.

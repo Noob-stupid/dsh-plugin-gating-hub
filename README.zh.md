@@ -248,8 +248,40 @@ git clone https://github.com/Noob-stupid/dsh-plugin-gating-hub /tmp/dsh-plugin-c
 
 - **观察者（默认）**：只做预检、门控与回滚点守护，不接管框架升级。
 - **托管**：框架升级与回滚由本控制台负责。**走本控制台升级时会自动切到托管**并记下原因。
+- **自动切回观察者（0.5.32）**：检测到**桌面端宿主形态**（复用既有 `detectHostShape()` 判据）时，
+  若当前模式**不是用户手动设定的**（`compat-mode.json` 的 `source` 为 `auto:*`；缺字段按 `manual` 兼容），
+  启动/首次状态查询会把它自动拨回观察者并给一行提示。**你手动拨过一次之后，它永不自动改**；
+  已经是观察者时零写盘。
 
 **启动失败隔离不受模式影响。** 服务起不来时，控制台会从启动日志定位肇事插件并禁用它（预设文件改名 `.broken-*`；找不到明确肇事者则进安全模式先让服务起来）。**起不来的控制台什么都门控不了** —— 所以这条救火链路永远生效。
+
+**有确证证据时会自动禁用（0.5.32）**：环境指纹变化触发的自动预检、或启动失败记录给出**确证证据**时
+（行引用的包**在所有解析基准上都解析不到**、`file://` 目标确实不存在、启动失败日志**点名**该行），
+控制台会**自动**给这些行写 `disabled: true`（不再等你点）。安全栏：**只禁有证据的行**；
+`@deepseek-ai/*`（框架自带）与受保护/核心行**永不自动禁用**；**禁前先写一份"安全启动快照"**，
+所以任何一次自动禁用都能一条命令回滚；没有可写内容时**一个字节都不写**；每次自动禁用都在
+`dshHome()/plugin-console/auto-disable.log` 留一条记录（时间 / 行 id / 证据 / 恢复命令）。
+
+想改成"只报告、等我自己点"（默认启用）—— `<host:port>` 换成你实例的地址
+（默认 `dsh web` profile 监听 `127.0.0.1:3080`）：
+
+```bash
+curl -X POST http://<host:port>/plugin-console/compat-ack \
+  -H 'Content-Type: application/json' -d '{"autoDisableOnEvidence":false}'
+```
+
+**怎么恢复（把自动禁用回滚）**：接口 `POST /plugin-console/safe-boot` + `{"action":"restore-last-good"}`
+（改前会再备份一份当前状态）；或服务打不开时，在插件目录下跑：
+
+```bash
+node scripts/safe-boot.mjs --list                 # 先看清有哪些快照
+node scripts/safe-boot.mjs --restore-last-good    # 整份逐字节恢复到最近的良好快照
+node scripts/safe-boot.mjs --disable-suspects     # 或：只给点名的可疑行追加 disabled: true（不删任何行）
+node scripts/safe-boot.mjs --mark-good            # 把某份快照标记为"良好"（永不随保留策略删除）
+```
+
+安全启动快照落在 `dshHome()/plugin-console/safe-boot/`（**不在** profile 目录里），保留最近 3 份 +
+永不删你标记为"良好"的那份。
 ## 框架兼容性
 
 在隔离实例（全新 `DSH_HOME` + 真实 HTTP 探针）实测：**支持框架 ≥ `0.1.5-rc.2`**，无需任何变通。
