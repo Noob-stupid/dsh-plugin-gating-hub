@@ -31,8 +31,9 @@ const writePkg = (name, version, source) => {
 writePkg('@fake/locked', '2.0.0', 'export const ok = true\n')
 // 没更新且源码坏掉的包：import 冒烟检查会拦（硬门禁用的样本）
 writePkg('@fake/broken', '1.0.0', 'export const bad = ;\n')
-// 真不适配的包：引用 0.1.2 起已删除的 dsh-settings API（适配门硬判据）
-writePkg('@fake/incompat', '1.0.0', 'import { installSettingsSection } from "@deepseek-ai/dsh-client-ui-settings";\nexport const x = installSettingsSection;\n')
+// 真不适配的包：**真的**从 @deepseek-ai/dsh-settings 导入 0.1.2 起已删除的 API（适配门硬判据）。
+// 0.5.33 改错：说明符必须是那个包本身（旧夹具写的 @deepseek-ai/dsh-client-ui-settings 从未导出过它们）。
+writePkg('@fake/incompat', '1.0.0', 'import { installSettingsSection } from "@deepseek-ai/dsh-settings";\nexport const x = installSettingsSection;\n')
 
 // 升级前预扫/隔离留下的现场：两个待适配行都已被自动禁用
 writeFileSync(patchPath, '# user patch\n- id: locked-row\n  disabled: true\n- id: broken-row\n  disabled: true\n', 'utf8')

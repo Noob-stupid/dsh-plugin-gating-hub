@@ -21,13 +21,16 @@ mkdirSync(join(profileDir, 'node_modules', '@fake', 'incompatible'), { recursive
 mkdirSync(join(profileDir, 'node_modules', '@fake', 'fine'), { recursive: true })
 writeFileSync(join(profileDir, 'cordis.patch.yml'), '# user patch\n', 'utf8')
 
-// 不适配包：源码引用 0.1.2 起已删除的 dsh-settings API（适配门的硬判据）
+// 不适配包：源码**真的**从 @deepseek-ai/dsh-settings 导入 0.1.2 起已删除的 API（适配门的硬判据）。
+// 0.5.33 改错：判据收紧为"真的从该包 import/require 绑定进来"，所以夹具的说明符必须是那个包
+// 本身（旧夹具写成 @deepseek-ai/dsh-client-ui-settings —— 那个包从来没有导出过这两个 helper，
+// 属于不合形状的夹具；真机上的真实载体见 @morlay/session-rdb）。
 writeFileSync(join(profileDir, 'node_modules', '@fake', 'incompatible', 'package.json'), JSON.stringify({
   name: '@fake/incompatible', version: '1.0.0', main: 'index.js',
   dsh: { engines: { framework: '>=0.1.0-rc.6' } },
 }, null, 2), 'utf8')
 writeFileSync(join(profileDir, 'node_modules', '@fake', 'incompatible', 'index.js'),
-  'import { installSettingsSection } from "@deepseek-ai/dsh-client-ui-settings";\nexport const x = installSettingsSection;\n', 'utf8')
+  'import { installSettingsSection } from "@deepseek-ai/dsh-settings";\nexport const x = installSettingsSection;\n', 'utf8')
 
 // 正常包：干净源码
 writeFileSync(join(profileDir, 'node_modules', '@fake', 'fine', 'package.json'), JSON.stringify({

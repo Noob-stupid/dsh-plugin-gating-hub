@@ -201,6 +201,29 @@ jobs:
           node tests/test-safe-boot.mjs
           node tests/test-desktop-host-mode.mjs
 
+          # ── 0.5.33 批次（2026-09-30）：四项「改错 + 加法」各自的硬门槛（全离线）──────────────────
+          # ① 已删除 dsh-settings API 的扫描判据（真机误报：dshmarket 3 处命中全在注释 + 1 处 HTTP 载荷
+          #    对象属性名 → 被判 fail → 好插件被自动禁用）。段内断言：纯注释/对象键/字符串/别的包的同名
+          #    导入/proto 前缀巧合都不算；**真** import/require 绑定（ESM 具名·别名·命名空间成员·CJS 解构·
+          #    动态 import）必须继续命中（反向断言，门禁不许被修软）；dshmarket 已装源码 0 命中；
+          #    真机真载体 @morlay/session-rdb 必须仍命中。CI 无本机 profile 时**响亮 SKIP**，不假装 PASS。
+          node tests/test-settings-api-scan.mjs
+          # ② 「已适配，立即解锁」按钮的门控（现症：只判 pendingCompat ⇒ 正文说"不适配"、按钮说"已适配"，
+          #    点了必 409）。段内断言：canAdaptUnlock 真值表（adoptable=null 必须 false）+ 渲染点真的用
+          #    这个判据 + 不可适配时沿用既有 checkNote/reason 如实报原因 + 服务端 409 文案含「为什么 + 出路」
+          #    且补丁/清单**逐字节不变** + 可适配行照旧 200 解锁（反向）。
+          node tests/test-adapt-unlock-gate.mjs
+          # ③ i18n 键重复（failed 写了两次 ⇒ 后写覆盖前写，「挂载失败」被印成「操作失败」）。段内断言：
+          #    中英两本字典**各自** 0 重复键（检测器用构造样本自校验）+ failed 恰好 1 条且是阶段义 +
+          #    源码里 0 处 t("failed") + 动作失败全走 safetySwitchFailed + PHASE_KEYS 解析链没断。
+          node tests/test-i18n-keys.mjs
+          # ④ 框架 peer 预检「否决」的本地复算（诊断缺口：框架只在内存里禁用、原因只打 stderr）。
+          #    段内断言：peer 不满足 → 产出原因；满足 → 不产出；包解析不到 → 另给"包不存在"原因
+          #    （两者措辞/出路都不同）；workspace: 协议与空范围；非 dsh peer 不参与；真的 GET /state
+          #    断言 entries[].veto 如实下发（且只在既有行上，不新增常驻面板行）；0 本机路径扫描。
+          #    真机残影 @deepseek-ai/dsh-schedule@0.0.1-rc.3 × 当前框架必须判不满足（无夹具则响亮 SKIP）。
+          node tests/test-peer-veto.mjs
+
       # 真装真卸冒烟：在 CI 的 Linux 宿主上跑（临时 DSH_HOME，不碰真实目录）。
       # 为什么单独一步且**不带** DSH_TEST_SKIP_NETWORK：环境相关测试"没 profile 就整体 SKIP"，
       # 正是这个缺口让 `git.exe`、corepack Windows 路径这类硬编码在 Linux CI 上一直活着（2026-09-20 复盘）。
