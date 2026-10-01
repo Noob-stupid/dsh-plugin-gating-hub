@@ -2,6 +2,141 @@
 
 All notable changes to dsh-plugin-hub.
 
+## v0.5.33 — 四项真机缺陷收口（扫描误禁 / 解锁按钮门控 / i18n 重复键 / 框架否决原因）+ web profile 补回两条预设声明行（2026-10-01）
+
+> 本版**只做改错与加法**。四条改错方向一致：**把误报关掉、把真报留住**（每条都带反向断言，
+> "门禁不许被修软"）；不新增常驻 UI（新信息全部落在**既有行 / 既有悬浮提示**的位置上）；
+> **不改任何既有 i18n 键的语义**。profile 侧只在 `preset-router-standard` / `preset-router-react`
+> 两个 `insert` 块里各补**一条** `router-bootstrap` 声明行，其余内容一字未动
+> （含全部注释、`pressure-sensor` 行、deactivating 段、desktop managed 段）。
+
+### 改错
+
+- **①-1 「已删除 API」扫描误报：好插件被判不兼容，框架升级预扫会把它的行误禁。**
+  现场（诊断到行号）：`dshmarket` 被判 `check:'fail'`（= 源码仍引用 0.1.2 起已删除的
+  `settingsNamespace` / `installSettingsSection`）。逐条核对它的命中：
+  `dshmarket/lib/settings.js:45 / :53 / :73` 三处全在**注释**里；`dshmarket/lib/routes.js:3136`
+  的 `settingsNamespace: settingsNamespaceState(),` 是一个 **HTTP 载荷对象的属性名**
+  （值是该包自己的局部函数）；该包对 `@deepseek-ai/dsh-settings` 的 **import 零命中**
+  （它早已内联那两个 helper）。旧判据（标识符边界 + 排除局部定义）挡不住这两类：注释里的名字与
+  对象键上的名字都不是"引用"，却都在**代码行**上、也不是本地定义。
+  **新判据**：① 先掩掉注释、字符串/模板/正则字面量（等长空格替换，保留换行与列偏移），
+  只保留**模块说明符字符串**（否则无从知道某个绑定来自哪个包）；② 只在**真的对这个包**的
+  import/require 绑定子句里取名字（ESM 具名/默认/命名空间成员、CJS 与动态 `import()` 的解构/命名空间）；
+  ③ 对象键、局部同名函数、别的包的**同名**导入、注释与字符串里的名字 —— 一律不算。
+  真机复核：`dshmarket@1.66.7` 原始文本里还压着 **8 处裸名字**，扫描结果 **0 命中**；
+  同一台机器上**真正**引用该 API 的 `@morlay/session-rdb@0.0.11`
+  （`lib/index.mjs:3` 真 `import { settingsNamespace } from "@deepseek-ai/dsh-settings"`，
+  `:1751` 真调用）**仍被判命中** —— 门禁没有被修软。
+- **①-2 「已适配，立即解锁」按钮缺门控（文案自相矛盾 + 点了必 409）。**
+  旧行为：只要 `entry.pendingCompat === true` 就渲染这个按钮，**不检查 `entry.adoptable`**，
+  而同一张卡片正文那行用的是正确判据（`adoptable`）⇒ 卡片说"不适配"、按钮说"已适配"；
+  点下去 `POST /plugin-console/adapt-unlock` 必得 409（适配校验 fail），补丁与行状态零变化
+  ⇒ 用户观感"点不动"。现在按钮条件是新增的纯判据 `canAdaptUnlock(entry)`
+  （`pendingCompat === true` **且** `adoptable` 是服务端 `detectAdoptablePending` 给出的对象）；
+  不可适配时**不给这个承诺**（不显示"已适配"文案），原因照旧由既有那行如实展示
+  （`pendingCompatHint` + 既有 `checkNote` / reason），**不新增常驻 UI**。
+  服务端 409 文案同步改成「为什么不行 + 出路 + 本次未改动」：
+  `适配校验未通过：<源码扫描/依赖的具体原因>。出路：先点「检测更新」把它更新到兼容当前框架 <版本>
+  的版本（更新完成会自动重跑源码扫描，通过即解锁）；若它已不再需要，可在补丁里删掉/禁用这一行。
+  本次未改动补丁与适配门清单。`
+- **①-3 `failed` i18n 键重复 →「挂载失败」被印成「操作失败」。**
+  中英两本字典里都写了**两次** `failed:` —— 阶段名的 `挂载失败` / `Mount failed` 之后又写了一条
+  动作义 `操作失败` / `Operation failed`；同一个对象字面量里**后写的静默覆盖前一条**，
+  于是 `phaseLabel → PHASE_KEYS.failed → t("failed")` 印出来是"操作失败"。
+  现在**分工明确**：阶段名用 `failed`（每本字典恰好 1 条），**动作失败**用既有的
+  `safetySwitchFailed`（原 47 处 `t("failed")` 调用点全部改走它，改完共 53 处使用该键），
+  源码里 **0 处** `t("failed")`。顺手清掉同类缺陷的另一条：`recentFailures` 在中英字典里各重复
+  一次（值相同、无可见影响）—— 现在两本字典**各自 0 重复键**，并加了通用防线断言。
+- **② web profile 补回两条丢失的预设声明行**（`profiles/web/cordis.patch.yml`，用户文件）：
+  `preset-audit` 实测 `missing=2` —— `router-standard/agent.cordis.yml:69-70` 声明
+  `./router-bootstrap.mjs`、`router-react/agent.cordis.yml:57-58` 声明 `./router-bootstrap-v1.mjs`，
+  两个目标文件都在，但补丁里**没有**指向这两个目录的 `file:///…` 行（`preset-router-react` 的
+  `plugins:` 之下当时**全是注释、零条真实行** ⇒ 解析出来是 `null`，而 `@deepseek-ai/dsh-agent-preset`
+  的 `Config.plugins` 是 `z.array(z.any()).required()`）。
+  补的形态**照抄**既有 `preset-router-spec` 的 bootstrap 行（补丁 `107-108`）：10 空格
+  `- id: router-bootstrap` + 12 空格 `name: file:///<绝对路径，percent-encoded>`，
+  路径由 `pathToFileURL(dshHome()/.agent-presets/…)` 生成（**不手写**）。
+  改前备份 `cordis.patch.yml.bak-preset-repair-2026-10-01T06-09-07-535Z`（26767 字节，
+  与改前**逐字节一致**）；`480 → 484` 行，逐行比对**差异恰好 4 行新增**（0 处删除/改动）；
+  三套 YAML 解析交叉通过（框架同款 dialect `js-yaml JSON_SCHEMA + !!js` 标签 /
+  `js-yaml DEFAULT_SCHEMA + !!js` / `yaml`(eemeli, 显式注册 `!!js`)）+ 仓库自己的 `parsePatchRows`；
+  隔离实例（真 `.agent-presets` + 补丁副本 + **真分发器** `handle()`，不碰 3080）实测
+  `GET /plugin-console/preset-audit`：**missing 2 → 0、blockers 2 → 0、ok false → true**，
+  且真 profile / 预设文件逐文件 SHA256 一致（审计全程只读）。
+
+### 加法
+
+- **①-4 框架 peer 预检「否决」的本地复算（补上诊断缺口）。**
+  现场：补丁里写着启用（或压根没写 `disabled`）、运行时却没挂载（`fiberPhase === null`），
+  面板一个字都不说为什么。真实机制在框架侧（不是我们的 bug）：`@deepseek-ai/dsh-app-boot` 的
+  `evaluatePluginCompatibility()`（:286-313）只看 `peerDependencies` 里的 `@deepseek-ai/dsh` /
+  `@deepseek-ai/dsh-*`（`workspace:^|~|*` 视为"等于当前运行时"，其余按 semver 且
+  `includePrerelease`），`preflight()`（:2063-2109）判不满足就**只在内存里**把 `row.disabled = true`
+  （**不写用户补丁**）、原因只 `process.stderr.write` 一行。
+  本机典型现场：profile 顶层压着 `@deepseek-ai/dsh-schedule@0.0.1-rc.3` 残影，它的 7 条 dsh peer
+  写 `^0.0.1-rc.3` → 对运行中的 `0.2.0-rc.2` 必然不满足，而补丁尾部还是
+  `- id: schedule / disabled: false`。新增 `lib/server/domain/peer-veto.js`（**同一判据**的本地复算）
+  + `GET /state` 的 `entries[].veto = { kind, reason, hint } | null`，只对「补丁要求启用 **且**
+  `fiberPhase === null`」的行计算；`kind` 分得开：`peers`（peer 不满足，短句写明"需要什么 / 当前什么"，
+  如 `被框架否决：peer 不满足（需要 @deepseek-ai/dsh-agent@^0.0.1-rc.3 等 7 项，当前 0.2.0-rc.2）`）
+  与 `missing`（包解析不到 / 清单读不出来，措辞与出路都不同）。客户端把它渲染在**既有行**里
+  （`entry.veto.reason` 一行 + 出路放既有 `title` 悬浮位），**不新增常驻面板行**。
+- 新增域模块 `lib/server/domain/settings-api-scan.js`：①-1 的判据（掩码 + 绑定子句解析）从 544 行的
+  `compat.js` 搬出 —— `lib/server/**` ≤600 行的架构棘轮保持绿；
+  `REMOVED_SETTINGS_SYMBOLS` / `referencesRemovedSymbol` / `scanSettingsApiUsage` 三个名字继续由
+  `compat.js` 导出，**对外契约不变**。
+
+### 测试与门槛（全部离线，进 `.github/workflows/test.yml` 硬门槛）
+
+- 新增四套，全部接进 `test.yml` 的 **Unit tests (hard gate)** 步骤：
+  · `tests/test-settings-api-scan.mjs`（①-1：纯注释 / 对象键 / 字符串 / 别的包同名导入 / 前缀巧合
+  都不报；**真** import、别名、命名空间成员、CJS 解构、动态 `import()` **必须仍报** —— 反向断言；
+  `dshmarket` 已装源码 0 命中**且**夹具仍压在误报形态上（原始 8 处裸名字）；真载体
+  `@morlay/session-rdb` 必须仍命中）；
+  · `tests/test-adapt-unlock-gate.mjs`（①-2：`canAdaptUnlock` 真值表含 `adoptable=null → false`；
+  渲染点真的用这个判据且旧形状已消失；409 文案含「为什么 + 出路」且补丁/清单**逐字节不变**；
+  **可适配行照旧 200 解锁** —— 反向断言）；
+  · `tests/test-i18n-keys.mjs`（①-3：中英两本字典**各自** 0 重复键且检测器用构造样本自校验；
+  `failed` 每本恰好 1 条且是阶段义；0 处 `t("failed")`；`PHASE_KEYS` 解析链没断；英文键不许有中文缺失）；
+  · `tests/test-peer-veto.mjs`（①-4：不满足 / 满足 / 包不存在三态；`workspace:` 协议与空范围；
+  非 dsh peer 不参与；**真跑 `GET /state`** 断言 `entries[].veto` 如实下发；真机残影
+  `dsh-schedule@0.0.1-rc.3` × 当前框架必须判不满足；0 本机路径扫描）。
+- 两处**既有夹具**的说明符改正（**不改判据**）：`tests/test-preflight-disable.mjs` 与
+  `tests/test-compat-soft-lock.mjs` 的"不适配包"原先写
+  `import … from "@deepseek-ai/dsh-client-ui-settings"` —— 那个包从来没有导出过这两个 helper
+  （属于不合形状的夹具：判据是"真的 import 了已删除的 API"，说明符就该是那个包本身）。
+  判据收紧之后夹具一并改正为 `@deepseek-ai/dsh-settings`；真机上的真实载体见
+  `@morlay/session-rdb`（已作为实时反向断言写进 `test-settings-api-scan.mjs`）。
+- 架构守卫 `tests/test-architecture-guard.mjs` 12 条断言全绿（`lib/server/**` 84 个文件全部 ≤600 行）；
+  「0 本机路径」扫描（`lib/**` + `tests/**` + `scripts/**` + 顶层清单与 workflow，共 178 个文件）**0 命中**。
+
+### 未验证 / 已知项（如实列出，不粉饰）
+
+- **② 的 profile 修复只做到文件级验证**：三套 YAML 交叉 + 逐行差异 + 隔离实例的 `preset-audit`
+  （missing 0 / blockers 0）都过了，但**"框架真的按新行把预设挂起来"要等服务重启后才见分晓**
+  （本轮按要求**未重启** 3080 与桌面端）。重启后请在新的会话里看一眼预设选择器。
+- **② 顺带发现（未改，超出本轮"只补两条"的授权范围）**：两个 `preset-router-*` 块声明的 composition
+  远小于磁盘上各自的 `agent.cordis.yml` —— 修复后 `preset-router-spec` = 18 条 /
+  `preset-router-standard` = 2 条（`pressure-sensor` + 新补的 `router-bootstrap`）/
+  `preset-router-react` = 1 条（只有新补的 `router-bootstrap`）。任务明确要求"只补这两条缺失行、
+  其它一字不动"，故**未动**其余行；`router-react` 这一条同时把它从 `plugins: null`（schema 非法）
+  救回合法数组。这是否是预期状态（例如其余行本应由别处合并进来）本轮**未验证**。
+- **①-4 的 peer 判据是"本地复算"**：框架用 node-semver 的 `{ includePrerelease: true }`，
+  仓库既有的 `semverRangeMatchLoose` 与它最接近但**偏宽松**。这里**故意用宽松那一支** ——
+  只有连宽松读法都不满足时才说话（与 ①-1 同一纪律：宁可不说，不可错说）。代价是**可能漏报**
+  少数否决（表现回退成"什么都不显示，但绝不会错说原因"）。`kind:'peers'` 的含义是
+  "**大概率**就是框架否决它的原因"，**不是**框架自己给出的结论。
+- **①-4 的面板可见性未做浏览器实测**：`entries[].veto` 的字段与渲染都在本轮改过的文件里，
+  但 `GET /state` 的服务端代码要**重启**才生效，页面渲染也没在真浏览器里复看过（本轮未重启实例）。
+- **①-1 的"不再误禁"是判据级验证**：`dshmarket` 0 命中是**只读复算**（跑真机已装源码），
+  没有在真机上重跑一次完整的"框架升级预扫"来实际观察它是否真的不再被写 `disabled: true`。
+- **①-2 / ①-3 的真机渲染未复看**：`canAdaptUnlock` 真值表、渲染点判据接线、字典与 `PHASE_KEYS`
+  解析链都是静态 + 单测级验证；浏览器里那张卡片没看（本轮未重启实例）。
+- **CI 上会"响亮 SKIP"的断言**（没有本机 profile 时如实打印 SKIP 原因，不假装 PASS）：
+  `test-settings-api-scan.mjs` 的 ④ / ③′（`dshmarket`、`@morlay/session-rdb` 真机夹具）与
+  `test-peer-veto.mjs` 的 ①′（`dsh-schedule` 残影）。
+
 ## v0.5.32 — 别的更新通道改了框架也守住门（自动预检 + 有证据自动禁用 + 安全启动快照 + 桌面端自动回观察者，2026-09-29）
 
 > 用户诉求（原话）：「走**别的**更新通道（官方桌面端更新器 / 手动 pnpm / npx 缓存变化）改了框架后，
