@@ -4,11 +4,47 @@
 
 ---
 
-<img width="1170" height="609" alt="image" src="https://github.com/user-attachments/assets/b802d606-14ba-4151-9956-ff642ed12b0a" />
-
 # DSH Plugin Gating Hub (dsh-plugin-gating-hub)
 
 *Renamed from `dsh-plugin-hub` — old URLs redirect.*
+
+> [!IMPORTANT]
+> **Unofficial / 非官方，与 DeepSeek 无隶属关系。** An independent community project — not
+> affiliated with, endorsed by, or maintained by DeepSeek.
+
+**Framework-upgrade safety and plugin-version gating for DSH.** A failed upgrade rolls back.
+A framework changed by **any** update channel is still guarded. A version the host cannot
+take is refused, not installed.
+
+**Install (npm, one line)**
+
+```sh
+dsh plugin --profile web add @noob-stupid/dsh-plugin-console
+```
+
+Then restart the dsh service → refresh the page → **Settings → Plugins → Plugin Console**.
+
+![Upgrade safety panel, expanded in place](docs/images/upgrade-safety-panel.png)
+
+**Three hard guarantees**
+
+- 🛡️ **Contract pre-check → rollback point → auto-rollback.** A data-driven **contract pre-check**
+  runs first (message contract / dependency API / config schema / removed API / loader contract);
+  then config backup + a full-tree **rollback point**. A failed install or relaunch **auto-rolls
+  the tree back**, a 「roll back to previous」 button restores the last version, and plugins the
+  new framework cannot load are **auto-disabled** — version check catches fake success, 15-min
+  timeout + stall detection.
+- 👁️ **Even when another update channel changes the framework.** An **environment fingerprint**
+  catches changes made by the official desktop updater or a manual `pnpm`: it auto-runs a
+  **read-only pre-flight**, and disables a row **only with hard evidence** (package unresolvable /
+  `file://` target gone / named in a boot-failure log). `@deepseek-ai/*` and **protected / core
+  rows are never auto-disabled**; each auto-disable writes a one-command recovery record.
+- 🔒 **Plugin install & upgrade gating.** Version/declaration gate (`dsh.engines.framework` /
+  `engines.dsh` / `@deepseek-ai/*` ranges, built-in zero-dependency semver), a **repo-size gate**
+  on source channels, and explicit handling of **non-registry sources** — a bare version is
+  written back only once the registry really resolves it, otherwise the package is materialized
+  as `link:`. Install scripts are never auto-authorized, and pnpm's supply-chain gate is never
+  bypassed.
 
 [![](https://img.shields.io/badge/powered_by-dsh-4D6BFE?style=flat-square&logo=deepseek&logoColor=white)](https://github.com/deepseek-ai/deepseek-harness)
 [![Awesome DSH Plugin](https://awesome-dsh-plugin.com/badge.svg)](https://awesome-dsh-plugin.com)
@@ -22,13 +58,11 @@
 [![GitHub Release](https://img.shields.io/github/v/release/Noob-stupid/dsh-plugin-gating-hub?style=flat-square)](https://github.com/Noob-stupid/dsh-plugin-gating-hub/releases)[![dsh.so security](https://www.dsh.so/badge/dsh-plugin-hub.svg)](https://www.dsh.so/artifact/dsh-plugin-hub)
 [![dsh.so install](https://www.dsh.so/badge/install/dsh-plugin-hub.svg)](https://www.dsh.so/artifact/dsh-plugin-hub)
 
-> **Framework upgrade safety & plugin version gating for DeepSeek Harness (DSH)**: one-click
-> framework upgrade with **auto-rollback on failure** → **one-click rollback to the previous
-> version** after an upgrade → plugins the new framework cannot load are **auto-disabled** →
-> the **plugin upgrade gate** refuses a version the host can't take.
-> A **built-in multi-source plugin market & index** (500+ plugins / 300+ skills, zero GitHub
-> API calls) rides on top as the **discovery layer** — and **every source is swappable**: install
-> source (incl. a private intranet registry), search source (URL template + headers), index source
+<img width="1170" height="609" alt="DSH Plugin Gating Hub" src="https://github.com/user-attachments/assets/b802d606-14ba-4151-9956-ff642ed12b0a" />
+
+> **Discovery layer on top**: a **built-in multi-source plugin market & index** (500+ plugins /
+> 300+ skills, zero GitHub API calls) — and **every source is swappable**: install source
+> (incl. a private intranet registry), search source (URL template + headers), index source
 > (self-hosted intranet index), Git source (incl. a local `file://` bare repo), so plugins can be
 > installed on an **intranet-only or fully offline** machine.
 
@@ -385,7 +419,7 @@ Verification matrix, raw logs and the one framework-side caveat (`0.1.2-rc.1` sh
 
 ---
 
-##帮助
+## Help & Ecosystem
 
 - **Panel missing**: restart dsh → refresh → Settings → Plugins → Plugin Console.
 - **Toggle does nothing**: infrastructure rows are "Protected" (by design); normal toggles
