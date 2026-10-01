@@ -90,29 +90,35 @@ const FIX = join(ROOT, '.testdir', 'fw-cleanup-fixture')
 rmSync(FIX, { recursive: true, force: true })
 const { cleanFrameworkBackups, cleanFrameworkTopLevel } = await import('../lib/server/domain/framework-cleanup.js')
 
-await check('⑥ 动作层：顶层旧目录 → 改名备份；目标存在的重建 junction；目标缺失的只改名并如实记', async () => {
+await check('⑥ 动作层：顶层旧目录 → 改名备份；目标存在的重建 junction；目标缺失的**连名字都不动**', async () => {
   const top = join(FIX, 'node_modules', '@deepseek-ai')
   const running = join(FIX, 'running-scope')
   mkdirSync(top, { recursive: true })
   mkdirSync(running, { recursive: true })
-  const mk = (dir, version) => { mkdirSync(dir, { recursive: true }); writeFileSync(join(dir, 'package.json'), JSON.stringify({ version }), 'utf8') }
+  const mk = (dir, version) => { mkdirSync(dir, { recursive: true }); writeFileSync(join(dir, 'package.json'), JSON.stringify({ version, main: 'index.js' }), 'utf8'); writeFileSync(join(dir, 'index.js'), 'export const x = 1\n', 'utf8') }
   mk(join(top, 'dsh-current'), '0.2.0-rc.1')        // 同版本 → 不动
   mk(join(top, 'dsh-base'), '0.1.5-rc.2')           // 旧 → 改名 + 目标存在 → junction
-  mk(join(top, 'dsh-old-only'), '0.1.5-rc.2')       // 旧 → 改名 + 目标缺失 → relinkSkipped
+  mk(join(top, 'dsh-old-only'), '0.1.5-rc.2')       // 旧 → **无目标 → 完全不动**（0.5.34：名字绝不允许空缺）
   mk(join(running, 'dsh-base'), '0.2.0-rc.1')       // 运行树里的目标
   mk(join(running, 'dsh'), '0.2.0-rc.1')            // 运行树入口本体
+  // 0.5.34 硬闸要用的两个启动关键包（同版本 → 判据不动它们；默认解析器据此验证可解析性）
+  mk(join(top, 'cordis'), '0.2.0-rc.1')
+  mk(join(top, 'dsh-app-boot'), '0.2.0-rc.1')
   symlinkSync(join(running, 'dsh'), join(top, 'dsh'), 'junction') // 真 junction 指向 <运行树>/dsh（dirname 后就是运行 scope 目录）
   const rel = await cleanFrameworkTopLevel({ topScopeDir: top, dshLinkPath: join(top, 'dsh'), runningVersion: '0.2.0-rc.1', relink: true, stamp: 12345 })
-  assert.equal(rel.renamed.length, 2, JSON.stringify(rel))
-  assert.deepEqual(rel.renamed.map((x) => x.name).sort(), ['dsh-base', 'dsh-old-only'])
+  assert.equal(rel.renamed.length, 1, JSON.stringify(rel))
+  assert.deepEqual(rel.renamed.map((x) => x.name), ['dsh-base'])
   assert.ok(rel.renamed.every((x) => x.backup.includes('.stale-0.1.5-rc.2-12345')), '备份名要带版本与时间戳')
   assert.deepEqual(rel.relinked.map((x) => x.name), ['dsh-base'])
-  assert.deepEqual(rel.relinkSkipped, [{ name: 'dsh-old-only', reason: 'target-missing' }])
+  assert.deepEqual(rel.relinkSkipped.map((x) => [x.name, x.reason]), [['dsh-old-only', 'no-target']])
+  assert.deepEqual(rel.failed, [])
+  assert.deepEqual(rel.rolledBack, [])
   assert.ok(existsSync(join(top, 'dsh-base')), '目标存在的那条要重建回原位（junction）')
-  assert.ok(!existsSync(join(top, 'dsh-old-only')), '目标缺失的那条**只改名不重建** —— 名字不复位（如实记 relinkSkipped）')
-  assert.ok(readdirSync(top).some((n) => n.startsWith('dsh-old-only.stale-')), '目标缺失的那条同样要留备份')
+  assert.ok(existsSync(join(top, 'dsh-old-only')), '目标缺失的那条**连名字都不动** —— 0.5.34：只改名不重建正是停机事故本体')
+  assert.ok(!readdirSync(top).some((n) => n.startsWith('dsh-old-only.stale-')), '没目标 → 不留备份')
   assert.ok(readdirSync(top).some((n) => n.startsWith('dsh-base.stale-')), '旧目录要留备份')
-  assert.equal(rel.sameVersionCount, 1)
+  assert.equal(rel.sameVersionCount, 3)
+  assert.equal(rel.verify.ok, true, '多基准可解析性验证必须过：' + JSON.stringify(rel.verify.error))
 })
 
 await check('⑦ 动作层 dryRun：只出 planned，一个字节都不动', async () => {

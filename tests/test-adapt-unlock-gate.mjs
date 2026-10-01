@@ -113,7 +113,9 @@ console.log('\n=== ② 渲染点真的用了这个判据 + 不可适配时如实
   check('② 按钮文案键未改（adaptUnlockBtn / adaptUnlockHint 仍在，不新增常驻 UI）',
     src.includes('adaptUnlockBtn:') && src.includes('adaptUnlockHint:'))
   check('② 不可适配时正文用**同一个**判据如实报原因（entry.adoptable ? … : pendingCompatHint + checkNote）',
-    /entry\.adoptable\s*\n?\s*\?\s*t\("adoptableDetected"\)/u.test(src) && /t\("pendingCompatHint"\)\s*\+\s*\(compatInfo && compatInfo\.checkNote/u.test(src))
+    // 0.5.34：adoptable 那一支内部再按 basis 分两种文案（插件更新过 / 旧判据结论被撤回），
+    // 但"正文判据 = entry.adoptable"这条不变量没变；不可适配时照旧回落 pendingCompatHint + checkNote。
+    /entry\.adoptable\s*\n?\s*\?\s*\(/u.test(src) && /t\("adoptableDetected"\)/u.test(src) && /t\("pendingCompatHint"\)\s*\+\s*\(compatInfo && compatInfo\.checkNote/u.test(src))
   check('② 按钮只在既有 detail 面板里（没有新增顶层/常驻面板行）',
     src.includes('data-pending": entry.adoptable ? "false" : "true"'))
 }

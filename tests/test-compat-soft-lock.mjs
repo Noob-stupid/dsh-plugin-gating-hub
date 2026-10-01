@@ -110,7 +110,13 @@ const locked = r.json.entries.find((e) => e.rowId === 'locked-row')
 const broken = r.json.entries.find((e) => e.rowId === 'broken-row')
 check('待适配行标记 pendingCompat', locked?.pendingCompat === true && broken?.pendingCompat === true)
 check('已更新的行给出「已适配」检测结果', locked?.adoptable?.version === '2.0.0' && locked.adoptable.check !== 'fail', JSON.stringify(locked?.adoptable))
-check('未更新的行不给「已适配」提示', broken?.adoptable === null, JSON.stringify(broken?.adoptable))
+// 0.5.34 语义（**改错**）：`@fake/broken` 的旧记录 check:'fail' 是**旧判据的误报**（它只是源码语法坏，
+// 并不引用已删除的 dsh-settings API，声明范围也满足）⇒ 当前判据重算为 pass ⇒ 结论被撤回。
+// 此时给的是**"判据已撤回·可解锁"**（basis=verdict-rescinded，面板文案也不同），**不是**"插件已适配"
+// （作者并没有发新版）；而"真的加载不了"仍由 ④ 的 import 冒烟检查（硬门禁）拦住 —— 判据没被修软。
+check('未更新的行不给「插件已适配」提示；但"判据撤回"来路要如实标注（0.5.34）',
+  broken?.adoptable?.basis === 'verdict-rescinded' && broken?.compatRescinded === true && broken?.adoptable?.version === '1.0.0',
+  JSON.stringify(broken?.adoptable))
 check('检测结果附在 compatPending 里', r.json?.compatPending?.pending?.find((p) => p.rowId === 'locked-row')?.adoptable !== null)
 check('检测不改开关状态（locked-row 仍禁用）', locked?.enabled === false)
 

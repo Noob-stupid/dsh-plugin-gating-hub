@@ -224,6 +224,24 @@ jobs:
           #    真机残影 @deepseek-ai/dsh-schedule@0.0.1-rc.3 × 当前框架必须判不满足（无夹具则响亮 SKIP）。
           node tests/test-peer-veto.mjs
 
+          # ── 0.5.34 批次（2026-10-01）：两条真缺陷（停机事故根因 + 过期结论持续误导）──────────
+          # ① **真机停机事故 2026-10-01**：框架树顶层 `@deepseek-ai/cordis` 被改名成 `.stale-4.0.4-<ts>`
+          #    却**没重建 junction** ⇒ `dsh-app-boot` 的 `import '@deepseek-ai/cordis'` 解析失败
+          #    ⇒ web 服务进程 exit code=1 起不来（用户手工补回 10 条 junction 才恢复）。
+          #    段内断言（全离线：夹具树 + 注入 IO，**不碰真实框架树**）：改名+重建原子化（成功路径）；
+          #    **重建失败 → 改名被回滚**（反向）；**整批解析验证失败 → 本轮全部改名回滚**（反向，硬闸本体）；
+          #    绝不删 `.stale-*` 且备份不会被二次改名（幂等）；同一 stamp 重跑零改名/零新建链接；
+          #    非目标文件逐字节不变；`relink:false` 与"找不到目标"都不许让包名空缺。
+          node tests/test-framework-cleanup-atomic.mjs
+          # ② 过期 `checkNote` 持续误导（真机：`dshmarket` 记录还是 0.5.33 之前的误报 `check:"fail"`，
+          #    面板照旧说"实际不兼容"，点「检测更新」也永远出不来 —— 旧 `adoptable` 要求"版本变化"）。
+          #    段内断言（全离线：私有 DSH_HOME + 夹具包 + 真路由）：过期记录 → 当前判据重算并回写
+          #    （带判据版本戳/previous/rescinded/来源证据）；**结论未变 → 零写盘**；新记录不动；
+          #    **真不兼容仍 fail**（adoptable=null + /adapt-unlock 仍 409 + 补丁/清单逐字节不变）；
+          #    撤回误报的行可**一键解锁**（不需要版本变化；补丁逐字节只改那一处）；解析不到 → 如实标注
+          #    "未能复核"；幂等（反复 GET /state 零写盘、重复解锁 404 零改动）。
+          node tests/test-compat-verdict-freshness.mjs
+
       # 真装真卸冒烟：在 CI 的 Linux 宿主上跑（临时 DSH_HOME，不碰真实目录）。
       # 为什么单独一步且**不带** DSH_TEST_SKIP_NETWORK：环境相关测试"没 profile 就整体 SKIP"，
       # 正是这个缺口让 `git.exe`、corepack Windows 路径这类硬编码在 Linux CI 上一直活着（2026-09-20 复盘）。
