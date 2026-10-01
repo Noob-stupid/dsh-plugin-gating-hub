@@ -8,8 +8,6 @@
 
 *Renamed from `dsh-plugin-hub` — old URLs redirect.*
 
-*Unofficial community project — not affiliated with DeepSeek.*
-
 **Framework-upgrade safety and plugin-version gating for DSH.** A failed upgrade rolls back.
 A framework changed by **any** update channel is still guarded. A version the host cannot
 take is refused, not installed.
