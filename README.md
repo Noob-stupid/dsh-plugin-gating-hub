@@ -8,9 +8,7 @@
 
 *Renamed from `dsh-plugin-hub` — old URLs redirect.*
 
-> [!IMPORTANT]
-> **Unofficial / 非官方，与 DeepSeek 无隶属关系。** An independent community project — not
-> affiliated with, endorsed by, or maintained by DeepSeek.
+*Unofficial community project — not affiliated with DeepSeek.*
 
 **Framework-upgrade safety and plugin-version gating for DSH.** A failed upgrade rolls back.
 A framework changed by **any** update channel is still guarded. A version the host cannot
