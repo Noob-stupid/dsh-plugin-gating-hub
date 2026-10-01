@@ -2,6 +2,172 @@
 
 All notable changes to dsh-plugin-hub.
 
+## v0.5.34 — 停机事故根因（框架残留清理"只改名不重建"）+ 过期判据结论持续误导（2026-10-01）
+
+> 本版**只做改错与加法**。两条缺陷都是**今天真机上的真事故**：
+> ① 框架树顶层 `@deepseek-ai/cordis` 被我们的清理动作改了名却没重建 junction ⇒
+> `dsh-app-boot` 的 `import '@deepseek-ai/cordis'` 解析失败 ⇒ **web 服务进程 exit code=1 起不来**
+> （用户手工补回 10 条 junction 才恢复）；
+> ② `compat-pending.json` 里 `dshmarket` 的记录还压着 0.5.33 **收紧判据之前**的误报结论，
+> 面板照旧把它当事实展示「实际不兼容，启用会让整个服务启动崩溃」，且**点「检测更新」也永远出不来**
+> —— 用户被永久钉在「待适配」。
+> 两条改错都带**反向断言**（"门禁不许被修软"）：重建失败必须回滚、验证失败必须全回滚、
+> 真不兼容仍 409、结论没变零写盘。i18n **净增 3 个键**（中英各 3，均为新语义必需，
+> `test-i18n-keys.mjs` 仍 0 重复键）。**未重启任何实例、未触碰真实框架树。**
+
+### 改错
+
+- **① 框架残留清理必须「改名 + 重建 junction」原子化（今天的停机事故根因）。**
+  现场（框架树顶层 `@deepseek-ai/`，逐条读过）：`cordis.stale-4.0.4-1790836784030`、
+  `cosmokit.stale-1.8.5-…`、`schemastery.stale-3.18.4-…` 等 **10 条 `.stale-*` 目录**还在，
+  而 `cordis` 等 10 条 junction 是**用户手工补回来**的（补回的 Target 全部指向
+  `<fwRoot>\.pnpm\node_modules\@deepseek-ai\<name>`）。改名者就是我们的
+  `lib/server/domain/framework-cleanup.js`：`name + '.stale-' + version + '-' + ts`，
+  紧接着那行本应 `link(target, …, 'junction')` —— 但它只在「`dsh` junction 推得出运行树
+  **且** 目标存在」时才执行，其余分支**只改名、不重建**；真机上顶层 `@deepseek-ai/dsh` 是
+  **真实目录**（不是 junction）⇒ `readlinkSync` 抛错 ⇒ `runningScopeDir = null` ⇒ 10 条包
+  全部落进这条支路 ⇒ 启动包再也解析不到 `cordis` ⇒ 服务退出。回报里只在
+  `relinkSkipped` 留一行 JSON，面板一个字都不说。
+  现在**四条硬规则**（每条都有离线测试钉死）：
+  ① 改名后**立刻**重建 junction（指回真实包体）；**重建失败 → 立刻回滚改名**（改回原名）→
+  记 `failed` 并写明底层 errno 原文 + "已回滚（现场未变）"；
+  ② 找不到任何可重建目标 → **连名字都不动**（先探目标、再改名，少一个"名字空缺"的窗口），
+  记 `relinkSkipped`（带 reason + detail + **试过哪些基准**）；
+  ③ 整批结束后做一次**框架可解析性验证**（至少 `@deepseek-ai/cordis` + `@deepseek-ai/dsh-app-boot`，
+  **多基准**：框架树顶层 + `.pnpm/node_modules`；解析结果还必须**落在框架树内**，否则说明它是从
+  上层别处解析来的、框架自己仍然解析不到）→ **验证失败则把本轮所有改名回滚**（恢复到操作前状态）
+  并在 `verify.error` / `error` 里点明；
+  ④ `relink:false`（显式关闭重建）不再"只改名"——那正是事故本体，现在**完全不改**并如实记
+  `relink-off`。
+  **多基准候选**（真机实证来源）：① `dsh` junction 推出的运行树同级目录（老语义，保留）
+  ② `<fwRoot>/.pnpm/node_modules/<scope>/<name>`（用户手工补回的指法）
+  ③ `<fwRoot>/.pnpm/node_modules/<name>`（非作用域兜底）
+  ④ `<fwRoot>/.pnpm/<scope>+<name>@<同名版本>*/node_modules/<scope>/<name>`（虚拟 store 实体本体；
+  **版本必须与刚改名的那份相同**，绝不借机换版本）。
+  **返回值补齐**：`renamed`（**留在原地**的，含 `target`/`via`）/ `relinked` / `relinkSkipped`
+  （含原因）/ `rolledBack`（含哪些、为什么）/ `verify`（逐项 base×包 结果）/ `hints` / `error`；
+  `failed[].error` 一律可读（**不许 `catch {}` 吞掉**，回滚失败单独点名"现场可能不一致"）。
+  **幂等**：`.stale-*` 备份不再参与判据（新增纯判据 `isStaleBackupName`）—— 旧行为会把备份自己
+  再改名成 `….stale-….stale-…`（真机 `cordis.stale-4.0.4-<ts>` 就在那儿，下次点击就会复发）；
+  同 stamp 的备份已存在时直接跳过（`backup-exists`）。**绝不删除**任何 `.stale-*` 备份（语义不变）。
+  **真机只读复核（未碰框架树）**：按新判据 `stale = []`（10 条备份被排除、278 个同版本真实目录不动）
+  ⇒ 再点「清除框架残留」也不会动它；`verifyFrameworkTreeResolvable(真机 fwRoot)` **4/4 通过**
+  ⇒ 这条硬闸不会在健康树上误触发。
+- **② 过期 `checkNote` 必须失效化（旧判据的误报不许再当事实展示）。**
+  现场：`~/.dsh/plugin-console/compat-pending.json` 里 `dshmarket` 仍是
+  `check:"fail"` + `checkNote:"源码仍引用 0.1.2 起已删除的 dsh-settings API（settingsNamespace、
+  installSettingsSection）——实际不兼容，启用会让整个服务启动崩溃"` —— 那是 **0.5.33 收紧判据之前**
+  的结论（真机只读复核：`dshmarket@1.66.7` 按当前判据 **0 命中**、包能解析）。
+  面板照旧当事实展示 ⇒ **持续误导**。
+  · **判据版本戳**：新增域模块 `lib/server/domain/compat-verdict.js`（`SCANNER_VERSION` 与判据模块
+  `settings-api-scan.js` 的 `SCAN_CRITERIA_VERSION = 'dsh-settings-scan/2'` 同源）；记录写
+  `scanVerdict = { version, decision, reason, at, previous:{decision,note}, rescinded, evidence }`
+  —— "这条结论是哪一版判据算的、旧结论是什么、是不是被撤回了、当初是谁写的禁用"全都能事后判读。
+  · **读取代发**：`GET /state`、`/toggle`、`/adapt-unlock`、`/adapt-unlock-all` 以及
+  `detectAdoptablePending` / `maybeAutoAdaptCompat` / `frameworkCompatReportFor` 一律走
+  `readCompatPendingWithVerdicts({ baseDir })`：判据戳落后的记录用**当前判据只读重算**，
+  **结论变了才回写**（幂等：结论不变**零写盘**，逐字节 SHA256 断言）；包解析不到**不猜**，
+  门控明细的 `note` 上如实标"（旧判据结论，未能复核：<原因>）"。
+  · **一个判据都没放宽**：重算仍 `fail` 的行**一个字都不动**（仍 `fail`、仍 `adoptable=null`、
+  `/adapt-unlock` 仍 409、补丁与清单**逐字节不变**）。
+  · **修 B 的关键环节（用户实测补充：点「检测更新」也永远出不来）**：旧 `adoptable` 要求
+  "**版本变化**"（本意是识别"作者适配了新版"），而 `dshmarket` 已装 = 最新 = 1.66.7 ⇒ 永远 `null`
+  ⇒ 「已适配」永不出现、补丁里那条历史 `disabled: true` 也永远解不开。现在可解锁有**两条互不放松**
+  的来路：`basis:'version-changed'`（原判据，不变）或 `basis:'verdict-rescinded'`（记录里的 `fail`
+  是旧判据误报、当前判据重算后不再 fail —— 此时**不再要求版本变化**）。
+  · **面板（不新增常驻 UI）**：`entries[].compatRescinded`（结论已被撤回）+ `entries[].compatVerdict`
+  （当前判据下的结论视图：`stale`/`rescinded`/`unresolved`/`evidence`）；「待适配」角标在撤回时改印
+  **「判据已撤回·可解锁」**（新键 `compatRescindedTag`/`compatRescindedHint`），正文按 `basis` 分两种
+  文案（新键 `adoptableRescinded`）—— **不把"判据撤回"说成"插件已适配"**（作者并没有发新版）；
+  `canAdaptUnlock` 接受 `compatRescinded`，但 `adoptable` 仍必须是服务端算出来的对象
+  （真不兼容的行根本拿不到它 ⇒ 按钮不出现）。
+  · **解锁语义（用户授权二选一，以"不擅自改用户补丁"为优先）**：选**一键入口** ——
+  `/adapt-unlock` 对撤回行返回 200 并**只移除那一处**禁用块（既有 `removeDisableBlock` 语义，
+  逐字节比对断言"只改这一处"），**不在读路径上自动改盘**；`/toggle` 的软禁闸门一个字没放宽。
+  响应新增 `basis` / `previousVerdict` / `evidence`；"自伤"判据 `isSelfInflictedSource`
+  （只有 `preflight-disabled-before-upgrade` / `boot-quarantine` / `auto-preflight` 这类
+  **我们自己写的**禁用记录才算，`evidence` 字段如实带出）。
+- **①/② 顺带修掉的两处真机可复发点**（都是同一类"判不准却动了手"）：
+  · `.stale-*` 备份被当成残留二次改名（幂等破坏，见上）；
+  · `clean-residuals` 的框架档结论**只在 JSON 深处**留一行：现在框架档 `ok:false` 或
+  `verify.ok:false` 会**浮到面板层**（响应 `ok:false` + `error` 写明"验证未通过/有条目没落地"+
+  "已回滚 N 条（逐条原因）"）。
+
+### 加法
+
+- 新增域模块 `lib/server/domain/compat-verdict.js`（判据版本戳 + 读取代发重算 + 结论视图 + 自伤来源
+  判据 + 进程内重算备忘）；`lib/server/domain/framework-cleanup.js` 新增
+  `verifyFrameworkTreeResolvable()`（多基准可解析性验证，可独立调用）；`framework-residuals.js` 新增
+  纯判据 `isStaleBackupName()` / `relinkTargetCandidates()` / `FRAMEWORK_BOOT_PACKAGES`。
+- **进程内重算备忘**（键 = rowId + 包路径 + 版本 + `package.json` mtime + 判据版本）：因为"结论未变
+  ⇒ 不写盘"意味着记录上的戳会一直是旧的，没有备忘的话 `GET /state`（面板每几秒轮询一次）会对同一批包
+  反复跑源码扫描（单包上限 120 文件 / 400KB）。
+- `GET /state` 新增 `compatPending.verdictRefresh`（本轮复核明细：`updated`/`unchanged`/`unresolved`/
+  `wrote`/`writeError`）与每行的 `verdict` —— 面板与事后排查都能看出"这一轮到底重算了什么"。
+
+### 测试与门槛（全部离线，进 `.github/workflows/test.yml` 的 Unit tests 硬门槛）
+
+- 新增 `tests/test-framework-cleanup-atomic.mjs`（14 条断言，夹具树 + 注入 IO，**不碰真实框架树**）：
+  ① 改名+重建成功（**真机形态**：`dsh` 是真实目录、推不出运行树 → 走 `.pnpm` 多基准；断言原位置是
+  junction、指向 4.0.4 真身、无回滚、`verify` 两个基准 × 两个关键包 4/4）；
+  ② **重建失败 → 改名被回滚**（注入 `link` 抛 `EPERM`：断言 `renamed` 为空、`rolledBack` 有它、
+  `failed[0].error` 同时含 `EPERM` 与"已把改名回滚"、原名仍是真实目录、备份不残留）；
+  ③ **整批解析验证失败 → 本轮全部改名回滚**（注入解析器：断言 `verify.ok=false`、
+  `verify.rolledBackAll=true`、`rolledBack.reason='verify-failed'`、`ok=false`，且整棵夹具树与操作前
+  **逐字节一致**）；
+  ④ 绝不删 `.stale-*`（旧备份逐字节不变 + **不会被二次改名**成 `….stale-….stale-…`）；
+  ⑤ 幂等（同 stamp 再跑：零改名 / 零新建链接 / 整棵树哈希不变）；
+  ⑥ 不改非目标文件（整棵树逐字节比对：唯一差异 = 那条包名变成链接 + 新增备份）；
+  ⑦ 反向：`relink:false` **完全不改**、目标缺失**连名字都不动**、目录不存在如实报错；
+  ⑧ dryRun 零落盘（`verify.phase='pre'`）；⑨ `verify` 工具本身（多基准 × 关键包、解析到框架树之外
+  判失败、解析器全抛 → `ok=false`，且基准路径**只由 fwRoot 推导**、0 本机路径）。
+- 新增 `tests/test-compat-verdict-freshness.mjs`（私有 `DSH_HOME` + 夹具包 + **真路由处理器**）：
+  ① 过期记录 + 当前判据 → 结论被重算并回写（戳/`previous`/`rescinded`/`evidence` 齐全，旧
+  `checkNote` 不再当事实）；② 面板不再说「待适配」（`compatRescinded=true` +
+  `adoptable.basis='verdict-rescinded'` + 门控明细行带结论视图 + `verdictRefresh` 如实回报）；
+  ③ 新记录（戳最新）一个字节不动 / 真不兼容仍 `fail`（`adoptable=null`）/ 包解析不到 →
+  "未能复核"（结论保留、门控 note 如实标注）；④ **真不兼容仍 409** 且补丁与清单**逐字节不变**
+  （反向）；⑤ 撤回行一键解锁 200（`basis`/`previousVerdict`/`evidence`），补丁**逐字节只改那一处**、
+  其余行纹丝不动；⑥ 幂等（反复 `GET /state` **零写盘**、重复解锁 404 零改动）；
+  ⑦ 隔离夹具验证"**结论未变 → 零写盘**"（SHA256 比对）；⑧ 纯判据真值表
+  （fresh/updated/unchanged/unresolved + 真 fail 不会被写成 pass）；⑨ 客户端（**真跑** `canAdaptUnlock`
+  导出 + 渲染点源码断言：角标/正文/悬浮提示三处都按 `compatRescinded` 分流）。
+- 三处**既有断言**按新语义更新（**不动任何判据**，逐条写明理由）：
+  · `tests/test-framework-residuals.mjs` ⑥："目标缺失只改名"（**事故语义**）→ "目标缺失**连名字都不动**"
+    （夹具另补 `cordis`/`dsh-app-boot` 两个同版本包，让默认解析器真跑一次可解析性验证）；
+  · `tests/test-adapt-unlock-gate.mjs` ②：正文判据的形状变了（`adoptable` 那一支内部再按 `basis`
+    分"插件更新过 / 判据撤回"两种文案），**不变量不变**（正文判据仍是 `entry.adoptable`；不可适配时
+    照旧回落 `pendingCompatHint + checkNote`）；
+  · `tests/test-compat-soft-lock.mjs` ①：`@fake/broken` 的旧记录也是**旧判据误报**（它并不引用已删除
+    API）⇒ 现在如实标"判据撤回·可解锁"（`basis='verdict-rescinded'`、版本仍是 1.0.0，**不谎称
+    "插件已适配"**）；而"真的加载不了"仍由 ④ 的 import 冒烟检查（**硬门禁**）拦住 —— 判据没被修软。
+- 架构守卫 `tests/test-architecture-guard.mjs` 12 条全绿（`lib/server/**` 全部 ≤600 行；
+  `plugins.js` 与 `compat.js` 都在棘轮内）；「0 本机路径」扫描（`lib/**` + `tests/**` + `scripts/**` +
+  顶层清单与 workflow，共 **181 个文件**）**0 命中**。
+
+### 未验证 / 已知项（如实列出，不粉饰）
+
+- **`dshmarket` 的真机复测要用户重启后确认**（本轮按要求**未重启** 3080 与桌面端）：重启后该行应显示
+  「判据已撤回·可解锁」+「已适配，立即解锁」按钮（文案是"判据已更新…旧结论已撤回"，不是"插件已适配"），
+  点一下才动补丁。
+- **真机 `compat-pending.json` 的实际回写本轮未执行**：只做了**只读**复算（`dshmarket@1.66.7` 当前判据
+  0 命中、记录里 `check:"fail"` 会被判 `rescinded`）。回写发生在用户实例**下一次读取代发**时
+  （第一次 `GET /state`）；本轮没有代跑，也没有改用户的清单文件。
+- **框架树侧的"改名 + 重建"没有在真机上执行**（本轮明确不动真实框架树）：验证只到"夹具树 + 注入 IO"
+  与"**只读**判据复核"（`stale=[]`、`verifyFrameworkTreeResolvable` 4/4 通过）。真机上"点一下
+  「清除框架残留」会怎样"没有实测（按只读复核，它应当什么都不做）。
+- **浏览器渲染未复看**：`compatRescindedTag` / `compatRescindedHint` / `adoptableRescinded` 三个新键、
+  以及门控明细里"未能复核"的标注，都没在真页面上看过（未重启实例）；i18n 侧只到"两本字典各自 0
+  重复键 + 解析链完整"。
+- **`verdict-rescinded` 的语义边界**：它只说"**我们的判据**不再判它不兼容"，**不等于**"这个插件一定
+  能跑起来" —— 真跑不起来仍由启用前的 import 冒烟检查（硬门禁）拦（`test-compat-soft-lock.mjs` ④ 就是
+  这个现场）。已知代价：面板会给一个"判据上可解锁"的入口，点下去仍可能被硬门禁拒绝。
+- **复核不了的记录（包解析不到）只标注、不改结论**：这类记录不会因为"戳旧"就被写成 pass，
+  但也**不会**被自动修正（无从修正）——面板上会一直带着"（旧判据结论，未能复核：…）"。
+- **CI 上会"响亮 SKIP"的既有真机断言**（无本机 profile 时如实打印原因，不假装 PASS）：同 0.5.33 ——
+  `test-settings-api-scan.mjs` ④/③′（`dshmarket`、`@morlay/session-rdb` 真机夹具）、
+  `test-peer-veto.mjs` ①′（`dsh-schedule` 残影）。
+
 ## v0.5.33 — 四项真机缺陷收口（扫描误禁 / 解锁按钮门控 / i18n 重复键 / 框架否决原因）+ web profile 补回两条预设声明行（2026-10-01）
 
 > 本版**只做改错与加法**。四条改错方向一致：**把误报关掉、把真报留住**（每条都带反向断言，
