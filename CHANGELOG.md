@@ -2,6 +2,58 @@
 
 All notable changes to dsh-plugin-hub.
 
+## v0.5.36 — 启用幂等：已由官方/bundle 启用的插件不再重复写声明行（2026-10-03）
+
+> 本版**只做改错与加法**。现场是**用户当天的真机事故**：他**先用官方插件管理打开**了
+> `memory-plugin`（插件包声明了 `dsh.bundle` → 启动时由自带 patch 自动装配它自己的行
+> `openviking-memory-runtime`），**随后又在我们面板点了一次「启用」** → 我们**多写了一条
+> insert 行** `openviking-dsh-memory-plugin` → 同一插件被装配**两次** → 第二行重复注册抛
+> `already registered` → 面板如实显示成「**已启用 + 挂载失败**」，看着像插件坏了。
+> 用户定案（原话）：「**如果利用官方的插件管理关闭或打开插件，我们的 hub 那里也应该显示
+> 关闭或打开** —— 统一进度」。本版先落地**幂等**这一半（写入侧不再制造重复行）；
+> 现场 profile 的重复行已由人工清理（删 3 行 insert + 2 行同 id 的陈旧 `disabled` 块，
+> 备份在 `cordis.patch.yml.bak-dedup-*`，清理后状态只剩 `openviking-memory-runtime=active`）。
+> **未重启任何实例**、未改任何 profile 的补丁行与预设（清理只发生在用户明确要求的那一份）。
+
+### 改错
+
+- **① 启用动作幂等：同一插件已由 bundle / 已由别行声明时，不再重复追加 insert 行。**
+  `lib/server/domain/patch.js#appendInsert` 原有唯一判据是"**同 id** 是否已插入"，于是
+  "官方已启用（bundle 自带行）× 我们再插一行"这种组合**必然**制造第二个实例。现在三条护栏，
+  命中即**不写盘**并回报 `reason`：
+  - `same-id` —— 同 id 已在 insert 里（原有行为，保留）；
+  - `same-package` —— **同包名**已由**别的** insert 行声明（= 重复装配，第二行会重复注册失败）；
+  - `bundle` —— **同包名**已在 profile 清单的 `dsh.profile.bundles` 里（bundle 自带 patch 会
+    在启动时自动装配它自己的行，我们再插一行同样是重复装配）。
+  新增只读 helper `readProfileBundles()`：**读不到清单就返回空数组**，绝不因为读清单失败
+  而阻断既有写入行为（⑤ 号断言专门盯这条，防止"加护栏把功能锁死"）。
+
+### 加法
+
+- `appendInsert` 的返回值新增 `reason` 字段（`same-id` / `same-package` / `bundle`），
+  供调用方**如实说明"为什么没写"**（例如面板可提示"已由 bundle 装配启用，无需重复声明"）。
+  本版只提供字段，**UI 尚未消费**（见"未验证项"）。
+
+### 测试与门槛
+
+- 新增 `tests/test-enable-idempotent.mjs`：**13 条断言全绿**，覆盖用户这次的**真实复现路径**
+  （先用官方启用 → 再点我们启用）：① bundle 已声明 → `changed=false` + 补丁逐字节未变；
+  ② 同包名已由别行声明 → `changed=false` + 未变；③ 同 id → `changed=false` + 未变；
+  ④ 无任何既有声明 → **仍照常写入**（功能没被阉掉）且再调一次幂等；
+  ⑤ 清单缺失 → 仍按既有行为写入（不因读清单失败而阻断）。
+- 相邻回归：`test-patch-composition-audit.mjs` **12 PASS**、`test-patch-heal-safety.mjs` **ALL PASS**；
+  架构守卫 `test-architecture-guard.mjs` **ALL PASS**；`node --check lib/server/domain/patch.js` 通过。
+- CI：push 后 `tests` 工作流 **success**（run id 见 GitHub Release 说明与交付报告）。
+
+### 未验证项
+
+- **UI 未消费 `reason`**：本版只让写入侧不再制造重复行；"面板上标注『已由官方/bundle 启用』"
+  与"重复装配行标成『重复装配（另一行已挂载）』而非『挂载失败』"这两条**尚未实现**（属下一版）。
+- **未在真机端到端复点一次**：用户实例未重启加载新版，故"先官方启用→再点我们启用"的真机复现
+  **未现场重跑**（离线断言已覆盖同路径）。
+- 官方插件管理的**状态来源**（它写到哪个文件/是否纯运行时）**尚未确认**——"读取侧统一显示"
+  那一半因此**未开工**；本版**不假装已统一**。
+
 ## v0.5.35 — 市场搜索：名字相似度分层排序（唯一判据）+ 加载更多真的能用（2026-10-03）
 
 > 本版**只做改错与加法**。现场是**用户当天的真机实测**：在市场页输入他刚发布的仓库**确切名字**
