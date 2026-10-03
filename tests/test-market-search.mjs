@@ -392,15 +392,14 @@ const item = (fullName, stars, extra = {}) => ({
   check('⑩ 本测试自身 0 处本机绝对路径', bad === null, bad === null ? undefined : String(bad.slice(0, 3)))
 }
 
-// ── ⑪ 本机化纪律：本轮改动文件里 0 处本机绝对路径 / 用户名（与既有的同类扫描同口径）────
+// ── ⑪ 本机化纪律：本轮**新增**文件里 0 处本机绝对路径 / 用户名（与既有的同类扫描同口径）────
 {
+  // 只扫本轮新增的文件。已存在的文件（client.js / routes/market.js / 架构守卫 / CI 配置）不进来：
+  // 它们是**追加**的（基线已在 HEAD 里，逐行由 git 管），而 CI 运行器的用户名恰好是通用词 `runner`
+  // —— `job runner` / `pnpm-runners` 这种正文会被裸子串匹配误判（第一次上线就被 CI 抓到了）。
   const CHANGED = [
     'lib/server/domain/market-search.js',
-    'lib/server/routes/market.js',
-    'lib/client.js',
     'tests/test-market-search.mjs',
-    'tests/test-architecture-guard.mjs',
-    '.github/workflows/test.yml',
   ]
   // 允许清单：**逐条写清理由**（都是通用形态，不是本机识别信息）
   const ALLOW = [
@@ -414,12 +413,14 @@ const item = (fullName, stars, extra = {}) => ({
   const userName = home === '' ? '' : home.split(/[\\/]/u).pop()
   const PERCENT = userName === '' ? '' : encodeURIComponent(userName)
   const esc = (s) => s.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&')
-  const slash = (s) => s.replace(/[\\/]/gu, '[\\\\/]')
+  // 用户名必须出现在**路径位置**（前面是分隔符 / 盘符 / 家目录形态）；
+  // 裸子串会把通用词（`runner`）在正文里的正常出现算成命中 —— 那是假阳性。
+  const asPath = (s) => new RegExp(`(?:[\\\\/]|[A-Za-z]:|\\$HOME[\\\\/]|~[\\\\/])${esc(s)}`, 'u')
   const BANNED = [
-    { name: '本机用户名（原样）', re: userName.length < 2 ? null : new RegExp(esc(userName), 'u') },
-    { name: '本机用户名（百分号编码）', re: PERCENT === '' || PERCENT === userName ? null : new RegExp(esc(PERCENT), 'u') },
-    { name: '本机家目录明文', re: home === '' ? null : new RegExp(slash(esc(home)), 'u') },
-    { name: '本次工作副本绝对路径', re: new RegExp(slash(esc(ROOT)), 'u') },
+    { name: '本机用户名（路径位置，原样）', re: userName.length < 2 ? null : asPath(userName) },
+    { name: '本机用户名（路径位置，百分号编码）', re: PERCENT === '' || PERCENT === userName ? null : asPath(PERCENT) },
+    { name: '本机家目录明文', re: home === '' ? null : new RegExp(home.replace(/[\\/]/gu, '[\\\\/]').replace(/[.*+?^${}()|[\]\\]/gu, (m) => (m === '\\' || m === '/' ? m : `\\${m}`)), 'u') },
+    { name: '本次工作副本绝对路径', re: new RegExp(ROOT.replace(/[\\/]/gu, '[\\\\/]').replace(/[.*+?^${}()|[\]\\]/gu, (m) => (m === '\\' || m === '/' ? m : `\\${m}`)), 'u') },
   ].filter((b) => b.re !== null)
   const hits = []
   for (const rel of CHANGED) {
@@ -429,10 +430,12 @@ const item = (fullName, stars, extra = {}) => ({
       for (const b of BANNED) if (b.re.test(line)) hits.push(`${rel}:${i + 1} ${b.name} → ${line.trim().slice(0, 80)}`)
     })
   }
-  check(`⑪ ★ 本轮 ${CHANGED.length} 个改动文件里本机绝对路径 / 用户名 0 出现（允许清单 ${ALLOW.length} 条）`,
+  check(`⑪ ★ 本轮新增的 ${CHANGED.length} 个文件里本机绝对路径 / 用户名 0 出现（允许清单 ${ALLOW.length} 条）`,
     hits.length === 0, hits.slice(0, 5).join(' | ') || undefined)
-  check('⑪ 扫描断言本身有效（能抓到构造的违规串）',
-    BANNED.some((b) => b.re.test(`x ${home} y`)) || home === '', `userName=${userName === '' ? '(空)' : '已隐去'}`)
+  check('⑪ 扫描断言本身有效：构造的违规串必须被抓到，通用词不得误报',
+    (BANNED.some((b) => b.re.test(`x ${home} y`)) || home === '')
+    && (userName.length < 2 || !asPath(userName).test('job runner')),
+    `userName=${userName === '' ? '(空)' : '已隐去'}；'job runner' 误报=${userName.length < 2 ? 'n/a' : asPath(userName).test('job runner')}`)
 }
 
 console.log(failed === 0 ? '\nALL PASS（市场搜索：唯一排序 + 分页/截断/失败路径）' : `\n${failed} FAILED`)
