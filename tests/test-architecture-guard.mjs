@@ -339,5 +339,27 @@ check(`ctx/ports 的属性式访问都在白名单内（inject: ${injectDecl.joi
   hostAccessIssues.length === 0,
   hostAccessIssues.length === 0 ? undefined : `${[...new Set(hostAccessIssues)].join(', ')} —— 可选读取请改用 ctx.get('名字') 或显式传参`)
 
+// ── ⑩ 市场搜索的"唯一排序函数"不许分叉（0.5.35）────────────────────────────────
+// 用户定案：「所有的搜索链，都应该以名字相似为主排序，然后才往下按 star 走」。
+// 服务端 `lib/server/domain/market-search.js` 与浏览器单文件产物 `lib/client.js` **不能互相 import**
+// （后者是 window.__ModuleLoader__.load 的打包产物），所以判据以**逐字移植 + 标记块**的方式共用一份文本：
+//     // <<<market-rank:begin>>>  …  // <<<market-rank:end>>>
+// 这条断言把"两份必须一致"变成硬门槛：只改一边（最常见的退化方式）直接红灯。
+// 行为判据另由 tests/test-market-search.mjs 钉死（Tier 0-6 / 分页不重不漏 / 信封三态 / 失败不静默）。
+const rankBlockRaw = (src) => {
+  const lines = src.replace(/\r\n/gu, '\n').split('\n')
+  const b = lines.findIndex((l) => l.trimStart().startsWith('// <<<market-rank:begin>>>'))
+  const e = lines.findIndex((l) => l.trimStart().startsWith('// <<<market-rank:end>>>'))
+  if (b < 0 || e <= b) return null
+  return lines.slice(b, e + 1).map((l) => l.replace(/^[ \t]*/u, '')).join('\n')
+}
+const rankServer = rankBlockRaw(readFileSync(join(ROOT, '..', 'lib', 'server', 'domain', 'market-search.js'), 'utf8'))
+const rankClient = rankBlockRaw(readFileSync(join(ROOT, '..', 'lib', 'client.js'), 'utf8'))
+check('⑩ 市场搜索排序：两端标记块都在，且去缩进后**逐字相等**（唯一排序函数不许分叉）',
+  rankServer !== null && rankClient !== null && rankServer === rankClient,
+  rankServer === null ? '服务端缺 <<<market-rank>>> 标记块'
+    : rankClient === null ? 'lib/client.js 缺 <<<market-rank>>> 标记块'
+      : rankServer === rankClient ? undefined : '两端排序块不一致 —— 改了一边没改另一边')
+
 console.log(failed === 0 ? '\nALL PASS' : `\n${failed} FAILED`)
 process.exit(failed === 0 ? 0 : 1)
