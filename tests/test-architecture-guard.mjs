@@ -361,5 +361,28 @@ check('⑩ 市场搜索排序：两端标记块都在，且去缩进后**逐字�
     : rankClient === null ? 'lib/client.js 缺 <<<market-rank>>> 标记块'
       : rankServer === rankClient ? undefined : '两端排序块不一致 —— 改了一边没改另一边')
 
+// ── ⑪ 「更新候选」判据不许分叉（0.5.37）────────────────────────────────────────
+// 真机缺陷（2026-10-03）：卡片上已装 @deepseek-ai/dsh-time-context 0.2.0-rc.2，却提示
+// 「发现新版本 0.2.0-rc.2 → 0.1.1-rc.1」（更低）并给出「更新」按钮 —— 按下去是**降级**。
+// 根因是普通插件行只判字符串不相等（没有大小比较），而框架特判路径另有一份局部实现、
+// 两条路径又写同一个 map（后执行的把正确结论覆盖成错的）⇒ 判据必须只有一份。
+// 与 ⑩ 同一手法：服务端 `lib/server/infra/semver.js` 导出 pickNewerSemver，
+// 浏览器单文件产物 `lib/client.js` 逐字移植，两端标记块圈住：
+//     // <<<update-pick:begin>>>  …  // <<<update-pick:end>>>
+const pickBlockRaw = (src) => {
+  const lines = src.replace(/\r\n/gu, '\n').split('\n')
+  const b = lines.findIndex((l) => l.trimStart().startsWith('// <<<update-pick:begin>>>'))
+  const e = lines.findIndex((l) => l.trimStart().startsWith('// <<<update-pick:end>>>'))
+  if (b < 0 || e <= b) return null
+  return lines.slice(b, e + 1).map((l) => l.replace(/^[ \t]*/u, '')).join('\n')
+}
+const pickServer = pickBlockRaw(readFileSync(join(ROOT, '..', 'lib', 'server', 'infra', 'semver.js'), 'utf8'))
+const pickClient = pickBlockRaw(readFileSync(join(ROOT, '..', 'lib', 'client.js'), 'utf8'))
+check('⑪ 更新候选判据：两端标记块都在，且去缩进后**逐字相等**（唯一判据不许分叉）',
+  pickServer !== null && pickClient !== null && pickServer === pickClient,
+  pickServer === null ? '服务端 lib/server/infra/semver.js 缺 <<<update-pick>>> 标记块'
+    : pickClient === null ? 'lib/client.js 缺 <<<update-pick>>> 标记块'
+      : pickServer === pickClient ? undefined : '两端判据块不一致 —— 改了一边没改另一边')
+
 console.log(failed === 0 ? '\nALL PASS' : `\n${failed} FAILED`)
 process.exit(failed === 0 ? 0 : 1)

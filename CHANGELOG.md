@@ -2,6 +2,64 @@
 
 All notable changes to dsh-plugin-hub.
 
+## v0.5.37 — 改错：反向更新（「更新」按钮会把已装包降级）（2026-10-04）
+
+> 本版**只做改错**。现场是**用户当天的真机事故**：插件卡片上已装 `@deepseek-ai/dsh-time-context`
+> **0.2.0-rc.2**，却提示「发现新版本 0.2.0-rc.2 → **0.1.1-rc.1**」（更低！）并给出「更新」按钮 ——
+> **按下去会把框架配套包降级**。npm 侧真实数据 `dist-tags` = `{ latest: 0.0.1-rc.1, next: 0.2.0-rc.2,
+> alpha: 0.2.1-alpha.1 }`；主源镜像 `registry.npmmirror.com` 的 `latest` 给的是 `0.1.1-rc.1`
+> （同样陈旧、低于已装版本）。根因是**两半**：**① 判据太弱** —— 普通插件行只判 `data.latest` 与
+> `entry.version` **字符串不相等**，完全没有版本大小比较；**② 两条路径互相覆盖** —— 框架特判路径本来
+> 有正确的比较（含 `rc` 预发布序）算出"无新版"，但它和普通行写同一个 `updateMap`，后执行的普通行把
+> 正确结论**覆盖成错的**。本版把判据收敛成**一份**纯函数，两处调用点都改，服务端再加一道兜底。
+
+### 改错
+
+- **① 反向更新/降级按钮：只有"严格高于已装版本"的候选才算新版。**
+  新增唯一判据 `pickNewerSemver(current, candidates)`（`lib/server/infra/semver.js`；浏览器侧
+  `lib/client.js` 是单文件打包产物、不能 import，故**逐字移植**同一份文本，两端用标记块
+  `// <<<update-pick:begin/end>>>` 圈住，架构守卫 ⑪ 断言"去缩进后逐字相等"）：返回**严格高于**
+  `current` 的最高候选，否则 `null`；预发布按 semver 序（`0.2.0-rc.2 > 0.1.1-rc.1`、`0.1.1 > 0.1.1-rc.2`）；
+  `current` 或候选解析不出一律 `null`（"不可比"就是"不提示更新"，绝不猜）。两处调用点：
+  - **普通插件行**：改用该函数，只在严格更高时才显示「更新」（原先的字符串不等判据**已删除**）；
+  - **框架特判路径**：删掉它自己的局部 `verNum`/`isNewer` 副本，改用同一函数 —— 判据只剩一份。
+  两条路径写入同一个 `updateMap` 时都**不许把已有目标换低**（`prev[fullName]` 更高就保持不动）——
+  这正是"正确结论被覆盖"那一半。
+- **② 服务端兜底：低于已装版本的候选不再当"新版"递出去。**
+  `/plugin-console/check-update`（`lib/server/routes/framework.js`）查完主源
+  `registry.npmmirror.com` 的 dist-tag 后，新增净化 `lib/server/domain/update-candidates.js`：把
+  **严格低于已装版本**的候选清成 `null`（`latest`/`next`/`beta` **字段名与结构一字不变**）；
+  读不到已装版本（未安装的插件 / 解析失败）则**不做任何过滤**，既有行为不动。
+
+### 加法
+
+- `lib/server/infra/semver.js` 新增导出 `pickNewerSemver`；新增 `lib/server/domain/update-candidates.js`
+  （导出 `dropStaleUpdateCandidates` / `installedVersionOf`）供路由复用 —— 判据只有一份，且 domain 层
+  仍不认识 cordis ctx（收的是已解开的 `baseUrl` / `profileDir`）。
+
+### 测试与门槛
+
+- 新增 `tests/test-update-version-pick.mjs`：**17 条断言全绿**，其中判据用例 **20 条**，含真机回归钉子：
+  ① `current=0.2.0-rc.2` × 候选 `['0.1.1-rc.1','0.0.1-rc.1','0.2.0-rc.2']` ⇒ **`null`**（不许提示降级）；
+  ② `current=0.1.7-rc.2` × `['0.1.1-rc.1','0.2.0-rc.2']` ⇒ `0.2.0-rc.2`（预发布序正确）；
+  ③ 正式版高于同号预发布（`0.1.1 > 0.1.1-rc.2`）；相同版本 ⇒ `null`；垃圾串（`''` / `latest` / `1.2`）⇒ `null`。
+  另有：两端标记块逐字相等；**源码级防回退**（`lib/client.js` 里不再存在旧判据）；服务端净化对真机数据的
+  行为（桩 profile 已装 `0.2.0-rc.2`：镜像 `latest` 被清成 `null`、"等于已装"的 `next` 保留）。
+- 架构守卫新增 **⑪**（更新候选判据两端标记块逐字相等）；CI `tests` 工作流新增该测试步骤（硬门槛）。
+- 全量 `node tests/run-all.mjs`：新测试与全部受影响套件 **0 红**；架构守卫 **ALL PASS**；新增/改动文件
+  本机路径扫描 **0 命中**。本机另有 5 套**既有环境性失败**（`test-framework-versions` / `test-host-shape` /
+  `test-bundle-guard` / `test-framework-upgrade-platform` / `test-issue15-resolve`，均因本机实例由桌面端
+  外壳托管、profile 现场状态所致），已用**改动前的干净 worktree 逐条复核：同样失败**，与本版无关（CI 为准）。
+- CI：`tests` 工作流 **success**、`publish-npm` 工作流 **success**（run id 见 GitHub Release 说明与交付报告）。
+
+### 未验证项
+
+- **真机 UI 未复点**：桌面端 19387（本会话宿主）与网页端实例**未重启**加载新版，故"卡片上那个『更新』
+  按钮消失、不再提示 `0.1.1-rc.1`"只在离线断言（判据行为 + 源码级防回退 + 服务端净化行为）里验证，
+  **未在真机界面复看**。
+- **同一文件里的第三条更新判据未动**：Hub 自身更新检测（`selfUpdate`）用的是三段数字序 `ver()`
+  （不认预发布段）——它只会取**严格更高**、不会产生降级，故本版不动它（属另一条线）。
+
 ## v0.5.36 — 启用幂等：已由官方/bundle 启用的插件不再重复写声明行（2026-10-03）
 
 > 本版**只做改错与加法**。现场是**用户当天的真机事故**：他**先用官方插件管理打开**了

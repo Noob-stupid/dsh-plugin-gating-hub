@@ -259,6 +259,13 @@ jobs:
           #   ⑧ 客户端接线：加载更多看 hasMore、"索引模糊匹配抢先 return"那条链已删除、搜索序号防竞态
           node tests/test-market-search.mjs
 
+      # 更新候选判据（0.5.37 改错）：真机「反向更新/降级按钮」的回归钉子 —— 纯函数全离线。
+      #   · installed 0.2.0-rc.2 × 镜像 latest 0.1.1-rc.1（更低）⇒ 必须 null（不许提示降级）
+      #   · 预发布序 0.1.7-rc.2 → 0.2.0-rc.2；正式版 > 同号预发布；相同/垃圾串 ⇒ null
+      #   · 双份实现（infra/semver.js ↔ lib/client.js）去缩进逐字相等 + 旧判据不得回退
+      - name: Update-candidate judge (no downgrade prompts)
+        run: node tests/test-update-version-pick.mjs
+
       # 真装真卸冒烟：在 CI 的 Linux 宿主上跑（临时 DSH_HOME，不碰真实目录）。
       # 为什么单独一步且**不带** DSH_TEST_SKIP_NETWORK：环境相关测试"没 profile 就整体 SKIP"，
       # 正是这个缺口让 `git.exe`、corepack Windows 路径这类硬编码在 Linux CI 上一直活着（2026-09-20 复盘）。
