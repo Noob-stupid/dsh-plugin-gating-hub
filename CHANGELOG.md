@@ -78,7 +78,8 @@ All notable changes to dsh-plugin-hub.
 - `tests/test-plugin-actions.mjs`：白名单断言**登记**新动作（`ACTION_KINDS.length === 5`）并新增形状校验，
   **未删任何检查**。
 - CI `tests` 工作流新增 `test-persist-pipeline.mjs` 步骤（硬门槛）。
-- 架构守卫 **ALL PASS**（`lib/server/**` 单文件 ≤600 行、domain 无 ctx、导入落地、自由变量、属性白名单等 12 项）。
+- 架构守卫 **ALL PASS**（**14 项**：`lib/index.js` ≤142 行、`lib/server/**` 单文件 ≤600 行（88 个文件）、依赖方向、
+  包根唯一、搬运不回潮、domain 无 ctx、导入落地、自由变量、导入绑定只读、ctx/ports 属性白名单、⑩/⑪ 双端判据逐字相等）。
 - 全量 `node tests/run-all.mjs`：**84 套 / 75 绿**；余下 9 套逐条复核为**环境性、与本版无关**（CI 为准）：
   `test-framework-versions` / `test-bundle-guard` / `test-framework-upgrade-platform`（本机实例由桌面端外壳托管
   ⇒ 升级/回滚路由按设计返回 409）、`test-host-shape` / `test-peer-veto`（依赖框架现场版本）、
