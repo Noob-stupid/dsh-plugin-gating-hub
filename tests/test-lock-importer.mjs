@@ -12,7 +12,7 @@
 // **只读**校验（不装任何包），pnpm 不可用时**响亮 SKIP**（打印原因、不假装 PASS）。
 import { existsSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { createHash } from 'node:crypto'
-import { dirname, join } from 'node:path'
+import { dirname, join, relative } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const ROOT = dirname(fileURLToPath(import.meta.url))
@@ -123,14 +123,18 @@ console.log('\n=== ② 修 2：斜杠归一与等价判等（等价 ⇒ 零写�
   const NAME = '@fake/slash-target'
   const { src, spec } = linkFixture(NAME)
   const backslash = `link:${src.replace(/\//gu, '\\')}`
-  check('② 规范形：反斜杠 → 正斜杠；尾斜杠去掉；盘根保留',
+  check('② 规范形：反斜杠 → 正斜杠；尾斜杠去掉；盘根保留（Windows 形态）',
     canonicalSourceSpec(backslash) === spec && canonicalSourceSpec(`${spec}/`) === spec
     && canonicalSourceSpec('link:C:\\') === 'link:C:/' && canonicalSourceSpec(' 1.0.0 ') === '1.0.0',
     `${canonicalSourceSpec(backslash)} | ${canonicalSourceSpec(`${spec}/`)}`)
-  check('② 等价判等：反斜杠 ↔ 正斜杠、相对 ↔ 绝对（同一目录）都算等价',
+  check('② 等价判等：反斜杠 ↔ 正斜杠、尾斜杠、相对 ↔ 绝对（同一目录）都算等价',
     sameSourceSpec(PROFILE, backslash, spec) === true
-    && sameSourceSpec(PROFILE, spec, `link:${src.replace(/\\/gu, '/').toUpperCase()}`) === true,
-    '')
+    && sameSourceSpec(PROFILE, `${spec}/`, spec) === true
+    && sameSourceSpec(PROFILE, `link:../../plugin-src/${NAME}`, spec) === true
+    // Windows 路径大小写不敏感（Linux 上大写路径是**另一个**目录，不算等价 —— 判据不许放水）。
+    // 注意只把**路径部分**大写：`LINK:` 前缀不是协议名，大小写敏感。
+    && (process.platform !== 'win32' || sameSourceSpec(PROFILE, spec, `link:${src.replace(/\\/gu, '/').toUpperCase()}`) === true),
+    `backslash=${sameSourceSpec(PROFILE, backslash, spec)} rel=${sameSourceSpec(PROFILE, `link:../../plugin-src/${NAME}`, spec)} tail=${sameSourceSpec(PROFILE, `${spec}/`, spec)}`)
   check('② 负控：指向**不同**目录不算等价（真漂移照样判得出来）',
     sameSourceSpec(PROFILE, spec, 'link:C:/nowhere/else') === false)
 
@@ -299,9 +303,10 @@ console.log('\n=== ⑥ 单测：argv 唯一产出点 + 设置镜像 + 非白名�
     && /devDependencies:[\s\S]*'@fake\/other-probe':/u.test(intoDev.text) && !/dependencies:[\s\S]*other-probe/u.test(intoDev.text.split('devDependencies:')[0]), '')
 }
 
-console.log('\n=== ⑦ 真 pnpm（只读）：校验不改 lock 字节；真机形态的 lock 能被确认可解析 ===')
+console.log('\n=== ⑦ 真 pnpm：lock 由 pnpm 自己产出 → 我们的定点写入复现它的形态、只读校验确认可解析、且不改字节 ===')
 {
   const { runPnpmWithFallback } = await import('../lib/server/infra/exec.js')
+  const { repairArgsFor } = await import('../lib/server/domain/lockfile-health.js')
   let pnpmUsable = true
   let pnpmError = null
   try {
@@ -311,24 +316,57 @@ console.log('\n=== ⑦ 真 pnpm（只读）：校验不改 lock 字节；真机�
     pnpmError = String(error?.message ?? error).slice(0, 300)
   }
   if (!pnpmUsable) {
-    skip('真 pnpm 只读校验组', `真 pnpm 通道不可用：${pnpmError}`)
+    skip('真 pnpm 组（native lock → 定点写入 → 只读校验）', `真 pnpm 通道不可用：${pnpmError}`)
   } else {
+    // 为什么让 pnpm 先自己产出 lock：CI 与本机的 pnpm 版本不同（corepack 解析），**手工拼的 lock 形状**
+    // 在严格版本下会被判 broken（0.5.39 CI 实测：`Broken lockfile: no entry for '…(@peer@x)'`）。
+    // 拿 pnpm 自己的产出当输入，这条断言在任何 pnpm 版本下都成立，也更贴近真机。
     const NAME = '@fake/real-verify'
-    const { spec } = linkFixture(NAME)
-    writeManifest({ [NAME]: spec })
-    // 真机形态：无关条目带 peer 后缀 + 我们的 link 条目（version 用规范形）
-    writeLock({ name: NAME, specifier: spec, version: 'link:../../plugin-src/@fake/real-verify' })
-    const before = readFileSync(LOCK, 'utf8')
-    const verdict = await verifyLockReadOnly({ profileDir: PROFILE, registry: null })
-    check('⑦ 真 pnpm：只读校验跑起来了（不是"无法确认"）', verdict.verified !== null, JSON.stringify({ verified: verdict.verified, reason: verdict.reason }))
-    check('⑦ 真 pnpm：无 registry 依赖的 link: 夹具 lock 被确认可解析（verified=true）', verdict.verified === true, String(verdict.reason))
-    check('⑦ 真 pnpm：校验**不写盘** —— lock 逐字节不变（含带 peer 后缀的无关条目）',
-      readFileSync(LOCK, 'utf8') === before, `sha=${sha(readFileSync(LOCK, 'utf8')).slice(0, 12)}`)
-    check('⑦ 真 pnpm：校验没有生成/改动别的文件（只认 lock 一个哈希源）',
-      existsSync(LOCK) && !existsSync(join(PROFILE, 'node_modules', '.modules.yaml')), '')
-    const importer = await writeLockImporterEntry(PROFILE, { name: NAME, spec, section: 'dependencies' })
-    check('⑦ 真 pnpm：条目已就位时定点写入返回 unchanged（幂等零写盘）',
-      importer.changed === false && importer.unchanged === true, JSON.stringify(importer))
+    const FIX = join(HOME, 'verify-fixture')
+    const FIX_LOCK = join(FIX, 'pnpm-lock.yaml')
+    rmSync(FIX, { recursive: true, force: true })
+    mkdirSync(join(FIX, 'node_modules'), { recursive: true })
+    const src = writePkg(NAME, '9.9.9', join(HOME, 'plugin-src', ...NAME.split('/')))
+    const spec = `link:${src.replace(/\\/gu, '/')}`
+    writeFileSync(join(FIX, 'package.json'), `${JSON.stringify({ name: 'verify-fixture', private: true, dependencies: { [NAME]: spec } }, null, 2)}\n`, 'utf8')
+    mkdirSync(dirname(join(FIX, 'node_modules', ...NAME.split('/'))), { recursive: true })
+    symlinkSync(src, join(FIX, 'node_modules', ...NAME.split('/')), 'junction')
+    let produced = true
+    try {
+      await runPnpmWithFallback(repairArgsFor('https://registry.npmmirror.com'), { execOpts: { cwd: FIX, timeout: 120000, windowsHide: true, maxBuffer: 4 * 1024 * 1024 } })
+    } catch (error) {
+      produced = false
+      skip('真 pnpm 组（native lock → 定点写入 → 只读校验）', `pnpm 生成 lock 失败：${String(error?.message ?? error).slice(0, 200)}`)
+    }
+    if (produced) {
+      const native = readFileSync(FIX_LOCK, 'utf8')
+      check('⑦ 真 pnpm：lock 由 pnpm 自己产出，且里面有我们的 link 条目（specifier 逐字 + version 相对路径）',
+        native.includes(`        specifier: ${spec}`) && /        version: link:[^\n]*plugin-src[^\n]*/u.test(native),
+        native.split(/\r?\n/u).filter((l) => l.includes('real-verify')).join(' | ').slice(0, 200))
+      const verdict = await verifyLockReadOnly({ profileDir: FIX, registry: null })
+      check('⑦ 真 pnpm：只读校验跑起来了（不是"无法确认"）', verdict.verified !== null, JSON.stringify({ verified: verdict.verified, reason: verdict.reason }))
+      check('⑦ 真 pnpm：pnpm 自己产出的 lock 被确认可解析（verified=true）', verdict.verified === true, String(verdict.reason))
+      check('⑦ 真 pnpm：校验**不写盘** —— lock 逐字节不变', readFileSync(FIX_LOCK, 'utf8') === native, `sha=${sha(readFileSync(FIX_LOCK, 'utf8')).slice(0, 12)}`)
+      check('⑦ 真 pnpm：校验没有生成/改动别的文件（node_modules/.modules.yaml 不该出现）',
+        !existsSync(join(FIX, 'node_modules', '.modules.yaml')), '')
+      const idem = await writeLockImporterEntry(FIX, { name: NAME, spec, section: 'dependencies' })
+      check('⑦ 真 pnpm：条目已就位时定点写入返回 unchanged（幂等零写盘）',
+        idem.changed === false && idem.unchanged === true && readFileSync(FIX_LOCK, 'utf8') === native, JSON.stringify(idem))
+      // 最强的一条：把条目的三行删掉（模拟"真漂移"）再用我们的定点写入补回来 ——
+      // 必须与 pnpm 自己的产出**逐字节相同**，且随后仍被 pnpm 只读校验确认可解析。
+      const lines = native.split(/\r?\n/u)
+      const entryLines = [`      ${NAME}:`, `        specifier: ${spec}`, `        version: link:${relative(FIX, src).split('\\').join('/')}`]
+      const stripped = lines.filter((l) => !entryLines.includes(l)).join('\n')
+      writeFileSync(FIX_LOCK, stripped, 'utf8')
+      const wrote = await writeLockImporterEntry(FIX, { name: NAME, spec, section: 'dependencies' })
+      check('⑦ 真 pnpm：真漂移（条目缺失）⇒ 我们的定点写入**复现 pnpm 自己的形态**（逐字节相同）',
+        wrote.changed === true && readFileSync(FIX_LOCK, 'utf8') === native,
+        `changed=${wrote.changed} 形态=${wrote.specifier} / ${wrote.version}`)
+      const after = await verifyLockReadOnly({ profileDir: FIX, registry: null })
+      check('⑦ 真 pnpm：我们写进去的条目被 pnpm 只读校验确认可解析（verified=true）',
+        after.verified === true, String(after.reason))
+    }
+    rmSync(FIX, { recursive: true, force: true })
   }
 }
 
