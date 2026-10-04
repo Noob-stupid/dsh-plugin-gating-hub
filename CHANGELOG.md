@@ -2,6 +2,112 @@
 
 All notable changes to dsh-plugin-hub.
 
+## v0.5.38 — 下载即持久：一次动作钉住三处（清单 + lock + 挂载行），没钉住就如实报（2026-10-04）
+
+> 用户诉求原话：「**能不能插件下载下来就不用 lock、重启也不会消失**」。
+> 现场（本机 desktop profile）：`dshmarket` 包下载了、`node_modules` 里有、bundle 行也挂着，
+> 但 `dependencies` 里没有条目 ⇒ 之后**任何一次 pnpm 操作**都会把它当多余包清掉，
+> 而面板当时报的是「**已安装并启用**」——**装了没钉住被报成了成功**。
+>
+> 本版把「安装完成」的判据收敛成**一处**（`lib/server/domain/persist.js`），并让安装路径**一次动作内**
+> 把它钉住；三处任一没就位就如实报「未持久化」+ 实际是什么 + 一键钉住动作，**绝不再报成功**。
+> 体检与真机端到端期间逐字节备份/还原、**未重启任何实例**（网页端 3080 与桌面端 19387 全程未动）。
+
+### 判据（本版的核心：只有这一个承担者）
+
+- **「安装完成」= 三处齐备**（缺一不可；读的都是磁盘真实值，不信任任何 job 字段与自报）：
+  - **① 清单 spec**：`<profile>/package.json` 的 `dependencies` 里有该包，且 spec 与**磁盘真实形态**一致
+    （`node_modules/<包名>` 是指向别处的**链接** → `link:`；真实目录 → 版本号；`file:`/`git+`/URL 来源
+    原样保留，**绝不**改写成版本号）；
+  - **② lock 条目**：`pnpm-lock.yaml` 有该包条目且与 ① **同形态**（link: 必须也钉在 link:；精确版本
+    必须同版 —— 带 peer 后缀的 `2.0.0-rc.2(@scope/peer@x)` 算同版）；
+  - **③ 挂载行**：重启后**真的会被挂载** —— 用户补丁里有它的 insert 行 / 它在 `dsh.profile.bundles` 里
+    **且自己声明了 `dsh.bundle.patch`**（bundle 层会装入它自己的行）/ 运行时已有行提供它。
+- **收口动作 `ensurePersisted`**：缺什么补什么（① 走既有 `pinProfileDependency`/`declareProfileDependency`，
+  ② 走既有 `reconcileLockfile`，③ 走既有 `appendInsert`/`addBundleToManifest`），补完**读回磁盘再判一次**；
+  三处齐备时**零写盘**（幂等）。写入器全部复用既有实现 —— **没有第二套**。
+- **非 registry 来源的既有规矩照旧**：`link:`/`file:`/`tgz`/git/URL **不经** registry 解析，本判据里
+  **没有任何 registry 404 判定**（只比"清单写成什么形态 vs 磁盘是什么形态"与"lock 是否同形态"）。
+
+### 改错
+
+- **① 安装结果不再谎报成功。** `lib/server/domain/install-job.js` 的三条收口路径（bundle / 已被别行提供 /
+  普通插件）合并到同一个出口：先按判据补齐三处，再读回核实；`job.persisted` / `job.persist.missing` /
+  `job.persistNote` 随 `installJobView` 下发，未持久化时**附带结构化「一键钉住」动作**。
+  面板（`lib/client.js`）：`persisted === false` 时**不再走「已安装并启用」**那句，改说
+  「⚠ 已装上但未持久化（重启/重装会消失）」+ 缺口明细，并**不自动刷新**（给用户点「一键钉住」的机会）。
+  `job.entryId` 语义**与旧行为一致**（只有"用户补丁里的 insert 行"才算本作业注册的行）。
+- **② `lockVersion()` 读不出未加 scope 的裸键（真机 `dshmarket` 现场）。** lock 的 importers 里
+  `dshmarket: / specifier: link:… / version: link:../../plugin-src/dshmarket` 三行**明明在那里**，
+  旧判据只认带引号的 `'name':`（pnpm 只给含 `/`、`@` 的包名加引号）与 packages 段的 `name@ver:`
+  ⇒ 返回 `null`。后果：面板**永远**报"没写进 pnpm-lock.yaml"、`pin-dependency` **永远** `partial`、
+  每次对账都**白跑一次 `pnpm add`**。现在三种键形态都认（真机复测：`dshmarket` → `link:../../plugin-src/dshmarket`）。
+- **③ 补丁行的 `name:` 不带引号就"看不见"（真机 `dsh-whale-widget`）。** YAML 里
+  `name: dsh-whale-widget` 与 `name: 'dsh-whale-widget'` 完全等价，而该插件写的是**不带引号**的那种；
+  `parseInsertNames()` 与 `readBundlePatchRefNames()` 都只认带引号 ⇒ 那一行"在文件里、程序却说没有"：
+  补丁自愈、装后校验、撤销安装全瞎；**注册前"引用包是否都可解析"这道防崩闸门对这类包形同不存在**。
+  两处解析器现在两种形态都认（行内注释也剥掉）。
+- **④ lock 里带 peer 后缀的版本号不再被判成"两处对不上"**（真机
+  `@deepseek-ai/dsh-experimental-schedule-bundle`：清单 `0.2.0-rc.2` / lock `0.2.0-rc.2(@…dsh-brand@…)`）。
+
+### 加法
+
+- 新增 `lib/server/domain/persist.js`（导出 `persistReport` / `ensurePersisted` / `persistNote` /
+  `suggestedPersistAction` / `diskFormOf` / `dependencyPart` / `lockPart` / `mountPart` / `PERSIST_PARTS`）：
+  三处判据 + 收口动作的唯一承担者。
+- `lib/server/domain/manifest.js` 新增 `setProfileDependency()`：把清单 spec **原样写成给定值**（当
+  `node_modules/<包名>` 是指向**用户自己位置**的链接时，按磁盘真实值写这条链接，**不**物化成 plugin-src 的新拷贝）。
+- `lib/server/domain/plugin-actions.js` 白名单新增 `persist-plugin`（一键钉住：①②③一次补齐）；安全语义
+  与既有动作同一套 —— 只认结构化 `{ action, packageName, profile }`，出现 `command`/`argv` 等字段一律 400，
+  且要求该包属于本 profile 且真装在 `node_modules` 里。
+- `lib/server/domain/install-cleanup.js` 收下**原样搬入**的 `pnpmRemove`（`install-job.js` 贴 600 行硬顶，
+  为收口腾行数；`install-job.js` 继续 re-export，调用点与测试的 import 面一个字没变）。
+- 面板 i18n 新增 `installedNotPersisted` / `diagNotPersisted` / `actionPersistLabel`（中英各一条，
+  两本字典仍 0 重复键）。
+
+### 测试与门槛
+
+- 新增 `tests/test-persist-pipeline.mjs`（**全离线**：私有 `DSH_HOME` + 注入写入器，零外网）：
+  ① 三处判据逐处正控/负控；② bundle 层（在 `bundles` 里但没声明 `dsh.bundle.patch` ⇒ 判红）；
+  ③ 收口缺什么补什么 + **三处齐备时三个文件逐字节不变**（幂等零写盘）；④ **负控（用户点名）**：故意让
+  lock 写入失败 ⇒ `persisted=false` + `missing=[lock]` + 一键钉住动作，**绝不报成功**；`link:` 来源**不许**
+  用 registry 404 判问题；⑤ 真 `runInstallJob` 全链路正控（齐备 → `persisted=true`、零写盘）与负控（lock
+  失败 → 如实报）；⑥ 结构化动作 `persist-plugin` 的白名单/拒命令/400 与结果如实；⑦ 面板接线（静态）：
+  `persisted===false` 时不走"已安装并启用"、不自动 reload；⑧ `lockVersion` 三种键形态 + 真机形态端到端；
+  ⑨ 真机发现的两处共享判据缺陷（未加引号的 `name:`、peer 后缀）。
+- `tests/test-plugin-actions.mjs`：白名单断言**登记**新动作（`ACTION_KINDS.length === 5`）并新增形状校验，
+  **未删任何检查**。
+- CI `tests` 工作流新增 `test-persist-pipeline.mjs` 步骤（硬门槛）。
+- 架构守卫 **ALL PASS**（`lib/server/**` 单文件 ≤600 行、domain 无 ctx、导入落地、自由变量、属性白名单等 12 项）。
+- 全量 `node tests/run-all.mjs`：**84 套 / 75 绿**；余下 9 套逐条复核为**环境性、与本版无关**（CI 为准）：
+  `test-framework-versions` / `test-bundle-guard` / `test-framework-upgrade-platform`（本机实例由桌面端外壳托管
+  ⇒ 升级/回滚路由按设计返回 409）、`test-host-shape` / `test-peer-veto`（依赖框架现场版本）、
+  `test-issue15-resolve`、`test-real-preset-e2e` / `test-suite-install`（稀疏克隆走 archive 兜底）、
+  `test-git-source-strategy`（实网探活：直连与 ghproxy 双双不可达）。**全部 9 套都用改动前的干净 worktree
+  （380050d）复跑过：同样失败**（其中 `test-git-source-strategy` 在同一网络条件下的前一轮全量里是绿的，
+  属网络抖动）。唯一由本版引入的红（`test-plugin-actions` 白名单条数）已按**登记**口径修好并复跑绿。
+- **真机端到端**（用户真实 desktop profile，证据落在用户路径）：`~/.dsh/plugin-console/persist-e2e-2026-10-04T09-01-33-096Z/`
+  —— 造一个一次性测试插件（unscoped 名 + 指向 `plugin-src` 的 junction，形如 `dshmarket`）→ 走**真
+  `runInstallJob`** → ① 清单写 `link:C:/Users/花火/.dsh/plugin-src/dsh-persist-e2e-…`、② lock 写
+  `link:../../plugin-src/dsh-persist-e2e-…`、③ 补丁写 `id=dsh-persist-e2e-…` 行、`job.persisted=true`；
+  负控（撤掉 lock 条目 + 注入 lock 写失败）如实报「未持久化」并给出一键钉住动作；收尾把三个文件
+  **逐字节还原**（SHA256 == 备份）、`node_modules` 72 个条目的链接/版本快照与改前**完全一致**、
+  测试插件的 junction 与 `plugin-src` 目录都已清除，**ALL PASS**。
+
+### 未验证项
+
+- **真机界面未复点**：本机桌面端（19387）与网页端实例**未重启**，内存里仍是 0.5.37 ⇒「未持久化」文案、
+  一键钉住按钮、以及 `dshmarket` 不再被误报"没写进 lock" 这些**界面效果**只在离线断言与真机脚本里验证，
+  **未在真机面板上复看**（更新到 0.5.38 并重启后才可见）。
+- **判据只覆盖插件的安装/更新通道**（bundle / 普通 / 已被别行提供三条收口路径）。**套装**通道的组件
+  （`suite.js` 自己写 bundles 与补丁行）与**预设**通道（走 `preset-<id>` 声明行，本来就没有 node_modules
+  插件）**未纳入**本判据。
+- 真机只读体检发现 profile 里**两处真实缺口**（本版**没有**替用户改，只在报告里点名）：
+  `@noob-stupid/dsh-connection-card-host` 与 `@openviking/dsh-memory-plugin` 的清单都是 `link:…`，
+  但 `pnpm-lock.yaml` 里**没有**这两个包的 importer 条目 —— 更新到 0.5.38 后可用「一键钉住」补齐。
+  另有 `@deepseek-ai/dsh-base` / `@deepseek-ai/dsh-web-app`（框架自带 bundle，不在 profile 的
+  `node_modules` 里）与 `js-yaml`（普通库依赖，不是插件）在体检表里显示为"缺挂载行"，属**预期噪音**。
+
 ## v0.5.37 — 改错：反向更新（「更新」按钮会把已装包降级）（2026-10-04）
 
 > 本版**只做改错**。现场是**用户当天的真机事故**：插件卡片上已装 `@deepseek-ai/dsh-time-context`

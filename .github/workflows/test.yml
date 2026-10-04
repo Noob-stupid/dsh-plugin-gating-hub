@@ -259,6 +259,22 @@ jobs:
           #   ⑧ 客户端接线：加载更多看 hasMore、"索引模糊匹配抢先 return"那条链已删除、搜索序号防竞态
           node tests/test-market-search.mjs
 
+          # ── 0.5.38 批次（2026-10-04）：**「下载即持久」**——用户原话「插件下载下来就不用 lock、
+          #    重启也不会消失」。真机现场（desktop profile 的 dshmarket）：包下载了、node_modules 在、
+          #    bundle 行挂着，`dependencies` 里却没有条目 ⇒ 任何一次 pnpm 操作都会把它清掉，
+          #    而面板当时报的是「已安装并启用」——装了没钉住被报成了成功。
+          #    段内断言（全离线：私有 DSH_HOME + 注入写入器，零外网）：
+          #    ① 判据三处（清单 spec / pnpm-lock.yaml 条目 / 挂载行）逐处正控 + 负控；
+          #    ② bundle 层：在 bundles 里但没声明 dsh.bundle.patch ⇒ 判红（bundle 层不会装入任何行）；
+          #    ③ 收口 ensurePersisted：缺什么补什么 + 读回磁盘再判 + 三处齐备时**零写盘**（幂等）；
+          #    ④ **负控**（用户点名）：故意让 lock 写入失败 ⇒ persisted=false + missing 含 lock +
+          #       一键钉住动作，绝不报成功；link: 来源**不许**用 registry 404 判问题；
+          #    ⑤ runInstallJob 全链路：正控（齐备 → persisted=true、零写盘）与负控（lock 失败 → 如实报）；
+          #    ⑥ 结构化动作 persist-plugin（白名单 + 拒绝命令字符串 + 缺 packageName 400 + 结果如实）；
+          #    ⑦ 面板接线（静态）：persisted===false 时不走"已安装并启用"、不自动 reload；
+          #    ⑧ lock 读取唯一真源：**未加 scope 的裸键**（`dshmarket:`）此前读不出来 → 已修 + 回归。
+          node tests/test-persist-pipeline.mjs
+
       # 更新候选判据（0.5.37 改错）：真机「反向更新/降级按钮」的回归钉子 —— 纯函数全离线。
       #   · installed 0.2.0-rc.2 × 镜像 latest 0.1.1-rc.1（更低）⇒ 必须 null（不许提示降级）
       #   · 预发布序 0.1.7-rc.2 → 0.2.0-rc.2；正式版 > 同号预发布；相同/垃圾串 ⇒ null
