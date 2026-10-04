@@ -39,6 +39,7 @@ const {
   suggestedPersistAction, ensurePersisted,
 } = await import('../lib/server/domain/persist.js')
 const { runInstallJob } = await import('../lib/server/domain/install-job.js')
+const { removeDirVerifiedWithRetry } = await import('../lib/server/infra/fsx.js')
 const { installJobView, detectBundleOnly } = await import('../lib/server/domain/install.js')
 const { runSuggestedAction, ACTION_KINDS, parseActionRequest } = await import('../lib/server/domain/plugin-actions.js')
 
@@ -355,16 +356,38 @@ console.log('\n=== ⑨ lock 读取（唯一真源 lockVersion）：三种键形�
   check('⑨ packages 段的 `name@ver:` 照旧读得出来（回归）', lockVersion(PROFILE, 'plain-dep') === '2.0.1', JSON.stringify(lockVersion(PROFILE, 'plain-dep')))
   check('⑨ 不命中时仍返回 null（不许谎报"lock 里有"）', lockVersion(PROFILE, 'not-there') === null)
   const { reconcileLockfile } = await import('../lib/server/domain/selfupdate.js')
-  const desktopShaped = join(ROOT, '.testdir', 'persist-lock-desktop-shape')
+  // 真机几何形态：profile 在 <DSH_HOME>/profiles/<名>，plugin-src 在 <DSH_HOME>/plugin-src ⇒
+  // lock 里的 version 就是 `link:../../plugin-src/<包名>`（desktop profile 的 dshmarket 现场）。
+  // 0.5.39 起判据还要求这条 link 条目**指向同一个目标**（目标不同 = 真漂移），所以夹具的相对路径
+  // 必须真的指回 plugin-src（旧夹具借用了真机的相对串、却把 plugin-src 放在别处 —— 那种"对齐"是假的）。
+  const desktopShaped = join(ROOT, '.testdir', 'persist-lock-shape', 'profiles', 'desktop')
+  const shapeRoot = join(ROOT, '.testdir', 'persist-lock-shape')
+  // 上一轮残留（Windows 上 rmSync 遇 junction 会**静默落空** —— 仓库里为此有专门的删除助手）先清掉，
+  // 否则第二次运行会在 symlinkSync 处 EEXIST（本测试自己踩过）。
+  removeDirVerifiedWithRetry(shapeRoot, { attempts: 3, pollMs: 250 })
   mkdirSync(join(desktopShaped, 'node_modules'), { recursive: true })
-  const src = writePkg('dshmarket-like', '1.0.0', { dir: join(desktopShaped, 'plugin-src', 'dshmarket-like') })
+  const src = writePkg('dshmarket-like', '1.0.0', { dir: join(shapeRoot, 'plugin-src', 'dshmarket-like') })
   writeFileSync(join(desktopShaped, 'package.json'), `${JSON.stringify({ name: 'p', private: true, dependencies: { 'dshmarket-like': `link:${src.split('\\').join('/')}` } }, null, 2)}\n`, 'utf8')
   symlinkSync(src, join(desktopShaped, 'node_modules', 'dshmarket-like'), 'junction')
-  writeFileSync(join(desktopShaped, 'pnpm-lock.yaml'), `lockfileVersion: '9.0'\n\nimporters:\n\n  .:\n    dependencies:\n      dshmarket-like:\n        specifier: link:${src.split('\\').join('/')}\n        version: link:../../plugin-src/dshmarket-like\n`, 'utf8')
+  const relLock = relative(desktopShaped, src).split('\\').join('/')
+  check('⑨ 夹具几何 = 真机形态（版本号写相对路径 link:../../plugin-src/<包名>）', relLock === '../../plugin-src/dshmarket-like', relLock)
+  writeFileSync(join(desktopShaped, 'pnpm-lock.yaml'), `lockfileVersion: '9.0'\n\nimporters:\n\n  .:\n    dependencies:\n      dshmarket-like:\n        specifier: link:${src.split('\\').join('/')}\n        version: link:${relLock}\n`, 'utf8')
   const aligned = await reconcileLockfile({ profileDir: desktopShaped, packages: [{ name: 'dshmarket-like' }], registries: [], pnpmAdd: async () => { throw new Error('不该被调用：本来就是对账齐备的状态') } })
   check('⑨ 真机形态端到端：裸键 link: 依赖被判**已对齐**（lockUpdated=true、一次 pnpm 都不跑）',
     aligned.lockUpdated === true && aligned.lockNote === null, JSON.stringify({ lockUpdated: aligned.lockUpdated, lockNote: aligned.lockNote }))
-  rmSync(desktopShaped, { recursive: true, force: true })
+  // 0.5.39 附加（Fix 2 的"目标不同 = 真漂移"）：把 lock 的 version 指到别处 ⇒ 必须判出来并只补那条条目
+  writeFileSync(join(desktopShaped, 'pnpm-lock.yaml'), `lockfileVersion: '9.0'\n\nimporters:\n\n  .:\n    dependencies:\n      dshmarket-like:\n        specifier: link:${src.split('\\').join('/')}\n        version: link:../../plugin-src/other-place\n`, 'utf8')
+  const repaired = await reconcileLockfile({
+    profileDir: desktopShaped, packages: [{ name: 'dshmarket-like' }], registries: [],
+    pnpmAdd: async () => { throw new Error('不该被调用：link: 来源只写 lock importer 条目，不用 pnpm add') },
+    deps: { verifyLock: async () => ({ verified: true, via: 'stub', reason: null }) },
+  })
+  check('⑨ 目标不同 ⇒ 判为真漂移，且只把那条 link 条目改成规范形（不碰清单、不跑 pnpm add）',
+    repaired.lockUpdated === true && repaired.method === 'lock-importer'
+    && readFileSync(join(desktopShaped, 'pnpm-lock.yaml'), 'utf8').includes(`        version: link:${relLock}`)
+    && JSON.parse(readFileSync(join(desktopShaped, 'package.json'), 'utf8')).dependencies['dshmarket-like'] === `link:${src.split('\\').join('/')}`,
+    JSON.stringify({ lockUpdated: repaired.lockUpdated, method: repaired.method }))
+  removeDirVerifiedWithRetry(shapeRoot, { attempts: 3, pollMs: 250 })
 }
 
 console.log('\n=== ⑩ 真机发现的两处共享判据缺陷（0.5.38 改错）：补丁行引号 + lock 的 peer 后缀 ===')

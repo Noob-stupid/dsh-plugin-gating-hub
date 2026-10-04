@@ -2,6 +2,78 @@
 
 All notable changes to dsh-plugin-hub.
 
+## v0.5.39 — 非 registry 来源的 lock 持久化不再跑完整 `pnpm add`：定点写 importer 条目 + pnpm 只读校验（2026-10-04）
+
+> 用户定案三条（原话要点）：
+> ① `reconcileLockfile` 对 `link:` 漂移会跑**完整 `pnpm add`** ⇒ 非 registry 来源**只写 lock importer 条目**
+>    （复用既有写入通路，不新造第二套），**绝不**用 `pnpm add` 当持久化手段；写出后用 pnpm 的**只读**用法
+>    确认 lock 可解析，失败或无法确认 ⇒ `persisted:false` + 缺口明细 + 一键钉住（**不许报成功**）。
+> ② `link:` spec 的**斜杠归一**：反斜杠与正斜杠是同一目标的两种写法 ⇒ 等价即**视为完好、零写盘**；
+>    只有真实漂移（目标不同/确实缺失）才写，且写**规范形**。
+> ③ 现场事实：本机 `pnpm install --lockfile-only`（pnpm 11.21.0）会剥掉**无关条目**的 peer 后缀
+>    ⇒ 我们的写入**不得**经过这种通路，并加逐字节负控。
+> 体检与真机端到端期间**未重启任何实例**（网页端 3080 与桌面端 19387 全程未动），profile 逐字节还原。
+
+### 改错
+
+- **① 非 registry 来源的 lock 持久化换通道（本版的核心）**：`domain/selfupdate.js#reconcileLockfile` 现在把
+  漂移分包处理 —— registry 形态（版本号 / dist-tag）**照旧**走一次 `pnpm add <spec>…`（主路径一个字未改）；
+  `link:` 形态改走**定点写入** `domain/lock-importer.js`：按 pnpm 的实际形态只改目标条目的那几行
+  （`specifier:` 与清单**逐字相同**、`version:` 用 pnpm 的规范形：同盘相对 / 跨盘绝对、一律正斜杠），
+  其余字节（含真机 lock 里那条带 peer 后缀的无关条目）**逐字节保留**。清单若与目标形态不等价，走的是
+  **既有**写入器 `manifest.js#setProfileDependency` —— 没有第二套写入实现。
+- **② 写出后必须过 pnpm 的只读校验**：`install --lockfile-only --dry-run --frozen-lockfile`（实测：成功与
+  失败两种结局下 lock 都逐字节不变），并按 lock 自己的 `settings:` 段镜像 pnpm 配置（不镜像会
+  `ERR_PNPM_LOCKFILE_CONFIG_MISMATCH`）；只有供应链年龄闸（`ERR_PNPM_MINIMUM_RELEASE_AGE_VIOLATION`，
+  与"lock 能否解析"是两件事）会触发**一次只读重试**。校验**未通过 / 无法确认** ⇒ `lockUpdated=false`
+  + `lockVerified` 如实下发 + 缺口明细 + 一键钉住；只读校验若真动了 lock ⇒ **立即还原原字节**并报未确认。
+  收口动作 `domain/persist.js#ensurePersisted` 会把这条结论并进最终判据：**磁盘上有那两行也不算持久化成功**。
+- **③ `link:` 规格的斜杠归一（唯一规范形 + 等价判等）**：新增 `dep-source.js#canonicalSourceSpec`（正斜杠、
+  去尾斜杠、保留相对/绝对选择）与 `#sameSourceSpec`（规范形相等，或 realpath 指向同一目录 ⇒ 等价）。
+  三个清单写入器（`pinProfileDependency` / `setProfileDependency` / `declareProfileDependency`）改用它判等
+  —— 真机 desktop profile 的 `link:D:\dsh-link\…`（反斜杠）不再被任何一次「钉住」无谓改写成正斜杠，
+  等价时**零写盘**（幂等）；只有真漂移才写，写的是规范形。
+- **④ `link:` 条目「指向别处」不再算对齐**：`reconcileLockfile.aligned()` 与 `persist.js#lockPart` 过去只判
+  "以 `link:` 开头"，于是「清单指 A、lock 指 B」被当成已对齐（真漂移：pnpm 下一次操作会按 lock 把链接
+  还原到 B）。现在两处都用同一把尺子（`sameSourceSpec`）比**目标**。
+- **⑤ 文案精确化**：只补上了 lock 条目、而 `node_modules` 里的链接还没就位时，说「lock 条目已按来源写入，
+  但链接尚未就位 —— 下一次 pnpm 操作会按这条 lock 重建链接」，不再笼统说"没写进 pnpm-lock.yaml"。
+
+### 边界（如实写进代码注释与文案，绝不假装成功）
+
+- **只有 `link:` 由 importer 条目完整表达**（本机 pnpm 11.21.0 实测）：`file:` / `git+` / tarball URL 除 importer
+  两行外还需要 `packages:` / `snapshots:` 里的解析记录（`integrity` / `directory` / git 解析），本地无法凭空
+  确定 ⇒ 这些来源**既不伪造条目、也不用 `pnpm add` 顶替**（用户点名的规矩），一律如实报未写入 + 给「钉住」出路。
+- **lock 文件不存在时不伪造**：定点写入只能补进"已有的、形态认识的 lock"；造一份只有一条 importer 的残缺
+  lock 会让 pnpm 立刻重写 ⇒ 如实报未同步 + 一键钉住 / 既有 repair 通道。
+- **`node_modules` 的链接不再由对账代建**（那正是被去掉的 `pnpm add`）：需要立即恢复链接时用既有
+  「钉住」动作（`pin-dependency`，白名单动作，跑一次 `pnpm add link:…`）——能力仍在，只是不再自动跑。
+
+### 现场事实固化（修 3）
+
+- `pnpm install --lockfile-only`（**不加** `--dry-run`，pnpm 11.21.0）会把**无关条目**的 peer 后缀剥掉：
+  实测本机 desktop profile 的副本里 `@deepseek-ai/dsh-experimental-schedule-bundle` 与 `dsh-schedule` 的
+  `(@deepseek-ai/dsh-brand@0.1.7-rc.2)` 被去掉 ⇒ 它**不是**"定点补一条"的无损工具。这条事实写进
+  `domain/lock-importer.js` 顶部注释，并落成**逐字节负控**：夹具里那条带 peer 后缀的无关条目，走我们的
+  写入后必须**逐行逐字节不变**（LF 与 CRLF 两种行尾都测）。
+
+### 测试与门槛
+
+- 新增 `tests/test-lock-importer.mjs`（进 CI 硬门槛，全离线）：正控（真漂移 ⇒ 写规范形 + **只动该条目**）、
+  负控（**等价写法 ⇒ 零写盘**、**lock 写失败 / 只读校验未通过 / 无法确认 ⇒ 必须报未持久化**、
+  **无关条目 peer 后缀逐字节不变**、**`link:` 不得用 registry 404 判问题**）、键判据唯一真源、
+  argv 唯一产出点（写盘路径永不出现"放宽年龄闸"开关）、真 pnpm 只读证据（校验前后 lock sha256 不变；
+  pnpm 不可用时**响亮 SKIP**，不假装 PASS）。
+- 既有测试同步到新契约（它们原本断言"`pnpm add` 被调用且参数是 link:"）：`test-dep-pin.mjs`（改负控为
+  "定点写入失败"、正控为"写入器真的写进了 lock"、真 registry 组补"lock 不存在 ⇒ 如实报未同步"）、
+  `test-route-inventory.mjs`（缺陷② 六段逐段改判据 + 新增"git 来源不伪造 lock"与"链接未就位不谎报对齐"）、
+  `test-persist-pipeline.mjs`（⑨ 的夹具几何改成真机形态：`link:../../plugin-src/<名>` 必须真的指回该目录，
+  并新增"目标不同 ⇒ 只改那一条"的正控）。
+- 真机 E2E（真实 desktop profile，一次性测试插件，**已清理并逐字节还原**：manifest/lock 的 SHA256 与运行前
+  完全相同）：等价（反斜杠 ↔ 正斜杠）⇒ **零写盘**；条目缺失 / 指向别处 ⇒ **只写 lock 的那几行**
+  （清单零改动、逐行计数差 = 恰好新增 3 行、无关的 peer 后缀条目逐字节不变）、真 pnpm 只读校验
+  `lockVerified=true`、再对账幂等零写盘。
+
 ## v0.5.38 — 下载即持久：一次动作钉住三处（清单 + lock + 挂载行），没钉住就如实报（2026-10-04）
 
 > 用户诉求原话：「**能不能插件下载下来就不用 lock、重启也不会消失**」。

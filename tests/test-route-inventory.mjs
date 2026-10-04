@@ -7,7 +7,7 @@
 //   · 只读接口的 status 与顶层字段必须逐字段一致（改名即失败）
 //   · 环回 / Host / 同源写保护 / 405 方法门禁行为不变
 import { mkdirSync, writeFileSync, readFileSync, rmSync, readdirSync, existsSync, symlinkSync } from 'node:fs'
-import { join, dirname } from 'node:path'
+import { join, dirname, relative } from 'node:path'
 import { pathToFileURL, fileURLToPath } from 'node:url'
 
 const ROOT = dirname(fileURLToPath(import.meta.url))
@@ -825,7 +825,9 @@ for (const [method, path, body, wantStatus, wantKeys] of SCHEMAS) {
     }
   }
 
-  // ① registry 404 + manifest 无条目（release 通道首次安装的写回路径）
+  // ① registry 404 + manifest 无条目（release 通道首次安装）：0.5.39 起 `reconcileLockfile` **只**负责
+  //    lock —— 清单没有声明时它一个字节都不写（lock 条目不能单独存在），如实说明 + 下发给「钉住」动作；
+  //    声明本身由既有声明通路负责（declareProfileDependency / persist 收口，见 test-persist-pipeline）。
   rmSync(fix, { recursive: true, force: true })
   mkdirSync(fix, { recursive: true })
   setManifest({})
@@ -835,14 +837,16 @@ for (const [method, path, body, wantStatus, wantKeys] of SCHEMAS) {
     profileDir: fix, packages: [{ name: releaseOnly }], registries: ['https://registry.example'],
     home: fix, pnpmAdd: c1.add, fetchJson: notFound,
   })
-  check('★ 缺陷②：registry 404（release 专属包）时写回 link:，绝不写裸版本号',
-    c1.acc.length === 1 && c1.acc[0].startsWith('link:') && c1.acc[0].includes(`plugin-src/${releaseOnly}`), JSON.stringify(c1.acc))
-  check('★ 缺陷②：物化到 <DSH_HOME>/plugin-src/<包名> 且是完整包',
+  check('★ 缺陷②：非 registry 来源**一次 pnpm add 都没跑**（不再用完整安装当持久化手段）',
+    c1.acc.length === 0, JSON.stringify(c1.acc))
+  check('★ 缺陷②：清单没有声明时如实说明 + 下发「钉住」动作（绝不凭空写 lock 条目、也不写裸版本号）',
+    typeof r1.depNote === 'string' && r1.depNote.includes('没有这个依赖的声明')
+    && r1.suggestedActions[0]?.payload?.action === 'pin-dependency' && r1.lockUpdated === false,
+    `${String(r1.depNote).slice(0, 110)}｜action=${r1.suggestedActions[0]?.payload?.action}`)
+  check('★ 缺陷②：物化到 <DSH_HOME>/plugin-src/<包名> 且是完整包（link: 计划的目标真的存在）',
     existsSync(join(fix, 'plugin-src', ...releaseOnly.split('/'), 'package.json')), '')
-  check('★ 缺陷②：安装结果带用户可见 depNote（说清只存在于 GitHub release）',
-    typeof r1.depNote === 'string' && r1.depNote.includes('link:') && r1.depNote.includes('registry'), String(r1.depNote))
 
-  // ② registry 可解析 → 仍写版本号（不误伤正常 registry 来源包）
+  // ② registry 可解析 → 仍写版本号（不误伤正常 registry 来源包；**这条路径一个字未改**）
   // 先把现场复位成"正常的 registry 来源包"：manifest 是版本号、lock 解析到旧版本
   writeLockText(importerLock(releaseOnly, '0.3.3', '0.3.2'))
   setManifest({ [releaseOnly]: '0.3.3' })
@@ -854,20 +858,26 @@ for (const [method, path, body, wantStatus, wantKeys] of SCHEMAS) {
   check('★ 缺陷②：registry 可解析时仍写 <name>@<版本>（正常包不受影响）',
     c2.acc.length === 1 && c2.acc[0] === `${releaseOnly}@0.3.3`, JSON.stringify(c2.acc))
 
-  // ③ 已被旧代码污染（manifest 裸版本号 + lock 解析到 URL）→ 自愈成 link:
+  // ③ 已被旧代码污染（manifest 裸版本号 + lock 解析到 URL）→ 自愈成 link:（清单走既有写入器，
+  //    lock 走定点写入；都不再经过 pnpm add）
   writeLockText(importerLock(releaseOnly, '0.3.3', 'https://example.com/pkg-0.3.3.tgz'))
   setManifest({ [releaseOnly]: '0.3.3' })
+  check('★ 缺陷②：lock 里能读到 URL 形态的解析（旧实现读到 `https` 截断值）',
+    lockVersion(fix, releaseOnly) === 'https://example.com/pkg-0.3.3.tgz', String(lockVersion(fix, releaseOnly)))
   const c3 = captureAndApply(releaseOnly)
   const r3 = await reconcileLockfile({
     profileDir: fix, packages: [{ name: releaseOnly }], registries: ['https://registry.example'],
     home: fix, pnpmAdd: c3.add, fetchJson: notFound,
+    deps: { verifyLock: async () => ({ verified: true, via: 'stub', reason: null }) },
   })
-  check('★ 缺陷②：已污染状态（裸版本号 spec + URL 解析）被自愈为 link:',
-    c3.acc.length === 1 && c3.acc[0].startsWith('link:'), JSON.stringify(c3.acc))
-  check('★ 缺陷②：lock 里能读到 URL 形态的解析（旧实现读到 `https` 截断值）',
-    lockVersion(fix, releaseOnly) === 'https://example.com/pkg-0.3.3.tgz', String(lockVersion(fix, releaseOnly)))
+  check('★ 缺陷②：已污染状态（裸版本号 spec + URL 解析）被自愈为 link:（pnpm add 一次都没跑）',
+    c3.acc.length === 0 && String(specNow(releaseOnly)).startsWith('link:'), `${JSON.stringify(c3.acc)}/${specNow(releaseOnly)}`)
   check('★ 缺陷②：自愈后的 specifier 不是「不可解析的裸版本号」',
     !/^\d+\.\d+\.\d+/u.test(String(specNow(releaseOnly))), String(specNow(releaseOnly)))
+  check('★ 缺陷②：lock 的那条 importer 也随之变成 link:（specifier 与清单逐字相同）',
+    String(lockVersion(fix, releaseOnly)).startsWith('link:')
+    && readFileSync(join(fix, 'pnpm-lock.yaml'), 'utf8').includes(`        specifier: ${specNow(releaseOnly)}`),
+    String(lockVersion(fix, releaseOnly)))
 
   // ④ manifest 是 tarball URL → 归整成 link:（pnpm 10 对 direct-URL 重写 lock 会丢 integrity）
   writeLockText(importerLock(releaseOnly, 'https://example.com/pkg-0.3.3.tgz', 'https://example.com/pkg-0.3.3.tgz'))
@@ -876,23 +886,29 @@ for (const [method, path, body, wantStatus, wantKeys] of SCHEMAS) {
   await reconcileLockfile({
     profileDir: fix, packages: [{ name: releaseOnly }], registries: ['https://registry.example'],
     home: fix, pnpmAdd: c4.add, fetchJson: notFound,
+    deps: { verifyLock: async () => ({ verified: true, via: 'stub', reason: null }) },
   })
-  check('★ 缺陷②：tarball URL 来源被归整成 link:（不再留下 URL 死循环形态）',
-    c4.acc.length === 1 && c4.acc[0].startsWith('link:'), JSON.stringify(c4.acc))
+  check('★ 缺陷②：tarball URL 来源被归整成 link:（不再留下 URL 死循环形态；pnpm add 未跑）',
+    c4.acc.length === 0 && String(specNow(releaseOnly)).startsWith('link:'), `${JSON.stringify(c4.acc)}/${specNow(releaseOnly)}`)
 
-  // ⑤ git 来源 → 原样重放，绝不降级成版本号
+  // ⑤ git 来源：**来源绝不被改写**；而 git+ 的 lock 记录不止 importer 一行（还要 packages 里的 sha/解析），
+  //    本地无法确定 ⇒ 0.5.39 起一个字节都不写（也不用 pnpm add 顶替），如实报未写入 + 给「钉住」出路。
   const gitSpec = 'git+https://github.com/Noob-stupid/dsh-plugin-hub.git'
   putInstalled('dsh-git-probe', '0.0.1')
   writeLockText(importerLock('dsh-git-probe', gitSpec, 'github.com/Noob-stupid/dsh-plugin-hub/abc123'))
   setManifest({ 'dsh-git-probe': gitSpec })
+  const lockBeforeGit = readFileSync(join(fix, 'pnpm-lock.yaml'), 'utf8')
   const c5 = captureAndApply('dsh-git-probe')
-  await reconcileLockfile({
+  const r5 = await reconcileLockfile({
     profileDir: fix, packages: [{ name: 'dsh-git-probe' }], registries: ['https://registry.example'],
     home: fix, pnpmAdd: c5.add, fetchJson: notFound,
   })
-  check('★ 缺陷②：git 来源保持 git+ 规格（来源不被改写）',
-    c5.acc.length === 1 && c5.acc[0] === gitSpec, JSON.stringify(c5.acc))
-
+  check('★ 缺陷②：git 来源保持 git+ 规格（来源不与改写；pnpm add 未跑、lock 未被伪造）',
+    c5.acc.length === 0 && String(specNow('dsh-git-probe')) === gitSpec && readFileSync(join(fix, 'pnpm-lock.yaml'), 'utf8') === lockBeforeGit,
+    `${JSON.stringify(c5.acc)}/${specNow('dsh-git-probe')}`)
+  check('★ 缺陷②：git 来源的 lock 无法本地确定时**如实报未写入**（不假装成功）+ 下发钉住动作',
+    r5.lockUpdated === false && /未写入 lock/u.test(String(r5.depNote)) && r5.suggestedActions[0]?.payload?.action === 'pin-dependency',
+    `${String(r5.depNote).slice(0, 110)}｜action=${r5.suggestedActions[0]?.payload?.action}`)
   // ⑤b dist-tag 规格（latest）：registry 来源，但必须**保留标签**，
   //     绝不能原样丢给 pnpm（`pnpm add latest` 会去装一个名叫 latest 的包）
   putInstalled('dsh-tag-probe', '1.4.0')
@@ -910,9 +926,10 @@ for (const [method, path, body, wantStatus, wantKeys] of SCHEMAS) {
   await reconcileLockfile({
     profileDir: fix, packages: [{ name: 'dsh-tag-probe' }], registries: ['https://registry.example'],
     home: fix, pnpmAdd: c5c.add, fetchJson: notFound,
+    deps: { verifyLock: async () => ({ verified: true, via: 'stub', reason: null }) },
   })
-  check('★ 缺陷②：dist-tag 但 registry 查无此包 → 同样走 link:（不写 latest 也不写版本号）',
-    c5c.acc.length === 1 && c5c.acc[0].startsWith('link:'), JSON.stringify(c5c.acc))
+  check('★ 缺陷②：dist-tag 但 registry 查无此包 → 同样走 link:（不写 latest 也不写版本号；pnpm add 未跑）',
+    c5c.acc.length === 0 && String(specNow('dsh-tag-probe')).startsWith('link:'), `${JSON.stringify(c5c.acc)}/${specNow('dsh-tag-probe')}`)
 
   // ⑥ lock 里已是 link 解析、且链接**真的**还在 → 视为已对齐（不白跑 pnpm add、不假报未写入 lock）
   const linkTarget = join(fix, 'plugin-src', ...releaseOnly.split('/'))
@@ -922,7 +939,9 @@ for (const [method, path, body, wantStatus, wantKeys] of SCHEMAS) {
   const linkSpec = `link:${linkTarget.replace(/\\/gu, '/')}`
   rmSync(join(fix, 'node_modules', ...releaseOnly.split('/')), { recursive: true, force: true })
   symlinkSync(linkTarget, join(fix, 'node_modules', ...releaseOnly.split('/')), 'junction')
-  writeLockText(importerLock(releaseOnly, linkSpec, 'link:../../plugin-src/@dsh-external/dsh-super-injector'))
+  // 真机几何形态：lock 里的 version 是**相对 profile 目录**的（0.5.39 起判据要求它指向同一目标）
+  const relLink = relative(fix, linkTarget).split('\\').join('/')
+  writeLockText(importerLock(releaseOnly, linkSpec, `link:${relLink}`))
   setManifest({ [releaseOnly]: linkSpec })
   const c6 = captureAndApply(releaseOnly)
   const r6 = await reconcileLockfile({
@@ -933,26 +952,32 @@ for (const [method, path, body, wantStatus, wantKeys] of SCHEMAS) {
     c6.acc.length === 0 && r6.lockUpdated === true && r6.lockNote === null && r6.method === null,
     JSON.stringify({ calls: c6.acc, lockUpdated: r6.lockUpdated, note: r6.lockNote }))
   check('★ lockVersion 能读 importers 段的 version（含 link:/URL 形态，旧实现在 specifier 行 break）',
-    lockVersion(fix, releaseOnly) === 'link:../../plugin-src/@dsh-external/dsh-super-injector', String(lockVersion(fix, releaseOnly)))
+    lockVersion(fix, releaseOnly) === `link:${relLink}`, String(lockVersion(fix, releaseOnly)))
 
-  // ⑦ release 通道「先删再铺」把链接换成真实目录（新版）→ 必须判为漂移、重新物化 + 重放 link:，
+  // ⑦ release 通道「先删再铺」把链接换成真实目录（新版）→ 必须判为漂移、重新物化 + **只补 lock 条目**，
   //    否则下一次 pnpm 操作会按 lock 重建链接，把刚更新上去的版本还原成 plugin-src 里的旧副本
   const nmPkg = join(fix, 'node_modules', ...releaseOnly.split('/'))
   rmSync(nmPkg, { recursive: true, force: true })
   mkdirSync(join(nmPkg, 'lib'), { recursive: true })
   writeFileSync(join(nmPkg, 'package.json'), JSON.stringify({ name: releaseOnly, version: '0.4.0', main: 'lib/index.js' }), 'utf8')
   writeFileSync(join(nmPkg, 'lib', 'index.js'), 'export const v = "0.4.0"\n', 'utf8')
+  writeLockText(importerLock(releaseOnly, linkSpec, 'link:C:/nowhere/stale'))
   const c7 = captureAndApply(releaseOnly)
-  await reconcileLockfile({
+  const r7 = await reconcileLockfile({
     profileDir: fix, packages: [{ name: releaseOnly }], registries: ['https://registry.example'],
     home: fix, pnpmAdd: c7.add, fetchJson: notFound,
+    deps: { verifyLock: async () => ({ verified: true, via: 'stub', reason: null }) },
   })
-  check('★ 缺陷②：链接被打断（release 通道更新）→ 判为漂移并重放 link:',
-    c7.acc.length === 1 && c7.acc[0] === linkSpec, JSON.stringify(c7.acc))
+  check('★ 缺陷②：链接被打断（release 通道更新）→ 判为漂移，**只补那条 lock 条目**（不跑 pnpm add）',
+    c7.acc.length === 0 && String(lockVersion(fix, releaseOnly)) === `link:${relLink}`,
+    `calls=${JSON.stringify(c7.acc)} lock=${lockVersion(fix, releaseOnly)}`)
   check('★ 缺陷②：重放前把**新副本**刷进了 plugin-src（否则更新会被还原成旧版）',
     JSON.parse(readFileSync(join(linkTarget, 'package.json'), 'utf8')).version === '0.4.0',
     JSON.parse(readFileSync(join(linkTarget, 'package.json'), 'utf8')).version)
-  check('★ 缺陷②：重放后再次对账即判为对齐（幂等）', await (async () => {
+  check('★ 缺陷②：链接没就位时**不谎报对齐**，且如实说"链接尚未就位"（而不是"没写进 lock"）',
+    r7.lockUpdated === false && /链接尚未就位/u.test(String(r7.lockNote)) && !/没写进 pnpm-lock\.yaml/u.test(String(r7.lockNote)),
+    String(r7.lockNote).slice(0, 140))
+  check('★ 缺陷②：重放后再次对账即判为对齐（幂等；夹具把链接恢复成真链接）', await (async () => {
     rmSync(nmPkg, { recursive: true, force: true })
     symlinkSync(linkTarget, nmPkg, 'junction')
     const c8 = captureAndApply(releaseOnly)

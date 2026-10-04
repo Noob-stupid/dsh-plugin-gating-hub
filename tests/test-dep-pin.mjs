@@ -5,10 +5,11 @@
 //   **双双 404** —— 下次任何 pnpm 操作都是 ERR_PNPM_FETCH_404；同时面板在安装完成时却报了
 //   「已按 link: 形式记录依赖」（文案硬编码，没读回真实值）。本用例把修复钉成五条：
 //   ① 非 registry 包 → 清单写 link:（不是会 404 的裸版本号）
-//   ② 写清单后**自动做一次 lock 对账**，lock 里真有这条 link 条目
+//   ② 写清单后**自动做一次 lock 对账**：link: 的 lock 持久化走**定点写入 importer 条目**
+//      （0.5.39 起**不再**用 `pnpm add` 当持久化手段），写出后用 pnpm 的**只读**用法确认 lock 可解析
 //   ③ 随后 `pnpm install --lockfile-only` 退出码 0、不再报 404（**真 pnpm**，link: 不走 registry）
 //   ④ 文案按**实际写入形态**生成：写回没生效时绝不出现"已按 link: 形式记录依赖"
-//   ⑤ registry 可解析的包行为不变（回归：仍写 <name>@<版本>）
+//   ⑤ registry 可解析的包行为不变（回归：仍写 <name>@<版本>，仍走既有 pnpm add 通道）
 //
 // 分组与门槛（缺环境要**响亮跳过**，绝不假装 PASS）：
 //   组 1/2/4  离线：桩探测 + 桩 pnpm（形态、对账调用、文案）与**真 pnpm**（本地 link:，不出外网）—— 进 CI 硬门槛
@@ -77,24 +78,31 @@ writeManifest({ [FAKE]: FAKE_VERSION })
 
 console.log('=== 组 ①②④ 离线：写回形态 / lock 对账调用 / 文案一致性（桩） ===')
 {
-  // ── ④ 负例：pnpm add 什么都没做成（pnpm 静默失败/被别处覆盖）→ 文案**必须**如实说"未生效"
-  const argvLog = []
-  const stubNoop = async (profileDir, spec) => { argvLog.push(spec) }
+  // ── ④ 负例：**定点写入**没做成（写盘失败/读不到 lock）→ 文案**必须**如实说"未写入"
+  //     0.5.39 起 link: 的持久化不再经过 pnpm add（修 1），所以负控改成让**我们的写入器**失败 ——
+  //     语义与旧版一致：写回没生效时绝不许出现"已钉住"。
+  const stubFailingWriter = async () => ({ changed: false, unchanged: false, reason: '模拟：lock importer 定点写入失败（负控）' })
+  let pnpmAddCalled = 0
   writeManifest({ [FAKE]: FAKE_VERSION })
   writeLock("lockfileVersion: '9.0'\n\nimporters:\n\n  .:\n    dependencies: {}\n")
-  const plan = await reconcileLockfile({ profileDir: PROFILE, packages: [{ name: FAKE }], registries: [REGISTRY], fetchJson: fetch404, pnpmAdd: stubNoop })
-  check('★ ④ pnpm add 没生效时：文案不出现"已按 link: 形式记录依赖"（谎报修复）',
-    typeof plan.depNote === 'string' && !plan.depNote.includes('已按 link: 形式记录依赖') && plan.depNote.includes('未生效'),
+  const plan = await reconcileLockfile({
+    profileDir: PROFILE, packages: [{ name: FAKE }], registries: [REGISTRY], fetchJson: fetch404,
+    pnpmAdd: async () => { pnpmAddCalled += 1 },
+    deps: { writeImporter: stubFailingWriter },
+  })
+  check('★ ④ 写入没生效时：文案不出现"已按 link: 形式记录依赖"（谎报修复）',
+    typeof plan.depNote === 'string' && !plan.depNote.includes('已按 link: 形式记录依赖') && /未写入/u.test(plan.depNote),
     String(plan.depNote).slice(0, 150))
   check('★ ④ 未生效时如实带上"清单里实际是什么" + 探测结论是"查无此包"（不是网络类）',
-    plan.depNote.includes(FAKE_VERSION) && plan.depNote.includes('查无此包'), String(plan.depNote).slice(0, 150))
+    plan.depNote.includes(String(readDeps()[FAKE])) && plan.depNote.includes('查无此包'), String(plan.depNote).slice(0, 150))
   check('★ ④ 未生效时下发结构化「钉住」动作（面板可一键执行；payload 里没有任何命令字符串）',
     Array.isArray(plan.suggestedActions) && plan.suggestedActions[0]?.kind === 'pin-dependency'
     && plan.suggestedActions[0]?.payload?.action === 'pin-dependency' && plan.suggestedActions[0]?.payload?.packageName === FAKE,
     JSON.stringify(plan.suggestedActions?.[0]?.payload))
-  check('★ ④ 未生效时 lockUpdated=false（不假装成功）', plan.lockUpdated === false && typeof plan.lockNote === 'string', `lockUpdated=${plan.lockUpdated}`)
-  check('★ ② 对账确实调了 pnpm add，且参数是 link: 形式（不是会 404 的裸版本号）',
-    argvLog.length === 1 && String(argvLog[0]).startsWith(`link:`) && String(argvLog[0]).endsWith(FAKE.replace('/', '/')), JSON.stringify(argvLog))
+  check('★ ④ 未生效时 lockUpdated=false（不假装成功）且 lockNote 带上真因',
+    plan.lockUpdated === false && /定点写入失败/u.test(String(plan.lockNote)), `lockUpdated=${plan.lockUpdated} note=${String(plan.lockNote).slice(0, 100)}`)
+  check('★ ② 修 1：非 registry 来源**一次 pnpm add 都没跑**（不再用完整安装当持久化手段）',
+    pnpmAddCalled === 0, `calls=${pnpmAddCalled}`)
   check('★ ① 物化发生了：<DSH_HOME>/plugin-src/<包名> 里有真包（link 目标存在，不是悬空链接）',
     existsSync(join(pluginSrc, 'package.json')) && JSON.parse(readFileSync(join(pluginSrc, 'package.json'), 'utf8')).version === FAKE_VERSION,
     pluginSrc)
@@ -102,31 +110,63 @@ console.log('=== 组 ①②④ 离线：写回形态 / lock 对账调用 / 文�
     probeFailureKind({ tried: [`${REGISTRY}：HTTP 404 Not Found`] }) === 'fetch-404'
     && probeFailureKind({ tried: ['fetch failed'] }) === 'network-timeout')
 
-  // ── ④ 正例：模拟 pnpm 真的把 link 写进了清单 → 这时才允许出现"已按 link: 形式记录依赖"
-  // 桩必须**照真 pnpm 的行为**模拟（本机实测，nodeLinker: hoisted）：`pnpm add link:<绝对路径>` 会
-  // ① 清单原样保留 link:<绝对路径> ② 把 node_modules/<包名> 从真实目录换成**Junction** ③ 写 lock。
-  // 少了 ③ 的这一环，linkSpecIsIntact 会判为"链接被打断"，lockUpdated 就永远是 false（与真机不符）。
-  const stubReal = async (profileDir, spec) => {
-    const manifest = JSON.parse(readFileSync(manifestPath, 'utf8'))
-    manifest.dependencies[FAKE] = spec
-    writeManifest(manifest.dependencies)
-    writeLock(`lockfileVersion: '9.0'\n\nimporters:\n\n  .:\n    dependencies:\n      '${FAKE}':\n        specifier: ${spec}\n        version: link:../../plugin-src/${FAKE}\n`)
-    const target = join(profileDir, 'node_modules', ...FAKE.split('/'))
-    if (existsSync(target)) rmSync(target, { recursive: true, force: true })
-    mkdirSync(dirname(target), { recursive: true })
-    symlinkSync(join(HOME, 'plugin-src', ...FAKE.split('/')), target, 'junction')
-  }
+  // ── ④ 正例：定点写入真的把条目写进 lock（**我们自己的写入器**，不是 pnpm add）→
+  //     这时才允许出现"已按 link: 形式记录依赖"；只读校验用桩（离线，真 pnpm 那组另有覆盖）
+  //     注意：0.5.39 起**没有任何一步**会替我们造 node_modules 的链接（那正是被去掉的 pnpm add），
+  //     所以"成功"的夹具必须本来就处于健康形态（node_modules 是指向 plugin-src 的链接）。
+  const stubVerifyOk = async () => ({ verified: true, via: 'stub', reason: null })
   writeManifest({ [FAKE]: FAKE_VERSION })
-  const planOk = await reconcileLockfile({ profileDir: PROFILE, packages: [{ name: FAKE }], registries: [REGISTRY], fetchJson: fetch404, pnpmAdd: stubReal })
+  writeLock("lockfileVersion: '9.0'\n\nimporters:\n\n  .:\n    dependencies: {}\n")
+  const nmTarget = join(PROFILE, 'node_modules', ...FAKE.split('/'))
+  if (existsSync(nmTarget)) rmSync(nmTarget, { recursive: true, force: true })
+  mkdirSync(dirname(nmTarget), { recursive: true })
+  symlinkSync(join(HOME, 'plugin-src', ...FAKE.split('/')), nmTarget, 'junction')
+  const callerArgs = []
+  const planOk = await reconcileLockfile({
+    profileDir: PROFILE, packages: [{ name: FAKE }], registries: [REGISTRY], fetchJson: fetch404,
+    pnpmAdd: async (dir, specs) => { callerArgs.push(specs) },
+    deps: { verifyLock: stubVerifyOk },
+  })
   const actual = readDeps()[FAKE]
-  check('★ ② 写回生效后：清单是 link:、lock 有条目、lockUpdated=true',
-    String(actual).startsWith('link:') && String(lockVersion(PROFILE, FAKE)).startsWith('link:') && planOk.lockUpdated === true,
-    `spec=${actual} lock=${lockVersion(PROFILE, FAKE)} updated=${planOk.lockUpdated}`)
+  check('★ ② 定点写入生效后：清单是 link:、lock 有条目、lockUpdated=true（且一次 pnpm add 都没跑）',
+    String(actual).startsWith('link:') && String(lockVersion(PROFILE, FAKE)).startsWith('link:') && planOk.lockUpdated === true && callerArgs.length === 0,
+    `spec=${actual} lock=${lockVersion(PROFILE, FAKE)} updated=${planOk.lockUpdated} pnpmAdd=${callerArgs.length}`)
+  check('★ ② lock 里的 specifier 与清单**逐字相同**、version 是 pnpm 的规范形（正斜杠相对路径）',
+    (() => {
+      const text = readFileSync(join(PROFILE, 'pnpm-lock.yaml'), 'utf8')
+      return text.includes(`        specifier: ${actual}`) && /        version: link:[^\n]*plugin-src[^\n]*/u.test(text) && !/version: link:.*\\\\/u.test(text)
+    })(), readFileSync(join(PROFILE, 'pnpm-lock.yaml'), 'utf8').split('\n').filter((l) => l.includes('release-only')).join(' | '))
+  check('★ ② 修 2（幂等零写盘）：形态齐备时再对账一次 ⇒ 一个字节都不写、也不跑只读校验',
+    await (async () => {
+      const lockBefore = readFileSync(join(PROFILE, 'pnpm-lock.yaml'), 'utf8')
+      const manifestBefore = readFileSync(manifestPath, 'utf8')
+      const again = await reconcileLockfile({
+        profileDir: PROFILE, packages: [{ name: FAKE }], registries: [REGISTRY], fetchJson: fetch404,
+        pnpmAdd: async () => { throw new Error('不该被调用') },
+        deps: { verifyLock: async () => { throw new Error('不该被调用：没有写入就不需要校验') } },
+      })
+      return again.lockUpdated === true && readFileSync(join(PROFILE, 'pnpm-lock.yaml'), 'utf8') === lockBefore && readFileSync(manifestPath, 'utf8') === manifestBefore
+    })(), '')
   check('★ ④ 写回生效后才出现"已按 link: 形式记录依赖"，且文案里的路径与清单**当前值**一致',
     typeof planOk.depNote === 'string' && planOk.depNote.includes('已按 link: 形式记录依赖') && planOk.depNote.includes(actual),
     String(planOk.depNote).slice(0, 160))
   check('★ ④ 生效时不再下发建议动作（不需要用户再做什么）',
     Array.isArray(planOk.suggestedActions) && planOk.suggestedActions.length === 0, JSON.stringify(planOk.suggestedActions))
+  // 链 接被打断（release/curl 通道「先删再铺」把 node_modules 换成真实目录）+ lock 条目缺失：
+  // 定点写入只补 lock，**不造链接**（那正是被去掉的 pnpm add）⇒ 必须如实说"链接尚未就位"
+  rmSync(nmTarget, { recursive: true, force: true })
+  mkdirSync(nmTarget, { recursive: true })
+  writeFileSync(join(nmTarget, 'package.json'), JSON.stringify({ name: FAKE, version: FAKE_VERSION, main: 'index.js' }, null, 2), 'utf8')
+  writeLock("lockfileVersion: '9.0'\n\nimporters:\n\n  .:\n    dependencies: {}\n")
+  const broken = await reconcileLockfile({
+    profileDir: PROFILE, packages: [{ name: FAKE }], registries: [REGISTRY], fetchJson: fetch404,
+    pnpmAdd: async () => { throw new Error('不该被调用：非 registry 来源不用 pnpm add') },
+    deps: { verifyLock: stubVerifyOk },
+  })
+  check('★ ② 链接被打断 + lock 缺条目 ⇒ 只补 lock 条目，并如实说明「链接尚未就位」（不谎报对齐）',
+    String(lockVersion(PROFILE, FAKE)).startsWith('link:') && broken.lockUpdated === false
+    && /链接尚未就位/u.test(String(broken.lockNote)) && !/没写进 pnpm-lock\.yaml/u.test(String(broken.lockNote)),
+    `lock=${lockVersion(PROFILE, FAKE)} lockNote=${String(broken.lockNote).slice(0, 130)}`)
 
   // ── ⑤ 回归：registry 可解析的包 → 仍写 <name>@<版本>，绝不改成 link:
   const versionArgs = []
@@ -228,15 +268,20 @@ if (networkOff) {
   } else {
     check('★ ① 真探测：npmmirror 上确实没有这个包 → 清单写成 link:',
       viaProduct.form === 'link' && String(readDeps()[FAKE]).startsWith('link:'), `${viaProduct.form}/${readDeps()[FAKE]}`)
-    check('★ ② 真 pnpm 对账：lock 里出现这条 link 条目，lockSynced=true',
-      viaProduct.lockSynced === true && String(lockVersion(PROFILE, FAKE)).startsWith('link:'),
-      `lockSynced=${viaProduct.lockSynced} lock=${lockVersion(PROFILE, FAKE)} lockNote=${viaProduct.lockNote ?? '-'}`)
+    // 0.5.39 修 1：lock 文件**整个不存在**时，定点写入只能补进"已有的、形态认识的 lock"（本模块不伪造
+    // 一份只有一条 importer 的残缺 lock —— 那会让 pnpm 立刻重写）。这里的正确结局是**如实报未同步**，
+    // 出路是既有 repair/钉住动作（下一个断言就用它把 lock 真建出来）。
+    check('★ ② lock 文件不存在 ⇒ 如实报 lockSynced=false + 说清原因（绝不谎报"已写进 lock"）',
+      viaProduct.lockSynced === false && /pnpm-lock\.yaml/u.test(String(viaProduct.lockNote)),
+      `lockSynced=${viaProduct.lockSynced} lockNote=${String(viaProduct.lockNote).slice(0, 120)}`)
     check('★ ③ 随后 pnpm install --lockfile-only 退出码 0（真 pnpm；不再有 404）', await (async () => {
       try {
         await runPnpmWithFallback(repairArgsFor(REGISTRY), { execOpts: { cwd: PROFILE, timeout: 180000, windowsHide: true, maxBuffer: 8 * 1024 * 1024 } })
         return true
       } catch { return false }
     })())
+    check('★ ③ 既有 repair 通道重建出的 lock 里真有这条 link 条目（出路是通的）',
+      String(lockVersion(PROFILE, FAKE)).startsWith('link:'), String(lockVersion(PROFILE, FAKE)))
     check('★ ④ 文案与实际一致：depNote 里出现的 link 路径就是清单当前值',
       typeof viaProduct.depNote === 'string' && viaProduct.depNote.includes(readDeps()[FAKE]),
       String(viaProduct.depNote).slice(0, 160))
