@@ -303,6 +303,22 @@ jobs:
           #    ⑧ 真机（有真实框架根才跑，否则**响亮 SKIP**）：垫片 realpath === 宿主侧 realpath。
           node tests/test-link-self-sufficiency.mjs
 
+          # ── 0.5.41 批次（2026-10-06）：**来源型安装的接线** —— 把真实来源规格一路传到收口 ────────────
+          #    0.5.40 把能力做进了写入层（`declareProfileDependency({sourceSpec})` ⇒ `pnpm add <spec>`），
+          #    但**生产路径上没有一个调用方传过 sourceSpec**：curl / GitHub release 这些"取样通道"把包
+          #    铺进 node_modules 之后，收口只知道"磁盘上有个真实目录"，于是按 registry 404 判据写成 `link:`
+          #    （复制到 plugin-src + 链接）—— 依赖仍然没人管，正是用户点名要修的那一步。
+          #    段内断言（全离线：私有 DSH_HOME + 注入桩 pnpm/lock/挂载，**零外网**）：
+          #    ① 正控：release 资产 URL 一路传到收口 ⇒ `pnpm add <url>` 被**真的调用** ⇒ 清单写真实规格
+          #      ＋ 记录留存 ＋ **交叉验证**（计划写回的 === 交给 pnpm 的 === 清单里的 === 记录里的）；
+          #    ② 不倒退：registry 写版本号且**零真装**；本地目录仍 `link:` + 自足（零真装）；
+          #    ③ 负控 A（包管理器安装失败）：物已在盘上 ⇒ 回落既有 link: 路径 ＋ 文案「已装上（link 方式）·
+          #      真装失败：<原因> · 可一键真装」＋ 结构化 real-install 动作（payload 里没有 spec/命令位置）；
+          #    ④ 负控 B（取样/下载失败）：物不在盘上 ⇒ **只有如实失败 + 原因**，全文不得出现
+          #      「已安装 / 已启用 / 回落成功 / link 方式 / 已完整安装」；可重试动作（面板重试按钮）另钉一条；
+          #    ⑤ real-install 动作的规格**只从服务端记录读**（客户端塞 spec/url 一律无效）＋ 缺记录 400。
+          node tests/test-source-install-wiring.mjs
+
       # 更新候选判据（0.5.37 改错）：真机「反向更新/降级按钮」的回归钉子 —— 纯函数全离线。
       #   · installed 0.2.0-rc.2 × 镜像 latest 0.1.1-rc.1（更低）⇒ 必须 null（不许提示降级）
       #   · 预发布序 0.1.7-rc.2 → 0.2.0-rc.2；正式版 > 同号预发布；相同/垃圾串 ⇒ null
@@ -326,6 +342,9 @@ jobs:
           # 本地目录 file: / GitHub github:（要 git+可达，缺则响亮 SKIP）。核心断言语义：
           # 「真装 ⇒ 依赖由 pnpm 装齐」（isolated 布局里确有依赖实体）与「link: **不装**依赖」形成对照，
           # 并交叉验证"pnpm 自己写进清单的 spec === 我们 planDependencySpec 计划的写回 spec"。
+          # 0.5.41 追加组 7~9（**接线**验收，真 pnpm）：收口层拿到真实来源规格后 ——
+          # tarball URL ⇒ 真装且依赖由 pnpm 装齐、**不走 link: 回落**；registry 可解析 ⇒ 写版本号且零真装；
+          # 本地目录 ⇒ 仍 `link:` + 自足（真 pnpm 在目标目录里装它的 dependencies）。
           # pnpm 解析不到或镜像不可达时整组**响亮 SKIP**（退出码 0，不假装 PASS）。
           node tests/test-real-source-install.mjs
 

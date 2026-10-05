@@ -50,12 +50,18 @@ console.log('=== C4-① 结构契约：路由清单 + 白名单动作 + payload 
   const actionSrc = readFileSync(join(ROOT, '..', 'lib', 'server', 'domain', 'plugin-actions.js'), 'utf8')
   // 0.5.38 加法：白名单多了一个持久化收口动作 `persist-plugin`（用户诉求「插件下载下来就不用 lock、
   // 重启也不会消失」）。**登记而非删除**：数量与成员都要对得上（新动作必须同时进 ACTION_KINDS 与这里）。
-  check('白名单只有我们定义的动作类型（pin-dependency / reconcile-lock / allow-builds / overwrite-preset / persist-plugin）',
-    ACTION_KINDS.length === 5 && ['pin-dependency', 'reconcile-lock', 'allow-builds', 'overwrite-preset', 'persist-plugin'].every((k) => ACTION_KINDS.includes(k)), JSON.stringify(ACTION_KINDS))
+  // 0.5.41 加法（本轮接线）：再加一个 `real-install` —— 来源型真装失败（回落 link:）后的"出路"：
+  // 服务端从**自己的记录**里取真实来源规格再跑一次 `pnpm add <spec>`（客户端只能给包名）。
+  check('白名单只有我们定义的动作类型（pin-dependency / reconcile-lock / allow-builds / overwrite-preset / persist-plugin / real-install）',
+    ACTION_KINDS.length === 6 && ['pin-dependency', 'reconcile-lock', 'allow-builds', 'overwrite-preset', 'persist-plugin', 'real-install'].every((k) => ACTION_KINDS.includes(k)), JSON.stringify(ACTION_KINDS))
   check('★ persist-plugin：缺 packageName → 400；非法包名 → 400（与 pin-dependency 同一形状校验）',
     parseActionRequest({ action: 'persist-plugin' }).status === 400
     && parseActionRequest({ action: 'persist-plugin', packageName: '../../etc' }).status === 400
     && parseActionRequest({ action: 'persist-plugin', packageName: '@fake/demo' }).ok === true)
+  check('★ real-install：缺 packageName → 400；非法包名 → 400（同一形状校验）',
+    parseActionRequest({ action: 'real-install' }).status === 400
+    && parseActionRequest({ action: 'real-install', packageName: '../../etc' }).status === 400
+    && parseActionRequest({ action: 'real-install', packageName: '@fake/demo' }).ok === true)
   check('服务端**自己**拼 argv（pnpmAddArgs / repairArgsFor），源码里没有拼客户端字符串的位置',
     actionSrc.includes('pnpmAddArgs(') && !/exec\(|spawn\(/u.test(actionSrc), 'plugin-actions.js')
   check('危险字段清单覆盖 command/cmd/argv/args/exec/shell/script/run/spawn/bin',

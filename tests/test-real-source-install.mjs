@@ -20,7 +20,8 @@ import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { runPnpmWithFallback, execFileWithKillTree } from '../lib/server/infra/exec.js'
 import { planDependencySpec } from '../lib/server/domain/manifest.js'
-import { installSourceDependency } from '../lib/server/domain/manifest.js'
+import { declareProfileDependency, installSourceDependency } from '../lib/server/domain/manifest.js'
+import { lockVersion } from '../lib/server/domain/selfupdate.js'
 
 const ROOT = dirname(fileURLToPath(import.meta.url))
 const SANDBOX = join(ROOT, '.testdir', 'real-source-install')
@@ -166,6 +167,75 @@ if (probe.ok !== true) {
     const ins = await pnpmAdd(profile6, `link:${localDir.replace(/\\/gu, '/')}`)
     check('⑥ link: 装法本身可用（包能解析）', ins.ok === true && resolvable(profile6, 'rsi-local-fixture') !== null, ins.error ?? String(resolvable(profile6, 'rsi-local-fixture')))
     check('⑥ 负控：link: **不装**它的 dependencies（.pnpm 里查无该依赖实体 —— 所以必须由 link 自足性补齐）', storeDepOf(profile6, TINY_DEP) === null, `store=${storeDepOf(profile6, TINY_DEP)}`)
+  }
+
+  // ── 组 7～9（0.5.41 接线）：**收口层**把真实来源规格交给 pnpm 真装 ────────────────────────────
+  // 组 1～6 证的是"pnpm 自己装的时候依赖跟着来"；这三组证的是**我们的产品路径**：
+  // 取样通道（release 资产 / tarball URL / 本地目录）装完之后，收口那一步（declareProfileDependency）
+  // 把真实来源规格交回 pnpm ⇒ 依赖由包管理器装齐（而不是只挂一个 link: 目录）。
+  {
+    const home = join(SANDBOX, 'wire-home')
+    mkdirSync(home, { recursive: true })
+    const probe404 = async () => ({ resolvable: false, hasVersion: false, latest: null, registry: null, tried: ['stub：HTTP 404 Not Found'] })
+
+    console.log('\n── 组 7：接线 · tarball URL（真 pnpm：依赖由包管理器装齐）──────────')
+    {
+      const profile7 = fresh('wire-url')
+      // 取样通道的形态：包已被解压铺进 node_modules（我们是"照抄一份"来模拟）
+      const sampled = join(profile7, 'node_modules', 'debug')
+      mkdirSync(sampled, { recursive: true })
+      writeFileSync(join(sampled, 'package.json'), `${JSON.stringify({ name: 'debug', version: '4.3.4', main: 'src/index.js' }, null, 2)}\n`, 'utf8')
+      const url = 'https://registry.npmmirror.com/debug/-/debug-4.3.4.tgz'
+      // **不关 syncLock**：走生产默认（写完清单立刻对账）—— 这一步正是"URL 会不会被老保护规整回 link:"的现场
+      const declared = await declareProfileDependency(profile7, 'debug', null, {
+        home, probe: probe404, sourceSpec: url, sourceOrigin: 'sampled',
+      })
+      check('⑦ 收口层：真装被真的调用且成功（真 pnpm add <tarball URL>）', declared.sourceInstall?.ok === true, JSON.stringify({ ok: declared.sourceInstall?.ok, error: declared.sourceInstall?.error }))
+      check('⑦ 清单写的是**真实来源规格**（不是 link:、不是版本号）', depsOf(profile7).debug === url, JSON.stringify({ manifest: depsOf(profile7).debug ?? null, form: declared.form }))
+      check('★⑦ **依赖由 pnpm 装齐**（isolated 布局里确有 ms 实体）', storeDepOf(profile7, TINY_DEP) !== null, String(storeDepOf(profile7, TINY_DEP)))
+      check('★⑦ 没有走 link: 回落（plugin-src 里没有这个包的副本）', !existsSync(join(home, 'plugin-src', 'debug')), join(home, 'plugin-src', 'debug'))
+      check('★⑦ 最后的 lock 对账**没把真装出来的 URL 规整回 link:**（keepUrlSpecs 生效、清单逐字未变）',
+        declared.lockSynced === true && depsOf(profile7).debug === url && !/已按 link: 形式记录/u.test(String(declared.depNote ?? '')),
+        JSON.stringify({ lockSynced: declared.lockSynced, manifest: depsOf(profile7).debug ?? null, depNote: String(declared.depNote ?? '').slice(0, 160) }))
+      check('★⑦ lock 里就是 pnpm 自己写下的那条 URL 解析（来源与清单同一形态）',
+        typeof lockVersion(profile7, 'debug') === 'string' && String(lockVersion(profile7, 'debug')).length > 0,
+        String(lockVersion(profile7, 'debug')))
+      check('⑦ 文案如实说"已按真实来源规格真装"', /已按真实来源规格真装/u.test(String(declared.depNote ?? '')), String(declared.depNote ?? '').slice(0, 160))
+    }
+
+    console.log('\n── 组 8：接线 · registry 不倒退（真探测可解析 ⇒ 写版本号，不真装 URL）──────')
+    {
+      const profile8 = fresh('wire-registry')
+      // 取样通道的形态：包已在 node_modules 里（registry 可解析的那一类）
+      const sampled8 = join(profile8, 'node_modules', TINY_DEP)
+      mkdirSync(sampled8, { recursive: true })
+      writeFileSync(join(sampled8, 'package.json'), `${JSON.stringify({ name: TINY_DEP, version: TINY_DEP_VERSION }, null, 2)}\n`, 'utf8')
+      const declared = await declareProfileDependency(profile8, TINY_DEP, TINY_DEP_VERSION, {
+        syncLock: false, home, sourceSpec: `https://registry.npmmirror.com/ms/-/ms-${TINY_DEP_VERSION}.tgz`, sourceOrigin: 'sampled',
+      })
+      check('★⑧ registry 路径一字不改：清单写的是**版本号**（来源规格不抢优先级）',
+        declared.form === 'version' && depsOf(profile8)[TINY_DEP] === TINY_DEP_VERSION,
+        JSON.stringify({ form: declared.form, manifest: depsOf(profile8)[TINY_DEP] ?? null }))
+      check('★⑧ registry 可解析 ⇒ **一次真装都不发起**（既有流程一字未改）', declared.sourceInstall === null, JSON.stringify(declared.sourceInstall))
+    }
+
+    console.log('\n── 组 9：接线 · 本地目录仍 link: + 自足（真 pnpm 在目标目录里装依赖）──────')
+    {
+      const profile9 = fresh('wire-localdir')
+      const localDir = join(SANDBOX, 'wire-local-src')
+      mkdirSync(localDir, { recursive: true })
+      writeFileSync(join(localDir, 'package.json'), `${JSON.stringify({ name: 'rsi-wire-local', version: '1.0.0', main: 'index.js', dependencies: { [TINY_DEP]: TINY_DEP_VERSION } }, null, 2)}\n`, 'utf8')
+      writeFileSync(join(localDir, 'index.js'), 'export default {}\n', 'utf8')
+      const declared = await declareProfileDependency(profile9, 'rsi-wire-local', '1.0.0', {
+        syncLock: false, home, probe: probe404, sourceSpec: `link:${localDir.replace(/\\/gu, '/')}`,
+      })
+      check('★⑨ 本地目录：清单仍按 link: 记录（显式开发式安装；不真装、不变 file:/版本号）',
+        declared.form === 'link' && String(depsOf(profile9)['rsi-wire-local'] ?? '').startsWith('link:'),
+        JSON.stringify({ form: declared.form, manifest: depsOf(profile9)['rsi-wire-local'] ?? null }))
+      check('★⑨ 自足性照旧补齐：目标目录里真的装上了它的 dependencies（真 pnpm）',
+        existsSync(join(localDir, 'node_modules', TINY_DEP, 'package.json')),
+        join(localDir, 'node_modules', TINY_DEP))
+    }
   }
 }
 

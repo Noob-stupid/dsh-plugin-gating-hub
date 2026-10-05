@@ -2,6 +2,100 @@
 
 All notable changes to dsh-plugin-hub.
 
+## v0.5.41 — 「来源型安装的接线」：真实来源规格一路传到收口，`pnpm add <spec>` 真装（2026-10-06）
+
+> **本轮修的是一个"能力已就位、但没人用"的缺口**：0.5.40 把能力做进了写入层
+> （`declareProfileDependency({sourceSpec})` ⇒ `installSourceDependency` ⇒ `pnpm add <spec>`），
+> 但**生产路径上没有一个调用方传过 `sourceSpec`** —— curl / GitHub release 这些"取样通道"把包铺进
+> `node_modules` 之后，收口只知道"磁盘上有个真实目录"，于是按 registry 404 判据写成 `link:`（复制到
+> `plugin-src` + 建链接）：包能加载了，**它自己的依赖仍然没人管**。本版把"这个包是从哪个来源装来的"
+> 从通道一路传到收口，并让失败路径"物在盘上才回落、物不在盘上只有如实失败"。
+>
+> 失败路径语义（用户点名，写死在本版）：
+> **A** 取样成功 + 包管理器安装失败 ⇒ 盘上有物化副本 ⇒ 回落既有 `link:`（插件至少能加载），文案
+> 「已装上（link 方式）· 真装失败：<原因> · 可一键真装」；**B** 取样/下载本身失败 ⇒ 盘上什么都没有 ⇒
+> 只有如实失败 + 原因 + 重试，**严禁**出现"回落成功/已安装/已启用"；**C** 本地目录不涉及下载 ⇒
+> `link:` 是它的正常路径（+ 既有自足补齐）。
+> 判据一句话：**回落只对"物已在盘上"成立；物不在盘上就只有如实失败**。
+
+### 接线（本轮核心）
+
+- **通道层如实带回来源**：`install.js#githubReleaseInstall` 返回真实下载地址（release 资产 URL /
+  codeload 源码 tarball URL）、`curlManualInstall` 返回 registry tarball URL；
+  `install-job.js#tryCandidateChannels` 汇总成 `source = { spec, origin: 'sampled', kind }`。
+  registry 通道**不填**（既有流程一字不改）、git 通道不填（它本来就是 pnpm 装的，清单里已是 pnpm 写的规格）。
+- **收口层交给包管理器**：`runInstallJob` → `ensurePersisted({sourceSpec, sourceOrigin, sourceKind})`
+  → `declareProfileDependency`。盘上那份是**取样通道**铺的、且 registry 查无此包（既有 404 判据）时，
+  补一次 `pnpm add <spec>` 真装：依赖与 peer 由 pnpm 保证，与官方 `dsh plugin add` 同一条通道。
+  写入形态仍由既有判据决定（registry 可解析仍优先写版本号 —— **不倒退**）。
+- **`link:` 规格 = 显式开发式安装**：来源规格本身是 `link:` 时**不**真装，走既有 `link:` 路径 +
+  `link-self-sufficiency` 补齐（判据 C：本地目录不涉及下载）。
+- **真装出来的 tarball URL 不再被"URL → link:"规整**（`reconcileLockfile` 新增 `keepUrlSpecs`，
+  **只对刚刚真装过它的那条路点名生效**）：否则收口最后一步的 lock 对账会把自己刚写下的真实来源规格
+  改回 `link:`（还会顺手复制一份进 plugin-src、并留下"已按 link: 形式记录"的旧文案），
+  与"依赖交给 pnpm"自相矛盾。其余任何 URL 形态**照旧**走老保护（那条保护是给"pnpm 静默改写 /
+  来源不确定"的历史状态，判据一字未改）。
+- **装完那一刻的预对账对来源型包让开**：它按"registry 查无此包"的老判据只会把这个包写成 `link:`，
+  而紧接着的收口会用真实来源规格声明它 —— 让开之后由收口统一写清单 + 对账，两处不再打架
+  （其他包照旧参与预对账；非来源型安装的路径一个字未改）。
+- **新模块 `domain/source-spec.js`**（本功能的判据唯一承担者）：来源规格**记录**
+  （`<DSH_HOME>/plugin-console/source-specs/<包名>.json`，幂等零写盘）、真装结果的两种如实说法、
+  结构化「一键真装」动作。卸载时随 `undeclareProfileDependency` **一并撤销**（卸载即净）。
+- **新白名单动作 `real-install`**（登记进 `ACTION_KINDS` 与 `plugin-actions.js`）：把**记录里的**
+  真实来源规格再交给包管理器装一次。规格**只从服务端记录读** —— 动作接口仍只接受
+  `{ action, packageName, profile }`，客户端塞 `spec`/`url` 一律无效（没有任何"传来源/传命令"的位置）。
+- **失败路径的可见性**：真装失败 ⇒ 文案（`depNote`）含「已装上（link 方式）· 真装失败：<原因> ·
+  可一键真装」且**不会**被"已安装并启用"盖住；失败作业的 `job.error` 追加「最后一次失败原因：<真实错误>」，
+  面板另有既有的「重试」按钮与失败分类（reason + 出路），**不再只有一句笼统失败**。
+- 搬家（只搬移未改逻辑，`install-job.js` 贴着 600 行棘轮）：收口结果 → 作业字段的唯一映射搬进
+  `domain/install-finalize.js`。
+
+### 不倒退（逐条有测试）
+
+- registry 路径**一字未改**：可解析 ⇒ 仍写版本号，且**一次真装都不发起**。
+- 四种来源照旧能装：registry / tarball（tgz）/ `github:` / 本地目录（`link:` + 自足）。
+- 安装主路径**没有新增任何 throw/拒绝分支**：真装失败只如实记录并回落；记录/补齐的任何失败都不影响安装。
+- `routes/plugins.js` **一行未动**（598 行）；`test-architecture-guard.mjs` 全绿
+  （`install-job.js` 594 行、新增两个模块均远低于 600 行棘轮）。
+
+### 测试（均接入 CI）
+
+- 新增 `tests/test-source-install-wiring.mjs`（**CI unit 硬门槛**，全离线：私有 DSH_HOME +
+  注入桩 pnpm/lock/挂载，零外网，43 条断言）：① 正控（release 资产 URL 一路传到收口 ⇒ 真装被真的调用
+  ⇒ 清单写真实规格 + 记录留存 + **交叉验证**：计划的 === 交给 pnpm 的 === 清单里的 === 记录里的；
+  预对账让开 + 收口对账带 `keepUrlSpecs`）；② 不倒退（registry 写版本号且零真装；本地目录 `link:` +
+  自足且零真装）；②b `keepUrlSpecs` 的正控（零写盘、不物化）与反证（不点名时仍走"URL → link:"老保护）；
+  ③ **负控 A**（包管理器安装失败 ⇒ 回落 `link:` + 文案三要素 + real-install 动作 + 不得出现"已完整安装"）；
+  ④ **负控 B**（下载失败 ⇒ 只有如实失败 + 原因；作业视图全文不得出现「已安装/已启用/回落成功/link 方式」；
+  面板重试按钮静态接线）；⑤ real-install 动作只认服务端记录（客户端塞 spec 无效 + 缺记录/非本 profile 包 400）。
+- `tests/test-real-source-install.mjs` 追加**接线组 7~9**（真 pnpm）：tarball URL ⇒ 真装且
+  **依赖由 pnpm 装齐**（isolated 布局里有实体）且**不走 link: 回落**、**最后的 lock 对账没把 URL 改回 link:**
+  （清单逐字未变、lock 里就是 pnpm 写下的那条 URL 解析）；registry 可解析 ⇒ 写版本号且零真装；
+  本地目录 ⇒ 仍 `link:` + 自足（真 pnpm 在目标目录里装它的 dependencies）。
+- 既有 87 套照旧跑（含 `test-link-self-sufficiency` 的接线四条）。
+
+### 验证
+
+- 本机全量测试：**88 套**（新增 1 套），失败 **6 套** —— 与 clean HEAD `cc385d7`（git worktree 复跑）
+  **逐条同因同数**（桌面端外壳托管：`test-framework-versions` / `test-host-shape` /
+  `test-framework-upgrade-platform`；本机 profile 状态：`test-peer-veto` / `test-bundle-guard` /
+  `test-issue15-resolve`），失败原文逐字相同，非本次改动引入。
+- 真 pnpm 冒烟（真网络）：`test-real-source-install` **ALL PASS**（含新增接线组 7~9）。
+- **真机 E2E**（用户真实 desktop profile + 一次性夹具；全程**未重启任何实例**）：
+  - 收口层真跑 `pnpm add <本机 HTTP 服务上的真 tarball URL>`：清单写成该真实来源规格、
+    **依赖由 pnpm 装齐**（`ms` 落位）、来源规格记录留档、**没有**走 link: 回落、最后的 lock 对账没把 URL 改回 link:。
+  - 该 profile 上 pnpm 的退出码非 0，原因是**既有环境条件**（非本版引入）：活着的桌面端实例占着已加载
+    包的句柄，`pnpm add` 在"重新导入既有包"这一步
+    `[ERR_PNPM_EPERM] … rename node_modules/@deepseek-ai/dsh-experimental-schedule-bundle`。
+    **两组对照**：① 同一条 `pnpm add <url>` 在隔离 profile（同 `nodeLinker: hoisted` 配置）退出码 **0**；
+    ② 在同一活 profile 里跑**纯 registry** 安装（`pnpm add ms@2.1.3`，老代码路径的同一条命令）**同样 EPERM**
+    ⇒ 与本轮接线无关（官方 `dsh plugin add` 在该状态下同样跑不动）。
+  - 失败路径按新语义**如实回落**（真机原文）：夹具目录已存在那一次 ⇒ 清单 `link:` + 文案
+    「已装上（link 方式）· 真装失败：<原因原文> · 可一键真装」+ 来源规格记录 + `real-install` 动作。
+  - 收尾：profile 四份关键文件 SHA256 **逐字节还原**（package.json / pnpm-lock.yaml / cordis.patch.yml /
+    pnpm-workspace.yaml）、`node_modules` 顶层**既有条目一个都没少**、夹具 / 记录 / plugin-src 副本
+    全部清除（走既有 `disposeDir` —— Windows 上 `rmSync` 会静默落空）。
+
 ## v0.5.40 — 「默认真装 + link 自足」：来源型把**真实来源规格**交给包管理器，`link:` 自动补齐依赖与框架 peer 垫片根（2026-10-06）
 
 > 用户定案两条（原话要点）：

@@ -281,6 +281,7 @@ console.log('\n── 组 4：接线（来源型默认真装 + link 写入即补
   check('④ 拿不到真实规格 ⇒ 仍退回 link:（显式开发式安装，行为不变）', noSpec.form === 'link' && String(noSpec.spec).startsWith('link:'), JSON.stringify({ form: noSpec.form, spec: noSpec.spec }))
 
   // 4b declareProfileDependency：来源型真装（注入 install，绝不出网）
+  // `home: HOME`：真装成功会落一份**来源规格记录**（0.5.41 接线）—— 必须落在私有沙箱里，绝不碰真机 DSH_HOME。
   const calls = []
   const installStub = async ({ spec }) => {
     calls.push(spec)
@@ -288,7 +289,7 @@ console.log('\n── 组 4：接线（来源型默认真装 + link 写入即补
     mkdirSync(d, { recursive: true })
     writeFileSync(join(d, 'package.json'), `${JSON.stringify({ name: '@lss/release-only', version: '1.0.0' })}\n`, 'utf8')
   }
-  const declared = await declareProfileDependency(PROFILE, '@lss/release-only', null, { syncLock: false, probe: probe404, sourceSpec: 'github:acme/release-only', installSource: installStub })
+  const declared = await declareProfileDependency(PROFILE, '@lss/release-only', null, { syncLock: false, probe: probe404, sourceSpec: 'github:acme/release-only', installSource: installStub, home: HOME })
   check('④ 来源型真装真的被调用（pnpm add <spec> 通道）', calls.join() === 'github:acme/release-only', JSON.stringify(calls))
   check('④ 真装成功后清单写的是真实来源规格', declared.form === 'source' && declared.spec === 'github:acme/release-only' && declared.sourceInstall?.ok === true, JSON.stringify({ form: declared.form, spec: declared.spec }))
 

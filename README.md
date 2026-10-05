@@ -303,9 +303,7 @@ Environment reminder: an accelerator/proxy that rewrites hosts makes the direct 
 
 #### Development installs (`link:`)
 
-**Real install is the default.** Source-type packages (tarball URL / GitHub / local directory) hand
-their **real source spec** to the package manager (`pnpm add <spec>`) — dependencies and peers are
-guaranteed by pnpm, on the same channel as the official `dsh plugin add`.
+Ordinary installs go through the package manager (`pnpm add`); that is the baseline, not a feature here.
 
 `link:` is the separate, **explicit** route: mount a **local directory / plugin you are developing**
 directly into the profile.
@@ -313,7 +311,7 @@ directly into the profile.
 - **Source edits take effect immediately**: `node_modules/<name>` in the profile is a **link** to your
   local directory, not a copy — edit the source, refresh the page. No reinstall, no repackaging.
 - **Who it is for**: plugin authors, or anyone who wants to edit a plugin's source. If you just want
-  to *use* a plugin, the default real install is simpler.
+  to *use* a plugin, an ordinary install is simpler.
 - **What it pins**: the local artifact is written into the profile manifest `dependencies`
   (`link:<absolute path>`) and gets a matching entry in `pnpm-lock.yaml` — so lockfile health checks
   and rebuilds never treat it as an orphan, and it **survives restarts and instance updates**.
