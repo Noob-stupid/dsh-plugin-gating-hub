@@ -32,3 +32,11 @@ jobs:
           # 只报告、不失败：核查"某版本是否已生效"时，未出现是正常中间态，不该让整个 run 变红（会刷 failed 通知）
           npm view "@noob-stupid/dsh-plugin-console@$V" version --registry=https://registry.npmjs.org/ \
             && echo "版本 $V 存在 ✅" || echo "版本 $V 暂未出现（未发布或仍在同步）❌——本步骤只报告，不判失败"
+      - name: 指定版本的**版本端点六字段**（不看 dist-tags）
+        if: ${{ inputs.version != '' }}
+        run: |
+          V="${{ inputs.version }}"
+          # 0.5.41 加法：发布核对要的是"这个版本真的在端点上、且摘要是哪一串"——
+          #   dist.integrity 是与**本地 npm pack 实测 sha512** 对照的唯一真源；顺带记 tarball/unpackedSize。
+          # 只看这个具体版本（不看 dist-tags：dist-tags 可能是别人/别的通道写的，不能证明本版本已生效）。
+          npm view "@noob-stupid/dsh-plugin-console@$V" name version dist.integrity dist.shasum dist.tarball dist.unpackedSize --json --registry=https://registry.npmjs.org/ || true
