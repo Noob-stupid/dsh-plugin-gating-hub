@@ -301,6 +301,44 @@ Environment reminder: an accelerator/proxy that rewrites hosts makes the direct 
 (see above), and free mirrors are unreliable for the **git protocol** on large packs while
 **archive/raw are usually much faster** — the console already switches by itself.
 
+#### Development installs (`link:`)
+
+**Real install is the default.** Source-type packages (tarball URL / GitHub / local directory) hand
+their **real source spec** to the package manager (`pnpm add <spec>`) — dependencies and peers are
+guaranteed by pnpm, on the same channel as the official `dsh plugin add`.
+
+`link:` is the separate, **explicit** route: mount a **local directory / plugin you are developing**
+directly into the profile.
+
+- **Source edits take effect immediately**: `node_modules/<name>` in the profile is a **link** to your
+  local directory, not a copy — edit the source, refresh the page. No reinstall, no repackaging.
+- **Who it is for**: plugin authors, or anyone who wants to edit a plugin's source. If you just want
+  to *use* a plugin, the default real install is simpler.
+- **What it pins**: the local artifact is written into the profile manifest `dependencies`
+  (`link:<absolute path>`) and gets a matching entry in `pnpm-lock.yaml` — so lockfile health checks
+  and rebuilds never treat it as an orphan, and it **survives restarts and instance updates**.
+- **What the console completes for it** (otherwise the usual outcome is "installed, but it will not load"):
+  - **the target directory's own `dependencies`**: one install run inside that directory, filling in
+    what the local directory is missing;
+  - **the framework peer shim root**: when the local directory lives **outside** the profile tree,
+    Node's resolution chain never reaches the profile's `node_modules`. The console links the framework
+    peers it **declares and currently cannot resolve** (`@deepseek-ai/*`) at the **plugin root**,
+    pointing at `~/.dsh/profiles/node_modules/@deepseek-ai/<pkg>`. It is a **link**, not a copy —
+    both sides share the same realpath, so Cordis service classes and LLM error classes keep their
+    **module identity shared with the host**.
+- **Boundaries** (always reported honestly, never faked):
+  - moving or deleting the local directory **breaks** the link (the manifest `link:` then points at a
+    path that no longer exists);
+  - shims only fill peers it **declares** and that are genuinely missing; a package the framework side
+    does not have is never invented;
+  - anything **already present** at the target path (including a dangling link) is **never overwritten**
+    — it is skipped and reported;
+  - **uninstall removes the shims the console created** (only its own; links you placed by hand are
+    never touched);
+  - if completion fails (target directory not writable, dependency install failed, …) the **install
+    still completes**, and the result honestly says "not ready + what is missing" together with an
+    action you can run.
+
 ### Static index market (plugin & skill tabs)
 
 > **Hybrid architecture**: browsing uses the static index (instant, zero GitHub API calls),

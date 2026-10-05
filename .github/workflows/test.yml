@@ -286,6 +286,23 @@ jobs:
           #    证据（校验前后 lock sha256 不变；pnpm 不可用时**响亮 SKIP**）。全离线。
           node tests/test-lock-importer.mjs
 
+          # ── 0.5.40 批次（2026-10-06）：**「默认真装 + link 自足」**（用户点名）─────────────────────
+          #    真机现场（plugin-src/dsh-opencode-go）：`link:` 只把一个目录挂进 profile，
+          #    它自己的 `dependencies` 与声明过的**框架 peer** 谁都不管 ⇒ 面板报"安装成功"、
+          #    插件却永远 `[no-fiber]`（`import()` 当场 ERR_MODULE_NOT_FOUND）。
+          #    段内断言（全离线：私有沙箱 DSH_HOME + 注入 pnpm 桩，**零外网**）：
+          #    ① 判据只读（快照逐项不变）；非路径型/目标不存在/缺依赖/缺 peer/可补 vs 不可补；
+          #    ② 正控：缺 peer ⇒ 建垫片（垫片根 = 插件根，生态既有约定）+ **realpath 与框架根相同**
+          #      （链接而非复制 ⇒ Cordis service/LLM error 的**模块身份**与宿主共享）；
+          #    ③ 幂等：自足后再跑 **零写盘**（快照逐项相同）；记录只有我们造的；
+          #    ④ 负控：目标位置已被占（不可解析的占位物）⇒ **绝不覆盖** + 占位物逐字节未动；
+          #    ⑤ 负控：缺依赖**必须报**（ready=false + note 点名 + 给动作）且**绝不抛**（ok 仍 true）；
+          #    ⑥ 卸载：只清**我们造的**、外部放的链接与目标都不碰、记录删除、再清一次幂等；
+          #    ⑦ 接线：来源型给真实来源规格 ⇒ 写回**真实规格**（不是 link:）+ registry 优先**不倒退**
+          #      + 写成 link: 后自动补齐 + 卸载自动清垫片；
+          #    ⑧ 真机（有真实框架根才跑，否则**响亮 SKIP**）：垫片 realpath === 宿主侧 realpath。
+          node tests/test-link-self-sufficiency.mjs
+
       # 更新候选判据（0.5.37 改错）：真机「反向更新/降级按钮」的回归钉子 —— 纯函数全离线。
       #   · installed 0.2.0-rc.2 × 镜像 latest 0.1.1-rc.1（更低）⇒ 必须 null（不许提示降级）
       #   · 预发布序 0.1.7-rc.2 → 0.2.0-rc.2；正式版 > 同号预发布；相同/垃圾串 ⇒ null
@@ -304,6 +321,13 @@ jobs:
           # 0.5.20：真 registry 那条路（真探测 npmmirror 报 404 → 清单/ lock 写 link: → 随后
           # `pnpm install --lockfile-only` 退出码 0）。镜像不可达时本套会**响亮 SKIP**（打印原因，不假装 PASS）。
           node tests/test-dep-pin.mjs
+          # 0.5.40 加法（2026-10-06）：**来源型默认真装**的四种来源各真装一次（用户点名
+          # 「四种来源各真装一次必须成功」）—— registry / tgz（本地 tarball，带 dependencies）/
+          # 本地目录 file: / GitHub github:（要 git+可达，缺则响亮 SKIP）。核心断言语义：
+          # 「真装 ⇒ 依赖由 pnpm 装齐」（isolated 布局里确有依赖实体）与「link: **不装**依赖」形成对照，
+          # 并交叉验证"pnpm 自己写进清单的 spec === 我们 planDependencySpec 计划的写回 spec"。
+          # pnpm 解析不到或镜像不可达时整组**响亮 SKIP**（退出码 0，不假装 PASS）。
+          node tests/test-real-source-install.mjs
 
       # 真实通道冒烟：archive 通道真下载 + npmName 首选候选真装 + **预设源码通道真取源码真装配**
       - name: Real channel smoke (ghproxy / npmmirror)

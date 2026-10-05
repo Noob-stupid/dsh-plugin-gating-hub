@@ -2,6 +2,66 @@
 
 All notable changes to dsh-plugin-hub.
 
+## v0.5.40 — 「默认真装 + link 自足」：来源型把**真实来源规格**交给包管理器，`link:` 自动补齐依赖与框架 peer 垫片根（2026-10-06）
+
+> 用户定案两条（原话要点）：
+> ① 来源型（tgz URL / GitHub / 本地目录）**默认改为真装**：`pnpm add <spec>` 进 profile ⇒ 依赖与 peer
+>    由包管理器保证（与官方 `dsh plugin add` 同效）；
+> ② 保留 `link:` 作为**显式「开发式安装」**，但选中时**自动补齐**：目标目录内安装其 dependencies +
+>    建框架 peer 垫片根；**幂等**（自足插件 no-op 零写盘）、**绝不覆盖**插件自带 node_modules、
+>    卸载时清理我们造的垫片；失败 ⇒ 如实报未就绪 + 给动作（**不得**因此拒绝安装）。
+> 体检与真机 E2E 期间**未重启任何实例**；真机 E2E 收尾**逐字节还原**（profile 三份关键文件 SHA256 全等）。
+
+### 加法
+
+- **新模块 `domain/link-self-sufficiency.js`**（本功能的**判据唯一承担者**）：
+  `planLinkSelfSufficiency`（只读判据）· `ensureLinkSelfSufficiency`（补齐）·
+  `removeLinkSelfSufficiency`（卸载清理）· `listSelfSufficiencyRecords`。三条硬规矩：
+  **只补缺的**（自足 ⇒ 零写盘）· **绝不覆盖**（用 `lstat` 判"位置已被占"，含悬空链接）·
+  **绝不因此拒绝安装**（失败 ⇒ `ok:true` + `ready:false` + note + 动作）。
+  垫片形状沿用生态既有约定：`<插件根>/node_modules/@deepseek-ai/<包>` →
+  `<DSH_HOME>/profiles/node_modules/@deepseek-ai/<包>`；是**链接**不是复制 ⇒ 两侧 realpath 相同 ⇒
+  Cordis 服务类 / LLM 错误类的**模块身份与宿主共享**。
+- **来源型默认真装**：`manifest.js#planDependencySpec` 新增 `sourceSpec` 入参 —— 调用方知道真实来源规格时，
+  写回的就是**该规格本身**（`form: 'source'`），由新增的 `installSourceDependency` 走 `pnpm add <spec>`
+  真装（依赖与 peer 交给包管理器）；registry 可解析**仍优先**写版本号（既有流程一字未改）。
+  真装失败**不拒绝**：如实记 `sourceInstall` 后继续走既有判定（退回 `link:` 并由自足性补齐）。
+- **接线三处**：`declareProfileDependency`（写成 `link:` 后自动补齐；来源型先真装）、
+  `pinProfileDependency`（钉住即补齐）、`undeclareProfileDependency`（**卸载即净**，新增 `options.home`）。
+  垫片记录写在 `<DSH_HOME>/plugin-console/link-self-sufficiency/<包名>.json`；卸载只清
+  **记录里、且现在仍指向当初目标**的那些 —— 被人改过/换成真实目录的一律不碰。
+
+### 改错
+
+- **卸载清理不能用 `fs.rmSync` 删链接**：本机实测（Windows）`rmSync(junction, { recursive:false })`
+  —— 含 `force:true` —— **一声不响什么都不删**（不抛错、链接还在），与 pnpm 改名被挡留下的 `*_tmp_*`
+  是同一族现场。改用 `unlinkSync` → `rmdirSync` 逐个尝试并**复核"真的没了"**；
+  删不掉如实上报并保留，绝不谎报"已清理"。
+
+### 测试
+
+- 新增 `tests/test-link-self-sufficiency.mjs`（**进 CI unit 硬门槛**，全离线：私有沙箱 DSH_HOME +
+  注入 pnpm 桩，零外网）：判据只读（树快照逐项不变）· 非路径型/目标不存在/缺依赖/缺 peer、
+  「可补」与「框架侧根本没有」分开列 · **正控**建垫片 + **realpath 与框架根相同** ·
+  **幂等零写盘**（快照逐项相同）· **负控占位物绝不覆盖**且逐字节未动 ·
+  **负控缺依赖必须报**（note 点名 + 给动作）且**绝不抛** · 卸载只清我们造的 + 外部链接与目标都不碰 +
+  记录删除 + 再清一次幂等 · 接线四条（来源型真装被真的调用 / 清单写真实规格 / 写 `link:` 即补齐 /
+  卸载即净）· 真机段（有真实框架根才跑，否则**响亮 SKIP**）断言垫片 realpath === 宿主侧 realpath。
+- 新增 `tests/test-real-source-install.mjs`（**进 CI「真装真卸冒烟」步**，真 pnpm）：
+  registry · tgz（本地 tarball，**刻意带一个 dependencies**）· 本地目录 `file:` · GitHub `github:`
+  各**真装一次**；核心断言是「**真装 ⇒ 依赖由 pnpm 装齐**（isolated 布局里确有依赖实体）」与
+  「**`link:` 不装依赖**」形成对照；并交叉验证「pnpm 自己写进清单的 spec === 我们计划的写回 spec」。
+  pnpm 解析不到或镜像不可达时**响亮 SKIP**（不假装 PASS）。
+- README（`README.md` / `README.zh.md` 各一份）新增「开发式安装（`link:`）」一节：
+  是什么 / 适合谁 / 它钉住什么 / 控制台自动补齐什么 / 边界五条 —— **只讲功能与边界**。
+
+### 不倒退
+
+- registry 流程一字未改；`test-dep-pin` / `test-manifest-declare` / `test-lock-importer` /
+  `test-persist-pipeline` / `test-plugin-actions` 全绿。
+- `tests/test-architecture-guard.mjs` 十四道断言 **ALL PASS**（新模块 363 行、`manifest.js` 396 行，
+  均在 `lib/server/**` 600 行棘轮内；`routes/plugins.js` 一行未动）。
+
 ## v0.5.39 — 非 registry 来源的 lock 持久化不再跑完整 `pnpm add`：定点写 importer 条目 + pnpm 只读校验（2026-10-04）
 
 > 用户定案三条（原话要点）：
