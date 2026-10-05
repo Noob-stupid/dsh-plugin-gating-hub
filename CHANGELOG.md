@@ -2,6 +2,58 @@
 
 All notable changes to dsh-plugin-hub.
 
+## v0.5.42 — 门控模态里的「右侧贴底 Star 提示」（纯 UI 加法，2026-10-06）
+
+> 用户点名的小功能：在「门控（兼容门总开关）」模态的**右侧空白区**加一行**贴底对齐**的 Star 提示，
+> 样式参考生态里另一插件（dsh-opencode-go 设置卡片右下角那句）的**观感**，但**文案与图标都由本仓自己实现**
+> （内联 GitHub 标记 SVG，16×16 视图、15px、currentColor 次级灰，未引用任何第三方代码或资源）。
+> **只加一行 UI**：不动任何开关逻辑、不动路由、不动门控语义；中英各一份文案（英文界面不会露中文）。
+>
+> 布局事实（先说清右侧空白是怎么来的）：门控模态是 `.pc_modalCard`（`flex-direction:column`）里
+> 一行标题 + 一个正文列（`lib/client.js` 门控段），卡片由 `.pc_modalCard{width:min(760px,…)}` +
+> 行内 `maxWidth: 520` 定宽、高度按内容自适应；正文全是左对齐的短文本与"标签在左、开关在右"的行，
+> 于是卡片**右下角那片区域本来就是空的**（行高只到开关那一列为止）。新行挂在卡片**最后一个子项**上：
+> 整行 `display:flex; justify-content:flex-end`（贴右）⇒ **不占左侧内容宽度**（正文列宽度逐像素不变），
+> `margin-top:auto` ⇒ 卡片有富余高度时把它推到底；`position:sticky; bottom:0` ⇒ 待适配明细很长、
+> 卡片吃满 `max-height` 并滚动时，这一行**钉在卡片下沿**（正文从它后面滚过去，不跟着滚走）。
+
+### 加法（只此一处）
+
+- `lib/client.js` 门控模态末尾新增 `el("div", { className: styles.starFoot }, …)`：
+  `<a class="pc_starLink" target="_blank" rel="noreferrer">`（与本仓其它外链同款）指向
+  `https://github.com/Noob-stupid/dsh-plugin-gating-hub`，内含**内联 SVG** 的 GitHub 标记（`aria-hidden`，
+  15×15、`currentColor`）与 `t("starHint")` 文案，`title` 用 `t("starHintTitle")`。
+- 新样式 `.pc_starFoot` / `.pc_starLink`（含 `:hover` / `:focus-visible`）与 `styles` 映射两条；
+  类名与映射同批添加（映射写错会让样式整条丢失，已由静态断言钉住）。
+- 新 i18n 键两条 × 中英：`starHint`（喜欢这个插件？去 GitHub 点个 Star / Enjoying this plugin? Star it on GitHub）、
+  `starHintTitle`（在新标签页打开 GitHub 项目 / Open the GitHub project in a new tab）。
+- 未改：开关的 `onClick`、门控判定与路由、`lib/server/**` 一个字节未动；新增行不挂 `onClick`、不引入任何请求。
+
+### 测试（接入 CI）
+
+- 新增 `tests/test-star-hint-ui.mjs`（**CI unit 硬门槛**，全离线纯文本断言，41 条）：①该行存在且在**门控卡片子树里**
+  （括号配对定位：挪出模态/卡片即红）、排在既有正文之后 ②链接就是本仓库地址且源码里只此一处
+  ③`target="_blank"` + `rel="noreferrer"` ④中英两份文案都在、英文 0 个中日韩字符、两边不许贴同一句
+  ⑤图标是**内联 SVG** 的 GitHub 标记（Octicons 正统几何指纹、14–16px、`currentColor`、无任何外链资源）
+  ⑥CSS 贴底/贴右/不挤压（`margin-top:auto` + `sticky bottom:0` + `justify-content:flex-end`，整行不设宽/不抢宽）
+  ⑦只加 UI（两个开关 `onClick` 原文、遮罩关闭、既有文案键值都在；新行无 `onClick`、无 `fetch/call`）。
+- **11 项负控**（在副本上变异，逐项证明本套会红）：链接换仓库 / 英文文案删掉 / 英文换成中文 /
+  去掉 `margin-top:auto` / 去掉 sticky / 图标换成外链位图 / 尺寸 24px / 几何换方块 / 去掉 `rel` /
+  改掉开关 `onClick` / 把这一行挪到门控模态之外 —— 全部 `exit=1` 且 FAIL 行点名。
+- 既有 88 套照旧跑（本套为第 89 套；`test.yml` 显式登记进 unit 硬门槛）。
+
+### 验证
+
+- 本机全量测试：**89 套**（新增 1 套），失败 **6 套** —— 与本版改动无关的既有环境相关失败
+  （桌面端外壳托管 `test-framework-versions` / `test-host-shape` / `test-framework-upgrade-platform`；
+  本机 profile 状态 `test-peer-veto` / `test-bundle-guard` / `test-issue15-resolve`），与 clean HEAD 同因同数。
+- `tests/test-architecture-guard.mjs` **ALL PASS**（不删检查）；`lib/index.js` 142 行未变、`lib/server/**` 未动。
+- **真浏览器几何量测**（Edge headless，CSS 直接用 `lib/client.js` 里抽出的原文，DOM 形状照抄门控模态）：
+  正文列宽 520px、左侧标签行 472px —— **有/没有这一行时逐像素相同**（不挤压）；
+  短内容时该行是卡片最后一个子项、右对齐、贴卡片下沿（下沿距 17px = 卡片 16px 内边距 + 1px 边框）；
+  20 行明细（卡片吃满 `max-height` 并滚动）时 `scrollTop=237` 前后该行位置**完全不动**（钉在卡片下沿）。
+- 界面最终观感由用户在真机确认（本版未重启任何实例、未动 `.agent-presets/**`、未动用户 profile）。
+
 ## v0.5.41 — 「来源型安装的接线」：真实来源规格一路传到收口，`pnpm add <spec>` 真装（2026-10-06）
 
 > **本轮修的是一个"能力已就位、但没人用"的缺口**：0.5.40 把能力做进了写入层

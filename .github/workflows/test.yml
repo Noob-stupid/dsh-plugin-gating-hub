@@ -319,6 +319,17 @@ jobs:
           #    ⑤ real-install 动作的规格**只从服务端记录读**（客户端塞 spec/url 一律无效）＋ 缺记录 400。
           node tests/test-source-install-wiring.mjs
 
+          # ── 0.5.42 批次（2026-10-06）：门控模态里那一行**右侧贴底**的 Star 提示（用户点名，纯 UI 加法）──
+          #    静态接线门槛（全离线、纯文本断言，零外网零 DSH_HOME）：①该行存在且在**门控卡片子树里**、
+          #    排在既有正文之后（括号配对定位，挪到别处即红）②链接就是本仓库 GitHub 地址且只此一处
+          #    ③target/_blank + rel/noreferrer（与本仓其它外链同款）④中英两份文案都在且英文里 0 个中日韩字符
+          #    ⑤图标是**内联 SVG** 的 GitHub 标记（16×16 正统几何指纹、14–16px、currentColor、无外链资源）
+          #    ⑥CSS 贴底/贴右/不挤压（margin-top:auto + sticky bottom + justify-content:flex-end、
+          #    整行不设 width/flex）⑦只加 UI：两个开关的 onClick 原文、遮罩关闭、既有文案键值都在，
+          #    新行不挂 onClick、不引入任何请求。11 项负控（链接换仓库/英文删掉/几何换方块/挪出门控模态…）
+          #    逐项证明本套会红。
+          node tests/test-star-hint-ui.mjs
+
       # 更新候选判据（0.5.37 改错）：真机「反向更新/降级按钮」的回归钉子 —— 纯函数全离线。
       #   · installed 0.2.0-rc.2 × 镜像 latest 0.1.1-rc.1（更低）⇒ 必须 null（不许提示降级）
       #   · 预发布序 0.1.7-rc.2 → 0.2.0-rc.2；正式版 > 同号预发布；相同/垃圾串 ⇒ null
