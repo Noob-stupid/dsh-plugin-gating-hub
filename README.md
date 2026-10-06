@@ -6,6 +6,18 @@
 
 # DSH Plugin Gating Hub (dsh-plugin-gating-hub)
 
+[![](https://img.shields.io/badge/powered_by-dsh-4D6BFE?style=flat-square&logo=deepseek&logoColor=white)](https://github.com/deepseek-ai/deepseek-harness)
+[![Awesome DSH Plugin](https://awesome-dsh-plugin.com/badge.svg)](https://awesome-dsh-plugin.com)
+[![GitHub stars](https://img.shields.io/github/stars/Noob-stupid/dsh-plugin-gating-hub?style=flat-square&logo=github)](https://github.com/Noob-stupid/dsh-plugin-gating-hub/stargazers)
+[![License](https://img.shields.io/github/license/Noob-stupid/dsh-plugin-gating-hub?style=flat-square)](LICENSE)
+[![Last commit](https://img.shields.io/github/last-commit/Noob-stupid/dsh-plugin-gating-hub?style=flat-square)](https://github.com/Noob-stupid/dsh-plugin-gating-hub/commits/main)
+[![Registry CI](https://img.shields.io/github/actions/workflow/status/Noob-stupid/dsh-plugin-gating-hub/registry.yml?label=registry%20CI&style=flat-square)](https://github.com/Noob-stupid/dsh-plugin-gating-hub/actions/workflows/registry.yml)
+[![topic: dsh-plugin](https://img.shields.io/badge/topic-dsh_plugin-4D6BFE?style=flat-square)](https://github.com/topics/dsh-plugin)
+[![npm version](https://img.shields.io/npm/v/@noob-stupid/dsh-plugin-console?style=flat-square)](https://www.npmjs.com/package/@noob-stupid/dsh-plugin-console)
+[![npm downloads](https://img.shields.io/npm/dm/@noob-stupid/dsh-plugin-console?style=flat-square)](https://www.npmjs.com/package/@noob-stupid/dsh-plugin-console)
+[![GitHub Release](https://img.shields.io/github/v/release/Noob-stupid/dsh-plugin-gating-hub?style=flat-square)](https://github.com/Noob-stupid/dsh-plugin-gating-hub/releases)[![dsh.so security](https://www.dsh.so/badge/dsh-plugin-hub.svg)](https://www.dsh.so/artifact/dsh-plugin-hub)
+[![dsh.so install · dsh 0.2.0-rc.1](https://www.dsh.so/badge/install/dsh-plugin-hub@0.2.0-rc.1.svg)](https://www.dsh.so/artifact/dsh-plugin-hub/)
+
 *Renamed from `dsh-plugin-hub` — old URLs redirect.*
 
 **Framework-upgrade safety and plugin-version gating for DSH.** A failed upgrade rolls back.
@@ -41,18 +53,6 @@ Then restart the dsh service → refresh the page → **Settings → Plugins →
   written back only once the registry really resolves it, otherwise the package is materialized
   as `link:`. Install scripts are never auto-authorized, and pnpm's supply-chain gate is never
   bypassed.
-
-[![](https://img.shields.io/badge/powered_by-dsh-4D6BFE?style=flat-square&logo=deepseek&logoColor=white)](https://github.com/deepseek-ai/deepseek-harness)
-[![Awesome DSH Plugin](https://awesome-dsh-plugin.com/badge.svg)](https://awesome-dsh-plugin.com)
-[![GitHub stars](https://img.shields.io/github/stars/Noob-stupid/dsh-plugin-gating-hub?style=flat-square&logo=github)](https://github.com/Noob-stupid/dsh-plugin-gating-hub/stargazers)
-[![License](https://img.shields.io/github/license/Noob-stupid/dsh-plugin-gating-hub?style=flat-square)](LICENSE)
-[![Last commit](https://img.shields.io/github/last-commit/Noob-stupid/dsh-plugin-gating-hub?style=flat-square)](https://github.com/Noob-stupid/dsh-plugin-gating-hub/commits/main)
-[![Registry CI](https://img.shields.io/github/actions/workflow/status/Noob-stupid/dsh-plugin-gating-hub/registry.yml?label=registry%20CI&style=flat-square)](https://github.com/Noob-stupid/dsh-plugin-gating-hub/actions/workflows/registry.yml)
-[![topic: dsh-plugin](https://img.shields.io/badge/topic-dsh_plugin-4D6BFE?style=flat-square)](https://github.com/topics/dsh-plugin)
-[![npm version](https://img.shields.io/npm/v/@noob-stupid/dsh-plugin-console?style=flat-square)](https://www.npmjs.com/package/@noob-stupid/dsh-plugin-console)
-[![npm downloads](https://img.shields.io/npm/dm/@noob-stupid/dsh-plugin-console?style=flat-square)](https://www.npmjs.com/package/@noob-stupid/dsh-plugin-console)
-[![GitHub Release](https://img.shields.io/github/v/release/Noob-stupid/dsh-plugin-gating-hub?style=flat-square)](https://github.com/Noob-stupid/dsh-plugin-gating-hub/releases)[![dsh.so security](https://www.dsh.so/badge/dsh-plugin-hub.svg)](https://www.dsh.so/artifact/dsh-plugin-hub)
-[![dsh.so install · dsh 0.2.0-rc.1](https://www.dsh.so/badge/install/dsh-plugin-hub@0.2.0-rc.1.svg)](https://www.dsh.so/artifact/dsh-plugin-hub/)
 
 <img width="1170" height="609" alt="DSH Plugin Gating Hub" src="https://github.com/user-attachments/assets/b802d606-14ba-4151-9956-ff642ed12b0a" />
 
