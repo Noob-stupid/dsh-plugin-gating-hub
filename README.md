@@ -6,6 +6,12 @@
 
 # DSH Plugin Gating Hub (dsh-plugin-gating-hub)
 
+*Renamed from `dsh-plugin-hub` — old URLs redirect.*
+
+**Framework-upgrade safety and plugin-version gating for DSH.** A failed upgrade rolls back.
+A framework changed by **any** update channel is still guarded. A version the host cannot
+take is refused, not installed.
+
 [![](https://img.shields.io/badge/powered_by-dsh-4D6BFE?style=flat-square&logo=deepseek&logoColor=white)](https://github.com/deepseek-ai/deepseek-harness)
 [![Awesome DSH Plugin](https://awesome-dsh-plugin.com/badge.svg)](https://awesome-dsh-plugin.com)
 [![GitHub stars](https://img.shields.io/github/stars/Noob-stupid/dsh-plugin-gating-hub?style=flat-square&logo=github)](https://github.com/Noob-stupid/dsh-plugin-gating-hub/stargazers)
@@ -17,12 +23,6 @@
 [![npm downloads](https://img.shields.io/npm/dm/@noob-stupid/dsh-plugin-console?style=flat-square)](https://www.npmjs.com/package/@noob-stupid/dsh-plugin-console)
 [![GitHub Release](https://img.shields.io/github/v/release/Noob-stupid/dsh-plugin-gating-hub?style=flat-square)](https://github.com/Noob-stupid/dsh-plugin-gating-hub/releases)[![dsh.so security](https://www.dsh.so/badge/dsh-plugin-hub.svg)](https://www.dsh.so/artifact/dsh-plugin-hub)
 [![dsh.so install · dsh 0.2.0-rc.1](https://www.dsh.so/badge/install/dsh-plugin-hub@0.2.0-rc.1.svg)](https://www.dsh.so/artifact/dsh-plugin-hub/)
-
-*Renamed from `dsh-plugin-hub` — old URLs redirect.*
-
-**Framework-upgrade safety and plugin-version gating for DSH.** A failed upgrade rolls back.
-A framework changed by **any** update channel is still guarded. A version the host cannot
-take is refused, not installed.
 
 **Install (npm, one line)**
 
