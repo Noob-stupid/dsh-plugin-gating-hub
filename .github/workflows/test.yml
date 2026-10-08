@@ -50,6 +50,17 @@ jobs:
           # ② 认不出桌面端自带运行时（<resources>\runtime\pnpm\bin\pnpm.mjs + execPath/--expose-internals）
           # 全离线可跑（唯一用到真 cmd.exe 的 ⑥ 在非 win32 上如实 SKIP）；含既有候选与兜底语义的回归断言
           node tests/test-pnpm-runners.mjs
+          # 0.5.43 改错（2026-10-08）：**执行方式按目标 profile 声明的 pnpm 版本选**。
+          # 现场：resolvePnpmRunners() 先命中 node-corepack（corepack 默认 11.21.0），而 desktop profile
+          # 的 node_modules 是桌面端自带运行时那份 pnpm（11.7.0）建的（.modules.yaml: packageManager）
+          # ⇒ 版本错配 ⇒ 重导 @deepseek-ai 的包 ⇒ Windows rename 覆盖已存在目录 ERR_PNPM_EPERM
+          # ⇒ 卡满 120s 超时被杀 + 留 *_tmp_<pid>_<n> 僵尸目录；匹配那份 0.8–1.4 秒成功。
+          # 全离线：正控（声明 11.7.0 ⇒ 桌面端那份）/ 负控（声明 11.21.0 ⇒ corepack 那份）/
+          # 无 .modules.yaml ⇒ 逐项等于既有顺序（不倒退）/ 版本读不出来者永不提升 / 平局不搬家 /
+          # 接线（runPnpmWithFallback 的首选 === 选择器的首选，正负控各一次）。
+          # 真机只读判据：本机有 desktop profile 时读它声明的版本（**不跑 pnpm、不写 profile**），
+          # 看不到桌面端运行时候选（普通 node 无 resourcesPath）时**响亮 SKIP**，不假装 PASS。
+          node tests/test-pnpm-runner-pick.mjs
           node tests/test-install-diagnose.mjs
           node tests/test-install-verify.mjs
           node tests/test-upgrade-script-blocks.mjs

@@ -11,6 +11,18 @@
 **DSH 的框架升级安全 + 插件升级门控。** 升级失败自动回滚。**别的通道**改了框架也照样守门。
 宿主带不动的插件版本直接拒绝，不会装上。
 
+[![](https://img.shields.io/badge/powered_by-dsh-4D6BFE?style=flat-square&logo=deepseek&logoColor=white)](https://github.com/deepseek-ai/deepseek-harness)
+[![Awesome DSH Plugin](https://awesome-dsh-plugin.com/badge.svg)](https://awesome-dsh-plugin.com)
+[![GitHub stars](https://img.shields.io/github/stars/Noob-stupid/dsh-plugin-gating-hub?style=flat-square&logo=github)](https://github.com/Noob-stupid/dsh-plugin-gating-hub/stargazers)
+[![License](https://img.shields.io/github/license/Noob-stupid/dsh-plugin-gating-hub?style=flat-square)](LICENSE)
+[![Last commit](https://img.shields.io/github/last-commit/Noob-stupid/dsh-plugin-gating-hub?style=flat-square)](https://github.com/Noob-stupid/dsh-plugin-gating-hub/commits/main)
+[![Registry CI](https://img.shields.io/github/actions/workflow/status/Noob-stupid/dsh-plugin-gating-hub/registry.yml?label=registry%20CI&style=flat-square)](https://github.com/Noob-stupid/dsh-plugin-gating-hub/actions/workflows/registry.yml)
+[![topic: dsh-plugin](https://img.shields.io/badge/topic-dsh_plugin-4D6BFE?style=flat-square)](https://github.com/topics/dsh-plugin)
+[![npm version](https://img.shields.io/npm/v/@noob-stupid/dsh-plugin-console?style=flat-square)](https://www.npmjs.com/package/@noob-stupid/dsh-plugin-console)
+[![npm downloads](https://img.shields.io/npm/dm/@noob-stupid/dsh-plugin-console?style=flat-square)](https://www.npmjs.com/package/@noob-stupid/dsh-plugin-console)
+[![GitHub Release](https://img.shields.io/github/v/release/Noob-stupid/dsh-plugin-gating-hub?style=flat-square)](https://github.com/Noob-stupid/dsh-plugin-gating-hub/releases)[![dsh.so security](https://www.dsh.so/badge/dsh-plugin-hub.svg)](https://www.dsh.so/artifact/dsh-plugin-hub)
+[![dsh.so install · dsh 0.2.0-rc.1](https://www.dsh.so/badge/install/dsh-plugin-hub@0.2.0-rc.1.svg)](https://www.dsh.so/artifact/dsh-plugin-hub/)
+
 **安装（npm，一行）**
 
 ```sh

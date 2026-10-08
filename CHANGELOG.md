@@ -2,6 +2,73 @@
 
 All notable changes to dsh-plugin-hub.
 
+## v0.5.43 — pnpm 执行方式按目标 profile 声明的版本选（改错，2026-10-08）
+
+> **真机现场（官方桌面端 desktop profile）**：控制台 `resolvePnpmRunners()` 在普通 node 进程里第一命中
+> `node-corepack` ⇒ 用的是 corepack 自己那版 pnpm（本机实测 11.21.0）；而该 profile 的 `node_modules`
+> 是**桌面端自带运行时**那份 pnpm 建出来的（`<resources>\runtime\pnpm`，本机实测 11.7.0）——
+> `node_modules/.modules.yaml` 的 `packageManager` 如实记着 `pnpm@11.7.0`。
+> **版本错配** ⇒ 新版 pnpm 判链接/peer 状态漂移 ⇒ 重新导入 `@deepseek-ai` 的 schedule 包 ⇒
+> Windows 上 `rename` 覆盖已存在目录 ⇒ `ERR_PNPM_EPERM` ⇒ 卡满 120 秒被超时杀掉，
+> 并在 `node_modules\@deepseek-ai\` 留下 12 个 `<包名>_tmp_<pid>_<n>` 僵尸目录；
+> 换成**匹配那份**（桌面端 11.7.0）同一操作 **0.7 秒**成功。
+
+### 改错（本轮唯一的行为改动）
+
+- 新增 `lib/server/infra/pnpm-runner-pick.js` —— **「选哪个 pnpm 执行方式」的唯一判据承担者**（调用点不许各写一份）：
+  - **目标版本**只读自 `<profileDir>/node_modules/.modules.yaml` 的 `"packageManager": "pnpm@x.y.z"`
+    （pnpm 自己写下的、建出这棵 node_modules 的那版）；读不出来 ⇒ `null`（不猜）。
+  - **各候选会跑哪一版**同样是**只读静态判定**（不 spawn pnpm、不碰 profile 任何文件）：
+    `node-corepack` / `cmd-corepack` 按 corepack 自己的解析规则（项目 `package.json` 的 `packageManager`
+    字段优先，否则 corepack home 的 `lastKnownGood.json`，逐字照抄 corepack 0.34.5 的
+    `getCorepackHomeFolder` / `getDefaultVersion`）；`desktop-pnpm-mjs` / `path-pnpm-mjs` 读
+    `<…>/pnpm/bin/pnpm.mjs` 同级那份 pnpm 的 `package.json` 的 `version`；
+    PATH 上的 `cmd-pnpm` / `path-pnpm` 版本不可静态判定 ⇒ `null` ⇒ **永不参与匹配**。
+  - **选择语义**：与声明版本一致的候选**提到最前**，其余相对顺序逐项不变；匹配不到 / 读不出来 /
+    没给 `profileDir` ⇒ **原样返回既有顺序**（同一个数组引用，零变化）。**不新增**"拒绝执行"分支：
+    真失败照旧由 `runPnpmWithFallback` 如实抛出，既有超时/回滚语义一个字不动。
+- `lib/server/infra/exec.js`（598/600 行，架构守卫上限内）：新增 `pnpmRunnersFor(profileDir, opts)`
+  （既有候选顺序 + 版本一致者优先）；`runPnpmWithFallback` 默认候选改为它（`profileDir` 缺省取
+  `execOpts.cwd`，另给单测留 `runnerOpts` 注入口）。**没给 profileDir 时与旧行为逐项相同**。
+- `lib/server/domain/ai-run.js`：AI 修复提示里的"本机可用执行方式"与 `install-npm` 步骤改用同一个
+  `pnpmRunnersFor`（后者显式传 `profileDir: dir`），不再各写一份。
+
+### 测试（接入 CI unit 硬门槛）
+
+- 新增 `tests/test-pnpm-runner-pick.mjs`（28 条 + 1 条**响亮 SKIP**，全离线、IO 全部注入、
+  **不在任何 profile 里跑 pnpm**）：正控（声明 11.7.0 ⇒ 桌面端那份）· 负控（声明 11.21.0 ⇒ corepack 那份，
+  且匹配者不在首位时也能被提升）· 平局不搬家 · 无 `.modules.yaml`/非 pnpm 声明/坏输入 ⇒ 逐项等于既有顺序
+  （同一数组）· 版本读不出来的候选永不提升 · **接线**（`runPnpmWithFallback` 依次尝试的正是选择器给出的清单，
+  正负控各一次，跨平台离线可跑）· 真机只读判据（本机有 desktop profile 时读它声明的版本并核对选中的候选；
+  本进程看不到桌面端运行时候选时**响亮 SKIP**，不假装 PASS）。
+- `.github/workflows/test.yml`：新套接在 `test-pnpm-runners.mjs` 之后（既有 36 条断言全绿未变）。
+
+### 真机只读探针（两组对照，全部在 `%TEMP%` 副本里；live 只被读，四个判据文件 SHA256 前后一致）
+
+- 同一操作（控制台同款 `pnpm add @deepseek-ai/dsh-experimental-schedule-bundle@0.2.0-rc.2
+  --registry … --fetch-timeout=60000 --fetch-retries=1`），同一份 profile 副本：
+  - **A · 错配**（`node-corepack` = pnpm 11.21.0）：**120,861 ms**（正好撞上控制台 120 秒上限）⇒
+    `[ERR_PNPM_EPERM] [importPackage …\node_modules\@deepseek-ai\dsh-schedule] EPERM: operation not permitted,
+    rename '…\dsh-schedule_tmp_16508_9' -> '…\dsh-schedule'`，并**新增 2 个僵尸目录**（`_tmp_16508_5/_9`）。
+  - **B · 匹配**（`desktop-pnpm-mjs` = pnpm 11.7.0）：**744 ms**、`status=0`、**零新增僵尸目录**。
+- 探针前后：live 的 `package.json` / `pnpm-lock.yaml` / `pnpm-workspace.yaml` / `node_modules/.modules.yaml`
+  四个 SHA256 逐字节一致；6 个 `link:` 目标的 `package.json` 也未被动过。
+
+### 文档（加法）
+
+- `README.zh.md`：把 `README.md` 那套勋章块**逐字照搬**到同一位置（标题 → 定位段 → 勋章 → 安装），
+  中文界面里徽章文字保持原样；`README.md` 一个字节未动。
+
+### 现场维护（只动本机 profile，不进包）
+
+- `profiles/desktop/pnpm-lock.yaml`：用本仓**唯一写入口** `writeLockImporterEntry` 定点补上
+  `@dsh-breadboard/dsh-hardware-sandbox` 的 importer 条目（写前数清旧键/spec 出现次数：lock 里 0/0、
+  清单里 2 处包名 + 1 处 spec，与预期不符即停手；备份先行 + SHA256；写后读回：插入恰 3 行、位于
+  `undici` 与 `packages:` 之间、除该块外逐字节不变、无 BOM、纯 LF）。清单 / `.modules.yaml` / 插件本体均未动。
+- `profiles/desktop/node_modules/@deepseek-ai/`：12 个 `*_tmp_<pid>_<n>` 僵尸目录**改名**（非删除）移入
+  `<profile>\.bak-tmp-zombies-2026-10-08T02-47-50-779Z\`（含 `.MANIFEST.json` 清单）；逐个复核
+  （名字形状 / 不是链接 / 对应真包存在 / 不被任何在册文件引用 / 内容与真包一致）后才移动，无疑虑项留下。
+
 ## v0.5.42 — 门控模态里的「右侧贴底 Star 提示」（纯 UI 加法，2026-10-06）
 
 > 用户点名的小功能：在「门控（兼容门总开关）」模态的**右侧空白区**加一行**贴底对齐**的 Star 提示，
