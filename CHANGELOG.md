@@ -2,6 +2,85 @@
 
 All notable changes to dsh-plugin-hub.
 
+## v0.5.44 — 控制台不再「手动拉起」：重启/重载统一走官方路径（改错，2026-10-10）
+
+> **用户红线原话**：「桌面端重启必须走官方的那种不报错重启，如果你走手动拉起之类的等等很可能会
+> 出现那种报错，这是一定不能的」；症状补充：「有时候控制台代理重启啥的会出现《应用无法启动或已意外停止》」。
+
+### 元凶（真机取证：两处日志 + 两处 %TEMP% 残骸 + Electron 侧原文）
+
+- `~/.dsh/plugin-console/console-restart.log`（2026-10-10 15:27–15:33）：
+  `[guard] 端口 3080 无监听，第 1..5 次拉起` → `[guard] 已发起拉起服务（守护第 N 次，输出见 fw-relaunch.log）`
+  → `15:33:03 [guard] 已尝试 5 次仍拉不起来，放弃并自删（请手动启动，或看 fw-relaunch.log / console-restart.log）`。
+- `~/.dsh/plugin-console/fw-relaunch.log`：`拉起(守护第 N 次): <npx 缓存>\@deepseek-ai\dsh\lib\bin.js`。
+- 生成物残骸仍在 `%TEMP%`：`console-restart-34732.ps1`（2026-10-10 15:27:34）、
+  `console-restart-guard-34732.ps1`，以及 2026-10-06 那次（pid 23688）的两份。
+- ⇒ 旧 `routeRestart` 做三件事：① `Stop-Process -Id <本进程>` 自杀脚本；② 注册**每分钟跑一次**的
+  `DSH-RestartGuard-<pid>` 计划任务，端口无监听就 `Start-Process node <bin.js> web` 手动拉起（最多 5 次）；
+  ③ 第 6 次 `schtasks /delete` **自删计划任务**。触发面＝控制台的「重启服务」按钮、自更新成功后自动调、
+  升级期间悬浮「拉起服务」按钮；守护任务一旦注册就**自己按分钟跑**（按钮触发 → 自动守护，两条都在）。
+- **为什么必然报错**：桌面端实例的宿主是 Electron 外壳的**子进程**（`lib/main.js:3674` spawn
+  `dsh-desktop-host`）——杀掉它 ⇒ 外壳 `child.once('close')` → `fail()` → `phase:'error'` →
+  `reportFatal(state.failure, 'host')`（`lib/main.js:11389`）⇒ 弹「**应用无法启动或已意外停止。**」
+  （`lib/main.js:6709` `fatalSummary` —— 就是用户看到的那句原文）；独立 `dsh web` 实例上再 spawn 一个
+  `dsh web` 必然争同一端口 ⇒ `listen EADDRINUSE` ⇒ 外壳那一支的「有其他正在运行的 DSH…无法同时启动」
+  （`lib/main.js:6543 / 6710`）。
+
+### 官方那条"不报错"的路（原文出处）
+
+- 桌面端自带的官方重启 = Electron `app.relaunch(); quitWithoutConfirmation()`
+  —— `lib/main.js:10983-10986`（崩溃恢复对话框的「重启」按钮；标签 `restartApplication`
+  `lib/main.js:6715`、按钮表 `7551-7557`）、`lib/main.js:11906-11911`（应用菜单「重启应用与 Host」）。
+  它先走外壳自己的受管收尾（`child.send({type:'shutdown'})` → 优雅等待 → SIGTERM/SIGKILL；
+  `dsh-desktop-host/lib/index.js:265` + `lib/main.js:3790-3807`），再由 Electron 拉起**整个应用**
+  ——全程只有一个实例、不抢端口 ⇒ 不报错。
+- **但插件拿不到它**：桌面端 IPC 全表（`lib/preload-app.cjs:6-30` ≡ `lib/main.js:6193-6218`）没有
+  restart/relaunch 通道；外壳 ↔ 宿主控制通道只有 `update-tasks` / `quit-inspection` / `shutdown`
+  （`dsh-desktop-host/lib/index.js:265-310`）。官方对"改动何时生效"的语义是 `restart-required`
+  →「更改将在下次启动生效」（`dsh-client-ui-plugin-manager/lib/client.js:91 / 626`）。
+  ⇒ 插件唯一诚实的做法：**请用户在客户端里重启**。
+
+### 改错（本轮唯一的行为改动）
+
+- 新增 `lib/server/domain/restart.js` —— **「重启 / 重载」路径的唯一承担者**（调用点不许各写一份）：
+  `restartPathDecision({ hosted, intent })` ⇒ `hosted=true` 走官方路径（channel `desktop-client`，
+  文案「请在桌面端客户端里重启」+ 结构化 `guide`）；官方通道不可用（独立 `dsh web`）⇒ channel
+  `unavailable` + 如实告知手动重启 + 出路；`intent='relaunch'` 额外说明「手动拉起已下线」。
+  红线判据在 `details` 里写死：`spawns` / `kill` / `scheduledTask` / `selfDelete` **恒为 false**。
+- `lib/server/routes/framework.js#routeRestart`：删掉自杀脚本 + 每分钟守护任务 + 5 次上限自删
+  （-133 行），改为一行调用同一判据 ⇒ 409 + 面向用户的话。
+- `lib/server/routes/framework.js#routeFrameworkRelaunch`（原「手动拉起服务」悬浮按钮，就是
+  `Start-Process node bin.js web`）：同样下掉 spawn，改走同一判据。
+- 新增 `hostedHere(rc)`：两条**零 spawn** 路由共用的宿主判定入口（与 `refuseWhenShellHosted`
+  同一份 `detectHostShape` 事实；`rc.deps.hosted` 只给单测做确定性注入口）。
+- `lib/client.js`：重启/拉起按钮**原样显示服务端那句话**（不再套"安全开关失败："前缀、不再吞原因）；
+  文案改为「重启服务（官方路径）」/「重启指引」，会撒谎的「已发起手动拉起」等说法删除。
+- **不动**：清僵尸计划任务的既有能力（`cleanupStaleFwTasks`）保留；一键升级/回滚通道（外壳托管
+  时早已整条拒绝）语义一字未改。
+
+### 文档（加法，只把不再成立的说法改对）
+
+- `README.md` / `README.zh.md`「已知限制」：原来说面板重启按钮「自带守护 / watchdog-safe」——
+  现在如实写成"只指向官方路径（在桌面端客户端里重启），控制台绝不 kill / 拉起进程"。
+- `CHANGELOG.md`：本节。
+
+### 测试（接入 CI unit 硬门槛）
+
+- 新增 `tests/test-restart-official-path.mjs`（39 条，全离线、私有 DSH_HOME、**绝不真的拉起 dsh**）：
+  正控（判据 + 两条路由：官方路径被优先选中、409 + 客户端重启文案）· **负控（用户点名的那条）**：
+  官方不可用时 **零 spawn / 零 kill**、只出提示 + 出路 · 红线四项在每个分支恒 false ·
+  「零 spawn/kill」的**两条动态证据**：进程内 `child_process` 记录桩（先 patch 再动态 import，
+  带**桩自校验** —— 控制组必须被记到，否则整套响亮 SKIP 不假装 PASS）+ **另起一个普通 node 进程**
+  （剥掉 `ELECTRON_RUN_AS_NODE`）跑真机路径探针，真实 `detectHostShape` 判独立实例后两条路由
+  子进程调用数 = 0 · 零残渣（DSH_HOME 无 `console-restart.log` / `restart-guard-*.count`，
+  临时目录无**新增** ps1）· 静态：两条路由去注释后 0 处 kill/spawn/计划任务，旧的自杀+守护脚本
+  生成块与自删逻辑已从代码里消失。
+- `tests/test-upgrade-script-syntax.mjs`：原「重启主脚本 / 守护脚本」两组语法与行为断言
+  换成「旧路径已彻底消失 + 新判据唯一承担者」断言。
+- `tests/test-host-shape.mjs`：宿主守卫接线由「4 处」改为「2 处」（重启/拉起两条路由已零 kill/零 spawn，
+  不再需要守卫；仍会 kill/spawn 的只剩回滚与升级）。
+- `.github/workflows/test.yml`：新套接在 `test-star-hint-ui.mjs` 之后。
+
 ## v0.5.43 — pnpm 执行方式按目标 profile 声明的版本选（改错，2026-10-08）
 
 > **真机现场（官方桌面端 desktop profile）**：控制台 `resolvePnpmRunners()` 在普通 node 进程里第一命中

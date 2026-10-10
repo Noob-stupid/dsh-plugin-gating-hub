@@ -121,15 +121,33 @@ const DESKTOP_HOST = { // 19387：DeepSeek Harness.exe --expose-internals …\ap
   }
   check('守卫已从 routes/framework.js 导出（framework-upgrade 复用同一份判据）', typeof refuseWhenShellHosted === 'function')
 }
-// ⑦ 静态接线：4 处会 kill/spawn 的框架动作都接了守卫
+// ⑦ 静态接线：会 kill/spawn 的框架动作都接了守卫
+// 2026-10-10 改错：`/restart` 与 `/framework-relaunch` 两条路由已彻底不再 kill/spawn
+// （统一走 domain/restart.js 的官方路径判据，见 tests/test-restart-official-path.mjs），
+// 所以它们不再需要宿主守卫 —— 仍会 kill/spawn 的只剩「一键回滚」与「一键升级」两处。
 {
   const fw = readFileSync(join(ROOT, 'lib', 'server', 'routes', 'framework.js'), 'utf8')
   const up = readFileSync(join(ROOT, 'lib', 'server', 'routes', 'framework-upgrade.js'), 'utf8')
   const guardCalls = [...fw.matchAll(/if \(refuseWhenShellHosted\(res\)\) return/gu)].length
     + [...up.matchAll(/const refusal = shellHostedRefusal\(\); if \(refusal !== null\)/gu)].length
-  check('守卫接线：routeFrameworkRelaunch / routeFrameworkRollback / routeRestart / routeFrameworkUpgrade 共 4 处', guardCalls === 4, `实际 ${guardCalls} 处`)
+  check('守卫接线：仍会 kill/spawn 的 routeFrameworkRollback / routeFrameworkUpgrade 共 2 处', guardCalls === 2, `实际 ${guardCalls} 处`)
   check('upgrade 路由用同一份判据（shellHostedRefusal，来自 domain）', up.includes("shellHostedRefusal } from '../domain/framework.js'"))
   check('rollback 路由（20:28 事故真正凶手）确实在生成脚本前就守卫', /refuseWhenShellHosted\(res\)\) return\r?\n\s*let rec = null/u.test(fw))
+  // 去行注释后再看（改错的注释里正当地引用了 DSH-RestartGuard- 等旧名词作证据）
+  const codeOnly = (source) => source.split('\n').map((line) => {
+    let quote = null
+    for (let i = 0; i < line.length; i += 1) {
+      const c = line[i]
+      if (quote !== null) { if (c === '\\') i += 1; else if (c === quote) quote = null; continue }
+      if (c === '"' || c === "'" || c === '`') { quote = c; continue }
+      if (c === '/' && line[i + 1] === '/') return line.slice(0, i)
+    }
+    return line
+  }).join('\n')
+  const fwCode = codeOnly(fw)
+  check('重启/拉起路由已零 kill/零 spawn（不再需要守卫，判据见 domain/restart.js）',
+    /async function routeRestart\(/u.test(fw) && /async function routeFrameworkRelaunch\(/u.test(fw)
+    && !fwCode.includes('DSH-RestartGuard-') && !fwCode.includes('const guardLines = ['))
 }
 
 console.log(`\n${fail === 0 ? 'ALL PASS' : `${fail} FAILED`}（PASS ${pass} / FAIL ${fail}）`)

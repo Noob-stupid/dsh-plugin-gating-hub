@@ -439,8 +439,10 @@ Verification matrix, raw logs and the one framework-side caveat (`0.1.2-rc.1` sh
 
 ## Known limitations
 
-- Host code changes require a **service restart** (the panel's restart button is
-  watchdog-safe); client changes just need a page refresh;
+- Host code changes require a **service restart**: the panel's restart button only points at the
+  **official path** (restart inside the desktop client; the console never kills or spawns a
+  process — a manual relaunch would fight the host for the port and produce
+  "The application could not start or stopped unexpectedly"); client changes just need a page refresh;
 - Live GitHub search depends on GitHub reachability (browser-direct + server fallback;
   during network-blackout windows retry later);
 - Version detection works for npm-published packages; skill-type repos have no version concept;

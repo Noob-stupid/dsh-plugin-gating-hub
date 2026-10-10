@@ -328,67 +328,62 @@ if (shell === null || makePrelude === null || realFwRoot === null || !existsSync
   rmSync(workLog, { force: true })
 }
 
-// ── 重启脚本（v0.3.43）：主脚本 + 独立守护任务，两段都要能通过语法校验 ──────────────
-// 事故：2026-09-11 用户点「重启服务」后服务没自己拉起来，只能手动重启；现场留下 5 个 Ready
-// 僵尸任务 → 杀完服务后脚本自己也被结束了（0xC000013A），"检查端口→拉起"根本没跑到。
-/** 抽出形如 `const xxx = [ ...行... ]` 的数组字面量，返回可直接给 build() 求值的表达式。
- *  （重启路由的两个脚本数组用 writeFile 包着，没有 `.join('\r\n')` 结束标记，所以按下标扫描到 `]`。） */
-const extractArray = (startMarker) => {
-  const from = SRC_FR.indexOf(startMarker)
-  if (from === -1) return ''
-  const out = []
-  for (const line of SRC_FR.slice(from).split('\n')) {
-    out.push(line)
-    if (out.length > 1 && line.trim() === ']') break
-  }
-  return out.length > 1 ? `[${out.slice(1).join('\n')}` : ''
-}
-const restartBlocks = [
-  ['重启主脚本', extractArray('const mainLines = [')],
-  ['重启守护脚本', extractArray('const guardLines = [')],
-]
-check('源码里能找到重启主脚本', restartBlocks[0][1] !== '')
-check('源码里能找到重启守护脚本', restartBlocks[1][1] !== '')
-for (const [name, expr] of restartBlocks) {
-  let script = ''
-  try {
-    const built = build(expr)
-    // 重启路由是 `mainLines.join('\r\n')` 才落盘：这里也按同样方式拼接（数组直接 toString 会变成逗号连接）
-    script = Array.isArray(built) ? built.join('\r\n') : built
-    check(`${name}：生成成功`, typeof script === 'string' && script.length > 300, `${script.length} 字符`)
-  } catch (error) {
-    check(`${name}：生成成功`, false, error.message)
-    continue
-  }
-  check(`${name}：用同一套 bin 解析（多级回退）`, script.includes('function Resolve-DshBin') && script.includes('function Invoke-DshRelaunch'))
-  check(`${name}：有重启日志可查`, script.includes('console-restart.log'))
-  const file = join(OUT, `restart-${name === '重启主脚本' ? 'main' : 'guard'}.ps1`)
-  writeFileSync(file, `\uFEFF${script}`, 'utf8')
-  if (shell === null) {
-    console.log(`SKIP ${name}：PowerShell 语法校验（本机无 powershell.exe）`)
-  } else {
-    try {
-      execFileSync(shell, ['-NoProfile', '-Command', `$t = Get-Content -Raw -Encoding UTF8 '${file}'; $null = [scriptblock]::Create($t); 'PARSE OK'`], { encoding: 'utf8', timeout: 60000 })
-      check(`${name}：PowerShell 语法校验`, true, shell)
-    } catch (error) {
-      const msg = String(error.stdout ?? '') + String(error.stderr ?? '') + String(error.message ?? '')
-      check(`${name}：PowerShell 语法校验`, false, msg.split('\n').filter((l) => l.trim() !== '').slice(-3).join(' | ').slice(0, 300))
+// ── 重启路径（2026-10-10 改错）："端口无监听就 spawn 拉起"的守护路径必须**不存在** ──────
+// 用户红线原话：「桌面端重启必须走官方的那种不报错重启，如果你走手动拉起之类的等等很可能会出现
+// 那种报错，这是一定不能的」＋「有时候控制台代理重启啥的会出现《应用无法启动或已意外停止》」。
+// 现场（<DSH_HOME>/plugin-console，2026-10-10 15:27–15:33，实测原文）：
+//   console-restart.log：`[guard] 端口 3080 无监听，第 1..5 次拉起`
+//                        `[guard] 已尝试 5 次仍拉不起来，放弃并自删（请手动启动，或看 …）`
+//   fw-relaunch.log：    `拉起(守护第 N 次): <npx 缓存>\@deepseek-ai\dsh\lib\bin.js`
+// ⇒ 旧实现在这条路由里生成**自杀脚本 + 每分钟跑一次的计划任务**，端口无监听就手动拉起 dsh，
+//   第 6 次还会自删计划任务（危险动作）。同时 /framework-relaunch（悬浮「拉起服务」）也在
+//   `Start-Process node bin.js web`。
+// 本段把「旧路径已彻底消失」+「新判据只有一个承担者」钉死（纯源码静态断言，全离线）。
+// 去行注释：禁词扫描必须只看**可执行代码**（改错的注释里正当地引用了那些旧名词作证据）。
+const codeOnly = (source) => source.split('\n').map((line) => {
+  let quote = null
+  for (let i = 0; i < line.length; i += 1) {
+    const c = line[i]
+    if (quote !== null) {
+      if (c === '\\') i += 1
+      else if (c === quote) quote = null
+      continue
     }
+    if (c === '"' || c === "'" || c === '`') { quote = c; continue }
+    if (c === '/' && line[i + 1] === '/') return line.slice(0, i)
   }
-  rmSync(file, { force: true })
+  return line
+}).join('\n')
+const routeBodyOf = (source, name) => {
+  const from = source.indexOf(`async function ${name}(`)
+  if (from === -1) return ''
+  const end = source.indexOf('\n}', from)
+  return end === -1 ? source.slice(from) : source.slice(from, end + 2)
 }
 {
-  const main = build(restartBlocks[0][1]).join('\r\n')
-  const guard = build(restartBlocks[1][1]).join('\r\n')
-  check('重启主脚本：等端口真正释放（轮询而非只 sleep 一次）', /for \(\$i = 0; \$i -lt 20; \$i\+\+\)/u.test(main) && main.includes('已释放'))
-  check('重启主脚本：拉起失败会重试 3 次', main.includes('$a -le 3') && main.includes('重启第 '))
-  check('重启主脚本：跑完自删任务（不留僵尸）', /schtasks \/delete \/f \/tn DSH-Restart-/u.test(main))
-  check('重启守护：独立任务名 + 复查端口', guard.includes('DSH-RestartGuard-') && guard.includes('Get-NetTCPConnection'))
-  check('重启守护：服务起来就收工自删（不会变成永动机）', guard.includes('服务已在监听，守护任务收工') && guard.includes('schtasks /delete /f /tn DSH-RestartGuard-'))
-  check('重启守护：连续失败有上限并放弃', guard.includes('-gt 5') && guard.includes('放弃并自删'))
-  check('重启守护：自己也会拉起服务', guard.includes('Invoke-DshRelaunch'))
+  check('重启路由不再生成自杀/守护脚本（mainLines / guardLines 都没了）',
+    !SRC_FR.includes('const mainLines = [') && !SRC_FR.includes('const guardLines = ['))
+  const forbidden = ['DSH-RestartGuard-', 'DSH-Restart-', 'Invoke-DshRelaunch', 'console-restart.log', 'restart-guard-', 'Start-Process', 'Stop-Process', 'schtasks', 'execFile', 'spawn(']
+  for (const name of ['routeRestart', 'routeFrameworkRelaunch']) {
+    const body = routeBodyOf(SRC_FR, name)
+    const code = codeOnly(body).replace(/\s+$/u, '')
+    check(`${name}：路由体存在且已改走唯一判据 restartPathDecision`, body !== '' && code.includes('restartPathDecision('), `${code.split('\n').length} 行`)
+    const hits = forbidden.filter((t) => code.includes(t))
+    check(`${name}：可执行代码里 0 处 kill / spawn / 计划任务 / 自删（扫 ${forbidden.length} 个禁词）`, hits.length === 0, hits.join(', ') || '0 处')
+  }
+  const restartDomain = readSrc(join(ROOT, '..', 'lib', 'server', 'domain', 'restart.js'))
+  check('判据是唯一承担者：两条路由都走同一个 restartPathDecision',
+    (SRC_FR.match(/restartPathDecision\(/gu) ?? []).length === 2 && SRC_FR.includes("import { restartPathDecision } from '../domain/restart.js'"))
+  check('红线判据在 domain 里写死（spawns / kill / scheduledTask / selfDelete 恒为 false）',
+    ['spawns: false', 'kill: false', 'scheduledTask: false', 'selfDelete: false'].every((k) => restartDomain.includes(k)))
+  check('官方路径文案在 domain/restart.js 里（桌面端客户端重启 / 独立实例手动重启，都给出路）',
+    restartDomain.includes('请在桌面端客户端里重启') && restartDomain.includes('请手动重启这个 dsh web 进程')
+    && restartDomain.includes('guide'))
+  check('官方路径的原文出处写在模块头（Electron app.relaunch / DESKTOP_IPC 无 restart 通道）',
+    restartDomain.includes('app.relaunch()') && restartDomain.includes('dsh-desktop-host'))
+  check('client.js 不自己决定重启方式（不再拼"拉起"说法）', !readSrc(join(ROOT, '..', 'lib', 'client.js')).includes('node bin.js web'))
 }
-check('启动时会清理僵尸计划任务（含重启/守护任务）', [SRC, SRC_FR, SRC_RFU, SRC_FW].some((s) => s.includes('cleanupStaleFwTasks()')) && [SRC, SRC_FR, SRC_RFU, SRC_FW].some((s) => /DSH-\(\?:FW-|RestartGuard/u.test(s)))
+check('启动时会清理僵尸计划任务（含重启/守护任务）——既有清残留能力保留', [SRC, SRC_FR, SRC_RFU, SRC_FW].some((s) => s.includes('cleanupStaleFwTasks()')) && [SRC, SRC_FR, SRC_RFU, SRC_FW].some((s) => /DSH-\(\?:FW-|RestartGuard/u.test(s)))
 
 console.log(failed === 0 ? '\nALL PASS' : `\n${failed} FAILED`)
 process.exit(failed === 0 ? 0 : 1)

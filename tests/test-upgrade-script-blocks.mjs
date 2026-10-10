@@ -11,7 +11,9 @@
 // 本测试把抽取器的三个前提变成硬断言：
 //   ① 抽取器读的源文件必须**真实存在**（缺一个就红，绝不 SKIP、绝不静默）；
 //   ② 每个「结束标记」都必须能配对到前面的「开始标记」（配不上 = 脚本块被静默丢掉）；
-//   ③ 升级脚本 / 一键回滚脚本 / 安装后结构校验生成器 / 重启脚本 四类块各就各位。
+//   ③ 升级脚本 / 一键回滚脚本 / 安装后结构校验生成器 三类块各就各位；
+//      （2026-10-10 改错后，原「重启脚本」两块已被删除 —— 这里改成反向断言：它们必须不存在，
+//       见文件末尾 ③′。控制台不再"手动拉起"，重启/重载统一走 domain/restart.js 的官方路径判据。）
 // 另外加一条通用护栏：**tests/*.mjs 里静态引用的仓库路径必须存在** —— 这正是 diag-blocks 那类事故的机制化拦网。
 //
 // 全部离线、确定性：只读源码文本，不跑 PowerShell（真跑与语法校验仍归 test-upgrade-script-syntax.mjs）。
@@ -108,21 +110,32 @@ check('没有别的测试再引用从未入库的 framework-install-script.js',
 check('该路径在仓库里确实不存在（现状钉死，防止有人"补一个空壳文件"骗绿）',
   !existsSync(join(REPO, 'lib', 'server', 'domain', 'framework-install-script.js')))
 
-// 重启脚本（v0.3.43）：两个数组字面量直接 `writeFile`，没有 join 结束标记 —— 用下标扫描抽。
-const extractArray = (marker) => {
-  const from = SRC_FR.indexOf(marker)
-  if (from === -1) return ''
-  const lines = SRC_FR.slice(from).split('\n')
-  const out = []
-  for (const line of lines) {
-    out.push(line)
-    if (out.length > 1 && line.trim() === ']') break
+// 重启脚本（v0.3.43 → **2026-10-10 改错**）：旧实现在这里有两个数组字面量（主脚本 / 每分钟守护脚本），
+// 直接 `writeFile` 落盘、没有 join 结束标记，所以上面那套「结束标记回推」的抽取器看不到它们 ——
+// 当时专门用下标扫描来盯。**现在这两个块已被整段删除**（用户红线：控制台不再"手动拉起"；
+// /restart 与 /framework-relaunch 统一走 domain/restart.js 的官方路径判据，零 spawn / 零 kill）。
+// 于是这里换成「反向扫描」：不能再抽出任何自杀/守护脚本数组，且新判据的接线在位。
+{
+  const extractArray = (marker) => {
+    const from = SRC_FR.indexOf(marker)
+    if (from === -1) return ''
+    const lines = SRC_FR.slice(from).split('\n')
+    const out = []
+    for (const line of lines) {
+      out.push(line)
+      if (out.length > 1 && line.trim() === ']') break
+    }
+    return out.length > 1 ? out.slice(1).join('\n') : ''
   }
-  return out.length > 1 ? out.slice(1).join('\n') : ''
-}
-for (const [name, marker] of [['重启主脚本', 'const mainLines = ['], ['重启守护脚本', 'const guardLines = [']]) {
-  const body = extractArray(marker)
-  check(`${name}：数组块能抽出来且非空`, body !== '' && body.length > 300, `${body.length} 字符`)
+  for (const [name, marker] of [['重启主脚本', 'const mainLines = ['], ['重启守护脚本', 'const guardLines = [']]) {
+    const body = extractArray(marker)
+    check(`${name}：旧数组块已不存在（不再生成会自杀 / 拉起服务的 PowerShell 脚本）`, body === '', `${body.length} 字符`)
+  }
+  const restartDomain = readSrc('lib/server/domain/restart.js')
+  check('重启判据的唯一承担者在位（domain/restart.js 定义并导出 restartPathDecision）',
+    restartDomain.includes('function restartPathDecision(') && restartDomain.includes('restartPathDecision }'))
+  check('/restart 与 /framework-relaunch 都接到同一判据（各一次调用 + 同一个 import）',
+    (SRC_FR.match(/restartPathDecision\(/gu) ?? []).length === 2 && SRC_FR.includes("from '../domain/restart.js'"))
 }
 
 // ── ④ 通用护栏：tests/*.mjs 静态引用的仓库路径必须存在 ───────────────────────────

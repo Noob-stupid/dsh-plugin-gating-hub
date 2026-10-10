@@ -341,6 +341,28 @@ jobs:
           #    逐项证明本套会红。
           node tests/test-star-hint-ui.mjs
 
+          # ── 0.5.44 改错（2026-10-10，用户红线）：控制台里「手动拉起」的路径必须去掉、改走官方路径 ──
+          #    用户原话：「桌面端重启必须走官方的那种不报错重启，如果你走手动拉起之类的等等很可能会出现
+          #    那种报错，这是一定不能的」＋症状「有时候控制台代理重启啥的会出现《应用无法启动或已意外停止》」。
+          #    现场（<DSH_HOME>/plugin-console，2026-10-10 15:27–15:33）：
+          #      console-restart.log `[guard] 端口 3080 无监听，第 1..5 次拉起` /
+          #                         `[guard] 已尝试 5 次仍拉不起来，放弃并自删（…）`
+          #      fw-relaunch.log     `拉起(守护第 N 次): <npx 缓存>\@deepseek-ai\dsh\lib\bin.js`
+          #    ⇒ 旧实现在 /restart 里生成自杀脚本 + 注册**每分钟跑一次**的 DSH-RestartGuard-<pid> 计划任务，
+          #      端口无监听就 Start-Process node <bin.js> web 手动拉起，第 6 次还会 schtasks /delete 自删任务。
+          #    段内断言（全离线、私有 DSH_HOME、**绝不真的拉起 dsh**）：
+          #      ① 判据单元正控（hosted ⇒ channel 'desktop-client'，官方路径被优先选中）/ 负控
+          #        （官方通道不可用 ⇒ channel 'unavailable' + 如实告知手动重启）；红线四项
+          #        spawns/kill/scheduledTask/selfDelete 在**每个**分支恒为 false；
+          #      ② 真跑两条路由（/restart、/framework-relaunch）正负控都 409 + 文案 + 零子进程；
+          #      ③ 「零 spawn / 零 kill」两条动态证据：进程内 child_process 记录桩（带**桩自校验**，
+          #        控制组必须被记到否则整体响亮 SKIP）+ **另起普通 node 进程**（剥掉 ELECTRON_RUN_AS_NODE）
+          #        跑真机路径探针（真实 detectHostShape 判独立实例 ⇒ 两条路由零子进程调用）；
+          #      ④ 零残渣（DSH_HOME 无 console-restart.log / restart-guard-*.count，临时目录无新增 ps1）；
+          #      ⑤ 静态：两条路由**去注释后** 0 处 kill/spawn/计划任务，旧的自杀+守护脚本生成块与自删逻辑
+          #        已从代码里消失（只在注释里作为事故证据被引用）；清残留能力 cleanupStaleFwTasks 保留。
+          node tests/test-restart-official-path.mjs
+
       # 更新候选判据（0.5.37 改错）：真机「反向更新/降级按钮」的回归钉子 —— 纯函数全离线。
       #   · installed 0.2.0-rc.2 × 镜像 latest 0.1.1-rc.1（更低）⇒ 必须 null（不许提示降级）
       #   · 预发布序 0.1.7-rc.2 → 0.2.0-rc.2；正式版 > 同号预发布；相同/垃圾串 ⇒ null

@@ -151,8 +151,11 @@ const indexSrc = readFileSync(join(ROOT, '..', 'lib', 'index.js'), 'utf8')
 const allSrc = [indexSrc, ...serverFiles.map((p) => readFileSync(p, 'utf8'))].join('\n')
 const generatorCalls = [...allSrc.matchAll(/relaunchPrelude\(\{([^}]*)\}/gu)].map((m) => m[1])
   .filter((c) => !/\bpluginDir,/u.test(c)) // 排除函数定义本身（形参是裸 pluginDir）
+// 2026-10-10 改错（用户红线：控制台不再"手动拉起"）：routeRestart 的生成器调用点随整段自杀/守护
+// 脚本一起删掉（现在 /restart 与 /framework-relaunch 零 spawn，见 domain/restart.js），
+// 所以调用点从 3 处降为 2 处 —— 剩下的是「一键回滚」与「一键升级」，它们仍必须走 pluginRoot()。
 check(`脚本生成器的 pluginDir 走 pluginRoot（${generatorCalls.length} 处调用）`,
-  generatorCalls.length >= 3 && generatorCalls.every((c) => c.includes('pluginDir: pluginRoot()')),
+  generatorCalls.length >= 2 && generatorCalls.every((c) => c.includes('pluginDir: pluginRoot()')),
   generatorCalls.map((c) => c.match(/pluginDir: [^,]*/u)?.[0] ?? '（无 pluginDir）').join(' | '))
 
 // ── ④ 搬运不回潮 ──────────────────────────────────────────────────────────────
