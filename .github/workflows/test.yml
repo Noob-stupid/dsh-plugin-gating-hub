@@ -40,6 +40,25 @@ jobs:
           node tests/test-framework-versions.mjs
           node tests/test-architecture-guard.mjs
           node tests/test-skill-toggle.mjs
+          # ── 0.5.45 改错（2026-10-11，用户红线「静默失败一律不许」+「先判可达性再决定改法」）─────────
+          # ① `/plugin-console/framework-status-clear` 缺 import 的静默失败：路由里用 rmSync/basename
+          #    却没 import ⇒ 每轮抛 ReferenceError 被 `catch {}` 吞掉 ⇒ 照样回 200 {"ok":true,"removed":[]}，
+          #    标记文件一个都没删（用户以为清掉了）。现在：补 import + 删除失败**如实上报**
+          #    （500 + 每个文件的原因 + removed/failed 明细），且 status-clear 里不再允许空 catch。
+          #    段内断言：静态（import 落地 / 去注释后无空 catch / 失败不回 ok:true）+ 正控（两个标记文件真的被删）
+          #    + 负控（注入必失败的删除器 ⇒ 500 + EPERM 原因 + 文件仍在 + ok!==true）+ 探测自身抛错也报
+          #    + 局部成功如实（失败的进 failed、成功的进 removed）。
+          # ② 「一键升级/回滚」里那条 `Start-Process … cmd.exe /c node bin.js web` 残留（relaunchPrelude）：
+          #    可达性判定 = 「托管时这两条入口必被拒、且不发生任何 spawn」—— 两条入口的宿主守卫必须是
+          #    任何写盘/exec 之前的**第一条动作**（静态接线断言：守卫位置早于第一处副作用 + 拒绝即 return）。
+          #    段内断言（全离线、私有 DSH_HOME、绝不真的拉起 dsh）：托管注入后真跑两条路由 ⇒ 409 + 文案
+          #    + **零 exec/spawn**（child_process 记录桩 + 桩自校验，拦不住就响亮 SKIP）+ **零写盘**
+          #    （整棵 DSH_HOME 逐项一致）+ 零网络 + 零副作用调用；独立实例仍产出 Start-Process（不倒退）；
+          #    托管脚本自带第二道防线（DSH_HOSTED 跳过）；另起普通 node 探针证明这两条能力**确实可达**
+          #    （不是"路由本来就到不了"的假绿）。
+          #    已用变异验证本套真会红：还原缺 import ⇒ 静态①②红；退回静默 ok:true ⇒ 负控 5 条红；
+          #    绕过回滚守卫 / 升级守卫 ⇒ 静态⑤⑤′⑥ 红。
+          node tests/test-framework-status-clear.mjs
           node tests/test-harness.mjs
           node tests/test-pnpm-kill-tree.mjs
           node tests/test-killtree-wait.mjs
