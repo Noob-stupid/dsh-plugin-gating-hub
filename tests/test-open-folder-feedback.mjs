@@ -35,7 +35,7 @@ import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node
 import { spawnSync } from 'node:child_process'
 import { EventEmitter } from 'node:events'
 import { dirname, join } from 'node:path'
-import { fileURLToPath } from 'node:url'
+import { fileURLToPath, pathToFileURL } from 'node:url'
 
 const ROOT = dirname(fileURLToPath(import.meta.url))
 const HOME = join(ROOT, '.testdir', 'open-folder-home')
@@ -57,6 +57,7 @@ writeFileSync(join(HOME, 'plugin-console', 'repo-land.json'), JSON.stringify({ d
 const {
   routeRepoOpen, openFolderBin, openFolderVerified,
   __setOpenFolderSpawn, __openFolderRealSpawnCalls, __openFolderSelfCheck,
+  isTestProcess, __openFolderSafetyState, __forceUnsafeSpawnForTest,
 } = await import('../lib/server/routes/components.js')
 const { setReposDir, getReposDir } = await import('../lib/server/domain/repoland.js')
 setReposDir(REPOS)
@@ -305,27 +306,57 @@ try {
       directBlocked.ok === false && directBlocked.reason === 'spawn-guard', JSON.stringify(directBlocked))
     delete process.env.DSH_OPEN_FOLDER_NO_SPAWN
 
-    // ⑧c **默认安全正控**（第二次事故「位置不可用」弹窗的直接修复）：还原生产默认启动点
-    //     （无注入桩）、保险丝**关着**、且**不给任何 opt-in** ⇒ 必须**被拒绝**（spawn-guard），
-    //     真实 spawn 计数一个都不涨。这一条证明：谁忘了注入桩，默认结局是"被拒/红"，
-    //     而不是在用户桌面弹一个「位置不可用」—— 旧语义（默认真 spawn，靠外部环境变量才拦住）
-    //     正是那次事故的根因。
-    __setOpenFolderSpawn(null)
-    delete process.env.DSH_OPEN_FOLDER_ALLOW_REAL_SPAWN
-    const noOptIn = await openFolderVerified({ target: LANDED, bin: 'explorer.exe', launchWaitMs: 40 })
-    check('★★⑧c 默认安全：无注入桩 + 无 opt-in + 保险丝关 ⇒ **被拒绝**（spawn-guard），真实 spawn 计数不涨',
-      noOptIn.ok === false && noOptIn.reason === 'spawn-guard' && /opt-in/u.test(String(noOptIn.error))
-      && __openFolderRealSpawnCalls() === before,
-      `${JSON.stringify(noOptIn)} realSpawn=${__openFolderRealSpawnCalls()}`)
+    // ⑧c **测试进程不可自解**（第三次事故「位置不可用」弹窗的根修，2026-10-13）──────────────
+    //    旧语义：`__setOpenFolderSpawn(null)` = "还原生产实现" ⇒ 桩被摘掉；而 routeRepoOpen **永远**
+    //    传 allowRealSpawn:true（它是生产唯一的 opt-in 调用方）⇒ 测试里调一次真路由 = 一次真 opt-in
+    //    ⇒ explorer.exe 真的起来了。现在三层都收在测试进程判定上（不依赖任何环境变量）：
+    //      ① 模块加载即装测试桩；② "还原"只能还原到测试桩；③ 万一真要落到真 spawn ⇒ 当场抛错给红。
+    check('★⑧c 本进程被判成"测试进程"（入口脚本在 tests/ 下；不依赖任何环境变量）',
+      isTestProcess() === true, `argv[1]=${process.argv[1] ?? ''}`)
+    check('★⑧c 模块**加载即装**：测试进程里注入桩从来就不是 null（无需任何调用方配合）',
+      __openFolderSafetyState().injected === true, JSON.stringify(__openFolderSafetyState()))
+    check('★⑧c `__setOpenFolderSpawn(null)` 在测试进程里**摘不掉**桩（"还原"到的仍是测试桩）',
+      __setOpenFolderSpawn(null) === true && __openFolderSafetyState().injected === true,
+      JSON.stringify(__openFolderSafetyState()))
+    // 负控 1：把桩强制摘掉（仅测试用的变异缝）⇒ 直接调用 openFolderVerified 必须**当场抛错**
+    __forceUnsafeSpawnForTest()
+    let thrown = null
+    try { await openFolderVerified({ target: LANDED, bin: 'explorer.exe', launchWaitMs: 40 }) } catch (error) { thrown = error }
+    check('★★⑧c′ 运行期断言：测试进程里"即将真 spawn"⇒ 当场抛错给红（既不放行、也不是结构化拒绝）',
+      thrown !== null && /测试红线/u.test(String(thrown?.message)) && __openFolderRealSpawnCalls() === before,
+      thrown === null ? '没有抛错 —— 运行期断言是死的！' : String(thrown.message).slice(0, 140))
+    // 负控 2：连**生产唯一的 opt-in 调用方**（routeRepoOpen，永远传 allowRealSpawn:true）也拦得住
+    __forceUnsafeSpawnForTest()
+    let routeThrown = null
+    try { await callOpen(LANDED) } catch (error) { routeThrown = error }
+    check('★★⑧c″ 生产唯一 opt-in 调用方（routeRepoOpen + allowRealSpawn:true）在测试进程里同样被当场拦下（真 explorer 一次都没起）',
+      routeThrown !== null && /测试红线/u.test(String(routeThrown?.message)) && __openFolderRealSpawnCalls() === before,
+      routeThrown === null ? '真路由居然没抛错！' : String(routeThrown.message).slice(0, 140))
     __setOpenFolderSpawn(tripwire)
-    const injectedAgain = await openFolderVerified({ target: LANDED, bin: 'explorer.exe', launchWaitMs: 40 })
-    check('★⑧c A/B 对照：同一调用只把注入桩装回来 ⇒ 立刻走到启动点（spawn-throw，不再是 spawn-guard）⇒ 上一条的"被拒"确实来自 opt-in 缺失，不是别的原因',
-      injectedAgain.ok === false && injectedAgain.reason === 'spawn-throw' && __openFolderRealSpawnCalls() === before,
-      `${JSON.stringify(injectedAgain)} realSpawn=${__openFolderRealSpawnCalls()}`)
-    __setOpenFolderSpawn(null)
-    // 如实声明边界：**"给了 opt-in 之后真的起 explorer"这条路径本套故意不验证** —— 验证它就必须
-    // 真弹一个窗口，那正是我们要杜绝的。它的正确性由 ⑨ 的静态断言（opt-in 判定先于 defaultSpawn 回落、
-    // 且 routeRepoOpen 是唯一 opt-in 调用方）+ 生产实测共同保证。
+
+    // ⑧d **生产语义没被动过**（同一份代码、**非测试入口**）：另起一个普通 node 进程（入口不在 tests/
+    //    下 ⇒ 不是测试进程）跑生产默认路径 —— 无注入桩、无 opt-in ⇒ 必须是结构化拒绝 spawn-guard，
+    //    且真实 spawn 计数 0。⑧c 与 ⑧d 的拒绝理由**不同**，两条合起来才排除"看着安全、其实是别的原因"。
+    {
+      const componentsUrl = pathToFileURL(join(ROOT, '..', 'lib', 'server', 'routes', 'components.js')).href
+      const probeFile = join(HOME, 'prod-semantics-probe.mjs')
+      writeFileSync(probeFile, [
+        `const { openFolderVerified, __openFolderRealSpawnCalls, isTestProcess } = await import(${JSON.stringify(componentsUrl)})`,
+        `const out = await openFolderVerified({ target: ${JSON.stringify(LANDED)}, bin: 'explorer.exe', launchWaitMs: 40 })`,
+        `console.log(JSON.stringify({ testProcess: isTestProcess(), out, calls: __openFolderRealSpawnCalls() }))`,
+      ].join('\n'), 'utf8')
+      const r = spawnSync(process.execPath, [probeFile], {
+        encoding: 'utf8', windowsHide: true, timeout: 30000, cwd: HOME,
+        // 显式把这个子进程变回"生产调用方"的形状：测试进程会把 DSH_TEST_PROCESS=1 写进环境让子进程
+        // 继承保护，而这一条要验的正是**生产语义**（非测试入口 ⇒ opt-in 判定），所以这里清掉标记。
+        env: { ...process.env, DSH_TEST_PROCESS: '' },
+      })
+      let parsed = null
+      try { parsed = JSON.parse(String(r.stdout ?? '').trim().split('\n').pop()) } catch {}
+      check('★⑧d 非测试入口的**生产语义**没被动过：无 opt-in + 无注入桩 ⇒ spawn-guard 结构化拒绝，且 0 真 spawn',
+        r.status === 0 && parsed?.testProcess === false && parsed?.out?.ok === false && parsed.out.reason === 'spawn-guard' && parsed.calls === 0,
+        `exit=${r.status} stdout=${String(r.stdout ?? '').trim().slice(0, 180)} stderr=${String(r.stderr ?? '').trim().slice(0, 120)}`)
+    }
 
     // 计数器正控（桩自校验）：真的起一次 node -e ""（无窗口、非文件管理器），证明计数不是死的
     const selfCheck = await __openFolderSelfCheck()
@@ -357,6 +388,21 @@ try {
       !/injectedSpawn \?\? defaultSpawn/u.test(verified))
     check('★⑨ 生产唯一的 opt-in 调用方是 routeRepoOpen（它代表"用户点了按钮"）',
       /const result = await launch\(\{ target, bin: openFolderBin\(\), allowRealSpawn: true \}\)/u.test(src))
+    // ★★⑨ 第三次事故（2026-10-13）的根修必须**在源码里可见**（去掉了就红）：
+    check('★★⑨ 测试进程判定不依赖任何环境变量（只看自己进程的入口脚本，判据是本仓 tests/**）',
+      srcCode.includes('function isTestProcess(') && srcCode.includes('process.argv[1]')
+      && srcCode.includes('run-all') && srcCode.includes('test-'),
+      'isTestProcess 存在且按入口脚本判定')
+    check('★★⑨ 模块加载即装测试桩（不需要任何调用方配合），并把"测试进程"标记传给子进程（node -e / 临时脚本同样受保护）',
+      /if \(isTestProcess\(\)\) \{[\s\S]{0,400}?injectedSpawn = testProcessTripwire/u.test(srcCode)
+      && /process\.env\.DSH_TEST_PROCESS = '1'/u.test(srcCode)
+      && srcCode.includes("process.env.DSH_TEST_PROCESS === '1'"))
+    check('★★⑨ `__setOpenFolderSpawn(null)` 在测试进程里还原到的仍是测试桩（"还原生产实现"这条旧后门已堵）',
+      /injectedSpawn = typeof fn === 'function' \? fn : \(isTestProcess\(\) \? testProcessTripwire : null\)/u.test(srcCode))
+    check('★★⑨ 运行期断言先于"回落到真 spawn"（测试进程里"即将真 spawn"⇒ 当场抛错，不给任何回落机会）',
+      verified.includes('if (injectedNow === null && isTestProcess())')
+      && verified.indexOf('injectedNow === null && isTestProcess()') < verified.indexOf('const launch = injected ?? defaultSpawn'),
+      '断言先于 launch 回落')
     check('⑨ 失败一律走结构化错误 + 原因（存在 sendError 且带"打开文件夹失败"；两类事件都监听）',
       src.includes('打开文件夹失败') && /child\.on\('error'/u.test(src) && /child\.on\('exit'/u.test(src) && /child\.on\('error'[\s\S]*?child\.on\('exit'/u.test(src))
     check('⑨ 唯一进程创建点收在 defaultSpawn 里（非注释代码里 `spawn(` 只此一处 + 正控自检复用同一函数）',

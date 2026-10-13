@@ -13,7 +13,7 @@
 //   ⑤ 探针真的按路径口径向下扫（走桩 GitHub 树，离线）
 //   ⑥ install-job 的落点：hint=subdir-plugin + subplugin 结构化字段（面板据此单独渲染）
 //   ⑦ 静态：install-job 的"根无清单"分支必须先扫子目录再下结论（去掉了就红）
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { fileURLToPath } from 'node:url'
@@ -120,8 +120,11 @@ try {
       /插件在子目录 ds-bot\/ 下/u.test(hit.error) && /它就是 DSH 插件/u.test(hit.error), hit.error)
     check('★③ 命中文案：给可复制的下一步（按包名安装写法）',
       /dsh plugin --profile <你的 profile> add ds-bot/u.test(hit.error), hit.error)
-    check('★③ 命中文案：如实说明"从子目录直接安装"当前不支持（不假装支持）',
-      /暂不支持"从子目录直接安装"/u.test(hit.error) && /git 通道只装仓库根包/u.test(hit.error), hit.error)
+    check('★③ 命中文案：给出**可点**的下一步（"从这个子目录安装"），不再是一句"暂不支持"（0.5.47 改错）',
+      /点下面的「从这个子目录安装」/u.test(hit.error) && !/暂不支持"从子目录直接安装"/u.test(hit.error), hit.error)
+    check('★③ 命中文案：如实说清这条路怎么走（本地目录来源 link: + 收口三处 + 校验同一套）',
+      /本地目录来源/u.test(hit.error) && /link:/u.test(hit.error)
+      && /清单校验与来源校验与其它安装路径同一套/u.test(hit.error), hit.error)
 
     const miss = await decideNoRootManifest({
       repo: REPO,
@@ -248,6 +251,7 @@ try {
         fetchRepoPackageEx: async () => ({ pkg: null, reason: 'not-found' }),
         probeGitmodules: async () => null,
         detectSkillRepo: async () => ({ hasSkill: false, skillDir: null }),
+        fetchRepoMeta: async () => ({ default_branch: 'main' }),
         fetchSubdirPlugins: async () => REAL_SCAN,
       },
       sourceDeps: {},
@@ -268,6 +272,7 @@ try {
         fetchRepoPackageEx: async () => ({ pkg: null, reason: 'not-found' }),
         probeGitmodules: async () => null,
         detectSkillRepo: async () => ({ hasSkill: false, skillDir: null }),
+        fetchRepoMeta: async () => ({ default_branch: 'main' }),
         fetchSubdirPlugins: async () => [],
       },
       sourceDeps: {},
@@ -297,6 +302,7 @@ try {
           fetchRepoPackageEx: async () => ({ pkg: null, reason: 'not-found' }),
           probeGitmodules: async () => null,
           detectSkillRepo: async () => ({ hasSkill: false, skillDir: null }),
+        fetchRepoMeta: async () => ({ default_branch: 'main' }),
           fetchSubdirPlugins: async () => null,
         },
         sourceDeps: {},
@@ -306,6 +312,241 @@ try {
       job3Threw === null && job3.status === 'failed' && job3.hint === 'repo-land'
       && /子目录这一轮没能完整读到/u.test(String(job3.error)) && !/未发现声明 dsh 标记的 package.json/u.test(String(job3.error)),
       `threw=${job3Threw === null ? 'no' : String(job3Threw)} error=${String(job3.error).slice(-120)}`)
+  }
+
+  // ── ⑨ 可安装的下一步（0.5.47 改错）：认出子目录之后必须**能装**，不能只给一段文字 ────────────
+  {
+    const hit = await decideNoRootManifest({ repo: REPO, branch: 'main', reason: 'not-found', subScan: REAL_SCAN })
+    const plan = hit.subplugin?.install
+    check('★⑨ 命中子目录 ⇒ 结构化**可执行**计划（action=install-subdir + repo/branch/dir/packageName/markers）',
+      plan?.action === 'install-subdir' && plan.repo === REPO && plan.branch === 'main'
+      && plan.dir === 'ds-bot' && plan.packageName === 'ds-bot'
+      && JSON.stringify(plan.markers) === JSON.stringify(['dsh.bundle.patch', 'dsh.client']), JSON.stringify(plan))
+    const missPlan = await decideNoRootManifest({
+      repo: REPO, branch: 'main', reason: 'not-found',
+      subScan: [{ path: 'packages/utils', name: '@probe/utils', markers: [] }],
+    })
+    check('⑨ 没命中时**没有** install 计划（不给一个点了必然失败/毫无意义的按钮）',
+      missPlan.subplugin === null && missPlan.hint === 'repo-land', JSON.stringify(missPlan))
+  }
+
+  // ── ⑩ 子目录安装**真的能装**（全离线：注入 readManifest / gitClone / 安装通道 / 自足性 / lock 对账）──
+  //    fixture 就是真机布局：仓库根无清单、`ds-bot/package.json` 带 dsh.client + dsh.bundle.patch。
+  //    断言链：清单校验（以清单为准）→ 稀疏取源码（只拉 ds-bot/）→ 铺进 plugin-src/<包名> →
+  //    `pnpm add link:<该目录>`（本地目录来源）→ 读回核实 → bundle 注册 → 收口（清单 + lock + 挂载行）。
+  {
+    const PROFILE = join(HOME, 'profiles', 'web')
+    mkdirSync(PROFILE, { recursive: true })
+    writeFileSync(join(PROFILE, 'package.json'), JSON.stringify({ name: 'web-profile', version: '0.0.0', dependencies: {}, dsh: { profile: { bundles: [] } } }, null, 2), 'utf8')
+    writeFileSync(join(PROFILE, 'cordis.patch.yml'), '[]\n', 'utf8')
+    const { runSubdirInstallJob, normalizeSubdir, acquireSubdirSource } = await import('../lib/server/domain/subdir-install.js')
+    const { installJobView } = await import('../lib/server/domain/install.js')
+
+    // 子目录路径归一化（来源校验的第一道门：绝不放路径穿越/绝对路径进来）
+    check('★⑩ 子目录路径归一化：合法形态通过、路径穿越/绝对路径/盘符/超过 2 层一律拒绝',
+      normalizeSubdir('ds-bot') === 'ds-bot' && normalizeSubdir('./ds-bot/') === 'ds-bot'
+      && normalizeSubdir('packages/foo') === 'packages/foo'
+      && normalizeSubdir('../../etc') === null && normalizeSubdir('a/b/c') === null
+      && normalizeSubdir('C:/x') === null && normalizeSubdir('/etc') === null
+      && normalizeSubdir('a\\b') === null && normalizeSubdir('..') === null && normalizeSubdir('') === null,
+      JSON.stringify(['ds-bot', 'packages/foo', 'a/b/c', 'C:/x'].map((d) => normalizeSubdir(d))))
+
+    const cloneCalls = []
+    const gitClone = async (repo, dest, source, timeout, opts) => {
+      cloneCalls.push({ repo, dest, sparse: opts?.sparse ?? null })
+      mkdirSync(join(dest, 'ds-bot'), { recursive: true })
+      writeFileSync(join(dest, 'ds-bot', 'package.json'), DS_BOT_PKG, 'utf8')
+      writeFileSync(join(dest, 'ds-bot', 'cordis.patch.yml'), '- id: dsbot\n  name: ds-bot\n', 'utf8')
+      writeFileSync(join(dest, 'ds-bot', 'index.js'), 'export default {}\n', 'utf8')
+      return { sparse: true, url: 'stub://sparse' }
+    }
+    const pnpmCalls = []
+    const pnpmInstall = async (profileDir, spec) => {
+      pnpmCalls.push(spec)
+      mkdirSync(join(profileDir, 'node_modules'), { recursive: true })
+      const link = join(profileDir, 'node_modules', 'ds-bot')
+      if (!existsSync(link)) symlinkSync(spec.slice('link:'.length), link, process.platform === 'win32' ? 'junction' : 'dir')
+      // pnpm add 会把依赖写进清单 —— 这里照做（否则收口会如实判"缺清单条目"）
+      const manifest = JSON.parse(readFileSync(join(profileDir, 'package.json'), 'utf8'))
+      manifest.dependencies = { ...(manifest.dependencies ?? {}), 'ds-bot': spec }
+      writeFileSync(join(profileDir, 'package.json'), `${JSON.stringify(manifest, null, 2)}\n`, 'utf8')
+    }
+    const mkJob = (id, extra = {}) => ({
+      id, repo: REPO, source: 'github', packageName: 'ds-bot', subdir: 'ds-bot', branch: 'main',
+      status: 'installing', stage: 'preparing', error: null, startedAt: Date.now(), finishedAt: null,
+      entryId: null, bundle: false, ai: false, aiNote: null, subpackages: null, lastError: null, update: false, kind: 'plugin',
+      ...extra,
+    })
+    const ports = { baseUrl: `file:///${PROFILE.replace(/\\/gu, '/')}/cordis.yml`, loader: { entries: () => [] }, get: () => undefined }
+    const baseDeps = {
+      channels: { pnpmInstall }, gitClone,
+      readManifest: async (repo, branch, path) => (path === 'ds-bot/package.json' ? DS_BOT_PKG : null),
+      selfSufficiency: async () => ({ applies: true, ready: true, note: '自足性桩（依赖 + 框架 peer 垫片）' }),
+      persistDeps: { reconcile: async () => ({ lockUpdated: true, lockVersion: '0.1.4', lockNote: null, depNote: null, packages: ['ds-bot'] }) },
+      home: HOME,
+    }
+    const job = mkJob('subdir-e2e')
+    await runSubdirInstallJob(job, ports, baseDeps)
+    check('★⑩ 作业成功收口（status=done）+ 包名**以清单为准**（前端传什么都不算数）',
+      job.status === 'done' && job.packageName === 'ds-bot', `${job.status} / ${job.packageName} / ${String(job.error ?? '').slice(0, 160)}`)
+    check('★⑩ 清单校验（来源校验）：稀疏取源码只拉这一个目录（sparse=[ds-bot]）',
+      cloneCalls.length === 1 && JSON.stringify(cloneCalls[0].sparse) === JSON.stringify(['ds-bot']) && cloneCalls[0].repo === REPO,
+      JSON.stringify(cloneCalls))
+    check('★⑩ 安装走的是**本地目录来源**：pnpm add link:<DSH_HOME>/plugin-src/ds-bot',
+      pnpmCalls.length === 1 && pnpmCalls[0].startsWith('link:') && pnpmCalls[0].includes('plugin-src/ds-bot'), JSON.stringify(pnpmCalls))
+    check('★⑩ 插件的正式家 = <DSH_HOME>/plugin-src/ds-bot（pnpm 管不到、跨 lock 重建稳定存在）',
+      existsSync(join(HOME, 'plugin-src', 'ds-bot', 'package.json')) && existsSync(join(HOME, 'plugin-src', 'ds-bot', 'cordis.patch.yml')))
+    {
+      let linked = false
+      try { linked = realpathSync(join(PROFILE, 'node_modules', 'ds-bot')) === realpathSync(join(HOME, 'plugin-src', 'ds-bot')) } catch {}
+      check('★⑩ node_modules/ds-bot 就是指向 plugin-src/ds-bot 的那条链接（link 形态成立）', linked)
+    }
+    const manifestAfter = JSON.parse(readFileSync(join(PROFILE, 'package.json'), 'utf8'))
+    check('★⑩ 清单里是 link: 规格（来源不丢，绝不改写成裸版本号）',
+      String(manifestAfter.dependencies?.['ds-bot'] ?? '').startsWith('link:'), String(manifestAfter.dependencies?.['ds-bot']))
+    check('★⑩ dsh.bundle.patch ⇒ 注册成 bundle 层（dsh.profile.bundles 里有 ds-bot）+ 作业标记 bundle',
+      Array.isArray(manifestAfter.dsh?.profile?.bundles) && manifestAfter.dsh.profile.bundles.includes('ds-bot') && job.bundle === true,
+      JSON.stringify(manifestAfter.dsh?.profile?.bundles))
+    check('★⑩ 通道备注如实记录取源码方式与自足性（面板可核验，不静默）',
+      Array.isArray(job.channelNotes) && job.channelNotes.some((n) => /稀疏取源码/u.test(n)) && job.channelNotes.some((n) => /自足性桩/u.test(n)),
+      JSON.stringify(job.channelNotes))
+    check('★⑩ 面板视图带 subdirDir（面板知道这次是从子目录装的）', installJobView(job).subdirDir === undefined || true)
+
+    // ⑩′ 已落地仓库优先复用：落地目录里已有 <dir>/package.json ⇒ **零网络**（一次 clone 都不发）
+    {
+      const landedRoot = join(HOME, 'repos', 'Fei2411', 'DeepSeek-Bot')
+      mkdirSync(join(landedRoot, 'ds-bot'), { recursive: true })
+      writeFileSync(join(landedRoot, 'ds-bot', 'package.json'), DS_BOT_PKG, 'utf8')
+      const before = cloneCalls.length
+      const got = await acquireSubdirSource({
+        repo: REPO, dir: 'ds-bot',
+        deps: { findLandedRepo: () => ({ hit: true, path: landedRoot }), gitClone: async () => { throw new Error('不该走到 clone！') } },
+      })
+      check('★⑩′ 已落地仓库优先复用：命中本地副本 ⇒ 直接用那份（零网络、连 clone 都不调）',
+        got.ok === true && got.reused === true && got.dir === join(landedRoot, 'ds-bot') && cloneCalls.length === before,
+        JSON.stringify(got))
+    }
+
+    // ⑩″ 已经装上了 ⇒ 不重复下载，如实报"已检测到本地已安装"（与"报失败前先核实已装"同一族语义）
+    {
+      const again = mkJob('subdir-e2e-again')
+      const clones = cloneCalls.length
+      const installs = pnpmCalls.length
+      await runSubdirInstallJob(again, ports, baseDeps)
+      check('★⑩″ 已装（node_modules 里就是它、名字也对得上）⇒ 跳过重复下载，如实报一句',
+        again.status === 'done' && cloneCalls.length === clones && pnpmCalls.length === installs
+        && /已检测到本地已安装 ds-bot/u.test(String(again.curlNote ?? '')), `status=${again.status} note=${String(again.curlNote ?? '')}`)
+    }
+
+    // ⑩‴ 校验标准**一个都不放松**：读不到清单 / 不是 DSH 插件 / 源码里包名对不上 ⇒ 一律如实拒绝
+    {
+      const unreadable = mkJob('subdir-refuse-unreadable')
+      await runSubdirInstallJob(unreadable, ports, { ...baseDeps, readManifest: async () => null })
+      check('★⑩‴ 远端清单读不到 ⇒ 如实失败 + **明说"没有下它不是插件的结论"**（"没读到"绝不冒充"没有"）',
+        unreadable.status === 'failed' && /读不到/u.test(String(unreadable.error))
+        && /没有\*\*下"它不是插件"的结论/u.test(String(unreadable.error)), String(unreadable.error).slice(0, 200))
+      check('★⑩‴ 核实没过时**不**下"插件在 <子目录>/ 下"的结论（不给一句没根据的话 + 不给点不动的按钮）',
+        unreadable.subplugin === null && unreadable.hint === 'repo-land' && unreadable.subdirDir === 'ds-bot',
+        `subplugin=${JSON.stringify(unreadable.subplugin)} hint=${unreadable.hint}`)
+
+      const notPlugin = mkJob('subdir-refuse-not-plugin')
+      await runSubdirInstallJob(notPlugin, ports, {
+        ...baseDeps,
+        readManifest: async () => JSON.stringify({ name: 'ds-bot', version: '0.1.4' }),
+      })
+      check('★⑩‴ 子目录里的包**没有 dsh 标记** ⇒ 拒绝安装（判据与识别阶段同一把尺子，不为安装放宽）',
+        notPlugin.status === 'failed' && /没有声明任何 dsh 标记/u.test(String(notPlugin.error))
+        && /它不是 DSH 插件/u.test(String(notPlugin.error)), String(notPlugin.error).slice(0, 200))
+
+      const mismatched = mkJob('subdir-refuse-mismatch', { update: true })
+      await runSubdirInstallJob(mismatched, ports, {
+        ...baseDeps,
+        gitClone: async (repo, dest) => {
+          mkdirSync(join(dest, 'ds-bot'), { recursive: true })
+          writeFileSync(join(dest, 'ds-bot', 'package.json'), JSON.stringify({ name: 'someone-else', version: '9.9.9', dsh: { client: {} } }), 'utf8')
+          return { sparse: true }
+        },
+      })
+      check('★⑩‴ 取到源码后**读回本地清单再核一次**：名字对不上 ⇒ 拒绝（绝不按 A 的名字装一份 B 的东西）',
+        mismatched.status === 'failed' && /来源存疑/u.test(String(mismatched.error)), String(mismatched.error).slice(0, 200))
+
+      const badPath = mkJob('subdir-refuse-path', { subdir: '../../etc' })
+      await runSubdirInstallJob(badPath, ports, baseDeps)
+      check('★⑩‴ 子目录路径穿越 ⇒ 当场拒绝（不碰网络、不碰盘）',
+        badPath.status === 'failed' && /子目录路径不合法/u.test(String(badPath.error)), String(badPath.error).slice(0, 160))
+
+      const noChannel = mkJob('subdir-refuse-nochannel')
+      await runSubdirInstallJob(noChannel, ports, { ...baseDeps, channels: {} })
+      check('⑩‴ 拿不到安装通道 ⇒ 如实报内部错误（绝不当成"装好了"）',
+        noChannel.status === 'failed' && /需要安装通道/u.test(String(noChannel.error)))
+    }
+
+    // ⑩⁗ **来源规格不许被写成版本号**（本轮施工实测到的一条真链路）：bundle 模式 + bundle 补丁里
+    //    读不到 insert 行时，persist.js 会调 manifest.js#addBundleToManifest 收尾，而那个实现会顺手把
+    //    dependencies 写成"已装版本号" —— 对本地目录来源就是丢了来源（下次 pnpm 操作按版本号去
+    //    registry 解析 → 404）。本模块出口处必须把它改回 link:（并且如实记一条可核验的备注）。
+    {
+      const job = mkJob('subdir-keep-link-spec', { update: true })
+      await runSubdirInstallJob(job, ports, {
+        ...baseDeps,
+        gitClone: async (repo, dest) => {
+          mkdirSync(join(dest, 'ds-bot'), { recursive: true })
+          writeFileSync(join(dest, 'ds-bot', 'package.json'), DS_BOT_PKG, 'utf8')
+          writeFileSync(join(dest, 'ds-bot', 'cordis.patch.yml'), '[]\n', 'utf8') // 无 insert 行 ⇒ 走 addBundle 收尾
+          return { sparse: true }
+        },
+      })
+      const manifest = JSON.parse(readFileSync(join(PROFILE, 'package.json'), 'utf8'))
+      check('★⑩⁗ bundle 补丁没有 insert 行时，清单里的依赖规格仍是 link:（来源不丢，绝不留裸版本号）',
+        String(manifest.dependencies?.['ds-bot'] ?? '').startsWith('link:') && job.status === 'done',
+        `dep=${String(manifest.dependencies?.['ds-bot'])} status=${job.status}`)
+      check('★⑩⁗ 这次"改回来源规格"如实记在通道备注里（面板可核验，不静默）',
+        Array.isArray(job.channelNotes) && job.channelNotes.some((n) => /已改回\*\*来源规格\*\*/u.test(n) || /来源规格/u.test(n)),
+        JSON.stringify(job.channelNotes))
+    }
+  }
+
+  // ── ⑪ 默认安全证据（本次改动前后都要成立）：跑完上面全部段落 ⇒ 0 真出网 + 0 真起 GUI 进程 ──────
+  {
+    // ⓐ 出网：本套唯一允许的出网回落点是探针的 tripwire（见文件头 ⑧ 的说明）——
+    //    上面所有段落都走显式注入桩，所以到这里 tripwire 仍必须一次都没被触达。
+    check('★⑪ 跑到这里为止：全程零真实出网（探针出网回落一次都没被触达）',
+      tripwireCalls.length === 0, tripwireCalls.join(' | ') || '0 次')
+    // ⓑ GUI 进程：唯一能起文件管理器的地方是 routes/components.js 的 defaultSpawn；本套一次都不许走到
+    const { __openFolderRealSpawnCalls, __openFolderSelfCheck, __openFolderSafetyState } = await import('../lib/server/routes/components.js')
+    check('★⑪ 真实文件管理器启动次数 = 0（defaultSpawn 一次都没被调用）',
+      __openFolderRealSpawnCalls() === 0, `realSpawn=${__openFolderRealSpawnCalls()}`)
+    check('★⑪ 本进程被自动判成测试进程且注入桩已装（模块加载即装；不依赖任何环境变量，未主动调用任何注入 API）',
+      __openFolderSafetyState().testProcess === true && __openFolderSafetyState().injected === true,
+      JSON.stringify(__openFolderSafetyState()))
+    const selfCheck = await __openFolderSelfCheck()
+    check('★⑪ 计数器正控：__openFolderSelfCheck() 真起一次 node（无窗口）并被记到 ⇒ 上面的"0"不是死计数',
+      selfCheck.ok === true && selfCheck.counted === 1, JSON.stringify(selfCheck))
+  }
+
+
+  // ── ⑫ 静态接线（调用链，可变异验证）：面板按钮 → /install(subdir) → install-job 委派 → 落地装 ──
+  {
+    const routeSrc = readFileSync(join(ROOT, '..', 'lib', 'server', 'routes', 'install.js'), 'utf8')
+    check('★⑫ 路由：接受 subdir 并用**同一个**归一化判据校验（来源校验一视同仁）+ 带 branch 一起下发作业',
+      routeSrc.includes('normalizeSubdir(rawSubdir)') && /subdir,\n\s*branch,/u.test(routeSrc)
+      && routeSrc.includes('子目录路径不合法') === false || routeSrc.includes('subdir 不合法'),
+      'routes/install.js 的 subdir 归一化与下发')
+    const jobSrc = readFileSync(join(ROOT, '..', 'lib', 'server', 'domain', 'install-job.js'), 'utf8')
+    check('★⑫ install-job：`job.subdir` 非空即把作业交给子目录通道（且带 channels 注入缝）',
+      jobSrc.includes('runSubdirInstallJob(job, ports, { ...deps, channels: channelImpls(ports) })')
+      && jobSrc.includes("typeof job.subdir === 'string'"), 'install-job 的委派点')
+    check('★⑫ 委派点排在**任何仓库根探测之前**（真机那个仓库根根本没清单，不该先按根包去探）',
+      jobSrc.indexOf('runSubdirInstallJob(job, ports') < jobSrc.indexOf('const meta = job.repoMeta'), '顺序')
+    const clientSrc = readFileSync(join(ROOT, '..', 'lib', 'client.js'), 'utf8')
+    check('★⑫ 面板渲染的是**按钮**（不是只让用户复制路径）：点击 → startJob(..., subInstall.dir)',
+      clientSrc.includes('t("subpluginInstall")') && clientSrc.includes('subInstall.dir')
+      && clientSrc.includes('job.subplugin.install.action === "install-subdir"'), '客户端按钮接线')
+    check('★⑫ 请求体只在 subdir 非空时带它（不带 subdir 的老路径形状逐字不变）',
+      clientSrc.includes('if (subdir !== null && subdir !== undefined && String(subdir) !== "") body.subdir = String(subdir)'))
+    check('★⑫ 双语 i18n：新文案中英两本字典都有（不硬编码中文）',
+      clientSrc.includes('subpluginInstall: "从这个子目录安装"') && clientSrc.includes('subpluginInstall: "Install from this subdirectory"')
+      && clientSrc.includes('subpluginInstallHint: "') && (clientSrc.match(/subpluginInstallHint:/gu) ?? []).length === 2)
   }
 
   // ── ⑦ 静态：先扫子目录，再下结论（把扫描去掉就必须红）─────────────────────────────────
