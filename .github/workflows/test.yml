@@ -414,6 +414,21 @@ jobs:
           # 全离线（私有 DSH_HOME + 夹具 profile/盘上包），真调路由 /install-status 断言字段真的到了面板。
           node tests/test-failure-presence.mjs
 
+          # ── 0.5.47 接线（2026-10-13，用户复核上一批"宣称做了实则没接上"后重做）────────────────
+          # 【抓清单多通道】上一批的真实缺陷：三个新模块（landed-source / registry-manifest /
+          #   presence-check）被 import **0 次**，且 market.js 调 rawTextFetch(repo, branch, 'package.json')
+          #   **一个 deps 都没传** ⇒ http.js 的注入缝不可达，功能一样都没接上。
+          #   本套从"接线"验起：① 本地落地命中 ⇒ 本地优先命中（六条网络通道全挂住也照样立刻返回）
+          #   ② npm registry 按 **repository 字段**匹配仓库引用（不靠猜名）③ 通道身份 + 逐条失败原因
+          #   ④ 首通道挂住 ⇒ 自动切下一通道并成功（对照：全挂 ⇒ 预算兜底）⑤ 端到端走本机 HTTP 桩
+          #   ⑥ 调用链证据：install-job → bindMarketDeps/probeRootManifest → probes.fetchRepoPackageEx
+          #      （deps 绑在袋子上：套装判定那次 2 参调用也带上，否则额外通道整条被绕过）
+          #   ★ 守卫有牙：出网/起进程收口到 infra/egress.js 的**可注入单点**，本套注入替身 + 抓手
+          #   （漏注入当场抛）⇒ 断言"0 次真实出网、0 次真实 spawn"（计数来自注入点，不是 globalThis 空标志），
+          #   并有计数器正控（真起一次 node -e "" / 真记一笔出网）＋**变异验证**（把本地联动/回退通道/
+          #   逐条原因/deps 绑定/通道报告各删一处，真的跑一遍必须各自红，跑完逐字节还原）。
+          node tests/test-repo-manifest-channels.mjs
+
       # 更新候选判据（0.5.37 改错）：真机「反向更新/降级按钮」的回归钉子 —— 纯函数全离线。
       #   · installed 0.2.0-rc.2 × 镜像 latest 0.1.1-rc.1（更低）⇒ 必须 null（不许提示降级）
       #   · 预发布序 0.1.7-rc.2 → 0.2.0-rc.2；正式版 > 同号预发布；相同/垃圾串 ⇒ null
@@ -427,6 +442,8 @@ jobs:
       - name: Real install/uninstall smoke (temp DSH_HOME)
         env:
           DSH_TEST_SKIP_NETWORK: ''
+          # 0.5.47：这一组也是"真要出网"的冒烟 ⇒ 显式打开 egress 的 opt-in（默认是拦下的）
+          DSH_EGRESS_ALLOW_REAL: '1'
         run: |
           node tests/test-install-smoke.mjs
           # 0.5.20：真 registry 那条路（真探测 npmmirror 报 404 → 清单/ lock 写 link: → 随后
@@ -447,6 +464,9 @@ jobs:
       - name: Real channel smoke (ghproxy / npmmirror)
         env:
           DSH_TEST_SKIP_NETWORK: ''
+          # 0.5.47：出网收口到 infra/egress.js，测试进程默认拦下未注入替身的真实出网；
+          # 这一组**本来就是要真出网**的冒烟 ⇒ 显式 opt-in（其余步骤保持默认）。
+          DSH_EGRESS_ALLOW_REAL: '1'
         run: |
           node tests/test-real-archive.mjs
           node tests/test-real-npmname-hint.mjs

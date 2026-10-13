@@ -14,11 +14,14 @@ const REAL = all.filter((f) => /test-real-|test-install-smoke/u.test(f))
 // 0.5.20：非 registry 包写回形态那套要在**真 registry** 下再跑一次（CI 也这么分两步：Unit 硬门槛 + 真装冒烟）
 const NETONLY = all.filter((f) => /test-dep-pin/u.test(f))
 
+// ★ 0.5.47：出网收口到 infra/egress.js（测试进程默认**拦下**未注入替身的真实出网）。
+//   "real smoke / 真 registry"这两组**本来就是要真出网**的 ⇒ 在这两组里显式打开 opt-in
+//   （`DSH_EGRESS_ALLOW_REAL=1`）；其余分组保持默认 ⇒ 漏注入当场红，而不是悄悄发出去。
 const suites = [
   ['unit（DSH_TEST_SKIP_NETWORK=1）', UNIT, { DSH_TEST_SKIP_NETWORK: '1' }],
-  ['real smoke（真网络）', REAL, { DSH_TEST_SKIP_NETWORK: '' }],
+  ['real smoke（真网络）', REAL, { DSH_TEST_SKIP_NETWORK: '', DSH_EGRESS_ALLOW_REAL: '1' }],
   ['env-dependent（本机有 profile 就真跑）', ENV, { DSH_TEST_SKIP_NETWORK: '1' }],
-  ['真 registry 端到端（不带 SKIP_NETWORK）', NETONLY, { DSH_TEST_SKIP_NETWORK: '' }],
+  ['真 registry 端到端（不带 SKIP_NETWORK）', NETONLY, { DSH_TEST_SKIP_NETWORK: '', DSH_EGRESS_ALLOW_REAL: '1' }],
 ]
 
 let failed = 0
