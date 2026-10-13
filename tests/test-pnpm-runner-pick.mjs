@@ -215,15 +215,25 @@ check('① 夹具里既有候选顺序不变（node-corepack,desktop-pnpm-mjs,cm
     const first = pnpmRunnersFor(liveProfile)[0]?.kind
     check('⑦ 真机只读判据：exec.pnpmRunnersFor() 与选择器同结论（唯一判据承担者）',
       first === picked[0]?.kind, `pnpmRunnersFor=${String(first)} select=${String(picked[0]?.kind)}`)
-    // 强判据只在"这个进程真能看到桌面端运行时"时成立：Electron 宿主有 process.resourcesPath，
-    // 普通 node 进程看不到（这正是本机 CLI 场景）。看不到就**响亮 SKIP** —— 但那时必须证明"不倒退"。
-    const desktopVisible = liveRunners.some((r) => r.kind === 'desktop-pnpm-mjs')
-    if (desktopVisible) {
-      check('⑦ 真机只读判据：选出的首选 runner 的版本 === profile 声明的版本（真的匹配，不是碰巧）',
-        runnerPnpmVersion(picked[0], { profileDir: liveProfile }) === declared, `${picked[0]?.kind} :: ${String(runnerPnpmVersion(picked[0], { profileDir: liveProfile }))} vs ${declared}`)
+    // 强判据的适用面（0.5.48 扩充）：以前只有 Electron 宿主（有 process.resourcesPath）才"看得见"
+    // 本机那份运行时 pnpm；**现在普通 node 进程也看得见**（新增候选 `runtime-pnpm-mjs`，
+    // 落在 <dshHome>/dsh-runtimes/<runtime>/dependencies/pnpm），这正是缺陷②要修的东西。
+    // 所以判据不再按"看没看见桌面端"分支，而是按**该分支下真正的不变量**：
+    //   · 候选里**有**版本与声明一致者 ⇒ 它必须是首选（提到最前就是本条改动的全部目的）；
+    //   · 候选里**没有**任何能对上声明版本者 ⇒ 顺序必须逐项不变（不倒退、不乱搬）。
+    const matches = liveRunners.filter((r) => runnerPnpmVersion(r, { profileDir: liveProfile }) === declared)
+    if (matches.length > 0) {
+      check('⑦ 真机只读判据：候选里有版本匹配者 ⇒ 它必须是首选（真的匹配，不是碰巧）',
+        picked[0] === matches[0] && runnerPnpmVersion(picked[0], { profileDir: liveProfile }) === declared,
+        `${picked[0]?.kind} :: ${String(runnerPnpmVersion(picked[0], { profileDir: liveProfile }))} vs ${declared}`)
+      check('⑦ 真机只读判据：匹配者本来就在首位时**不作无谓搬家**（顺序 = 既有顺序）',
+        matches[0] === liveRunners[0] ? kinds(picked) === before : true, `${before} ⇒ ${kinds(picked)}`)
+      check('⑦ 真机只读判据：其余候选相对顺序不变（只是匹配者被提到最前）',
+        kinds(picked) === [matches[0], ...liveRunners.filter((r) => r !== matches[0])].map((r) => r.kind).join(','),
+        `${before} ⇒ ${kinds(picked)}`)
     } else {
-      skips('⑦ 真机强判据（选中的必须版本匹配）', '本进程看不到桌面端运行时候选（普通 node 无 process.resourcesPath，非 Electron 宿主）→ 由探针脚本显式给出 resourcesPath 验证')
-      check('⑦ 真机只读判据（看不到桌面端运行时的场合）：顺序逐项不变 = 不倒退',
+      skips('⑦ 真机强判据（选中的必须版本匹配）', '本机候选里没有与声明版本一致者（桌面端运行时不可见）→ 由探针脚本显式给出 resourcesPath 验证')
+      check('⑦ 真机只读判据（没有匹配者的场合）：顺序逐项不变 = 不倒退',
         kinds(picked) === before && picked === liveRunners, `${before} ⇒ ${kinds(picked)}`)
     }
   }

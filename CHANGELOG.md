@@ -2,6 +2,70 @@
 
 All notable changes to dsh-plugin-hub.
 
+## v0.5.48 — 四个真缺陷：供应链闸挂住 / pnpm 选错版本 / 子目录插件不命中落地副本 / exports 子路径假阳性（改错，2026-10-13）
+
+四个缺陷都是**装 `ds-bot` 时实测撞出来的**，本轮逐条修 + 逐条给了可失败的断言与变异验证。
+
+### ① pnpm 供应链闸弹交互提问 ⇒ 无 TTY **永久挂住**（最严重）
+
+- **现象**：`ERR_PNPM_MINIMUM_RELEASE_AGE_VIOLATION`（当时 0.5.47 太新）⇒ pnpm **等人回答** ⇒
+  不抛错、不超时，**永久挂住**（实测两次分别挂到 90s / 180s 被杀）。
+- **根因（pnpm 11.7.0 只读取证，`dist/pnpm.mjs`）**：
+  `L194277 const inCi = opts3.ci ?? isCI`；`L194278 const canPrompt = !inCi && Boolean(process.stdin.isTTY)`；
+  可交互时走 `L194305 await promptForApproval()`（`L194330` 是 prompt 库读 stdin 到 EOF）——
+  桌面壳给的是**永不关闭的管道** ⇒ 挂住。原来只注入了 `CI=true`，**不是** pnpm 读的那一位。
+- **修法**：① 非交互双保险 —— env 补 `npm_config_ci=true`，argv 补官方开关 `--config.ci=true`
+  （**不是**绕过闸门的手段，闸门该拦仍拦）；② 命中闸门 ⇒ **快速如实失败**，错误里写清
+  **哪个包@版本 · 命中哪条闸 · 怎么加白名单**（`minimumReleaseAgeExclude` 的确切写法）；
+  ③ **不重试、不绕过**（本仓绝不使用忽略锁文件校验一类手段）。
+- **为什么 `minimumReleaseAgeExclude` 没生效（结论）**：不是字段位置/文件名/语义错 ——
+  该字段在 profile 的 `pnpm-workspace.yaml` 里**是正确的**，但 pnpm 的匹配是
+  **逐版本**的（`isExcluded` → `exactVersions.includes(version)`，`parseVersionPolicyRule` 只认
+  `包名@精确版本`），而清单停在 `0.5.24`、被拦的是 `0.5.47` ⇒ 不匹配 ⇒ 闸门命中。
+  即**每发一个新版本都要再加一行**；所以修法不能只靠白名单，必须让"命中即快速失败并告诉用户加哪一行"。
+
+### ② pnpm runner 选错版本（corepack 11.21.0 vs profile 声明的 11.7.0）
+
+- **根因**：`resolvePnpmRunners()` 原来只有两条"找本机那份 pnpm"的线索 —— Electron 的
+  `process.resourcesPath` 与 PATH 里的 `runtime\pnpm\bin` / `runtime\bin`，**两条都只在桌面端宿主成立**；
+  而安装动作跑在**普通 node 服务进程**里 ⇒ 两条都没有 ⇒ 落到 `node-corepack`
+  ⇒ 跑 corepack 自己那版（本机 11.21.0）⇒ 与建出该 node_modules 的那版（11.7.0）错配
+  ⇒ Windows 上 rename 覆盖已存在目录 ⇒ `ERR_PNPM_EPERM`。
+- **修法**：① 新增候选 `runtime-pnpm-mjs`，从 `<dshHome>/dsh-runtimes/<runtime>/dependencies/pnpm/bin/pnpm.mjs`
+  发现本机那份（**普通 node 进程也找得到**）；② `runPnpmAdd` 两处调用**显式**传 `profileDir`，
+  不再依赖 `execOpts.cwd` 的隐式兜底。
+- **正控/负控**：声明 11.7.0 ⇒ 选中 11.7.0；声明 11.21.0 ⇒ 选中 corepack；找不到 ⇒ 退回既有顺序，
+  **不新增"拒绝执行"分支**。
+
+### ③ `findLandedRepo` 对"子目录插件"永不命中
+
+- **根因**：判据要求**仓库根**有 `package.json`，而 DeepSeek-Bot 这类仓库根目录**故意**没有清单
+  （插件在 `<repo>/<subdir>/`）⇒ 永远 `hit:false` ⇒ 本地已落地还是去网上重拉
+  ⇒ "已落地优先 ⇒ 零网络"对它最该服务的场景**结构性失效**。
+- **修法**：判据改为「根有清单 **或** 目标子目录有清单」，并把 `subdir` 从 `subdir-install.js`
+  真正接线传入；不传 `subdir` 时**行为与旧版逐项相同**（不扩大命中面）。
+- **断言**：子目录 + 已落地 ⇒ `reused=true` 且 **0 新网络请求**（clone 调用次数 = 0）；
+  正控：**没有**落地副本时才允许走网络（证明"0 网络"不是恒真）。
+
+### ④ `verifyInstalledEntry` 对 `exports` 子路径**假阳性**
+
+- **根因**：`resolvePackageJson` 把引用名拼成 `ds-bot/web-search/package.json`，而 ds-bot 的 `exports`
+  不含该子路径 ⇒ `ERR_PACKAGE_PATH_NOT_EXPORTED` ⇒ 退物理路径也不存在 ⇒ `null`
+  ⇒ 误报"缺模块会崩/会被自动禁用"。但 `require.resolve('ds-bot/web-search')` **是成功的**。
+- **修法**：解析改用**真实解析语义**（先 `require.resolve(<引用名>)`，再从结果向上找最近的
+  `package.json`）；**并且**子路径引用不再退到"按包名找清单"的 fallback
+  （否则 `@scope/tool/nope` 会命中包根清单 ⇒ 等于把校验放松成一律放行）。
+- **负控**：真不存在的子路径 / 不存在的包 ⇒ **仍然返回 null**（校验没有被放松）。
+
+### 测试
+
+- 新增 `tests/test-release-age-gate.mjs`（27）· `tests/test-pnpm-runtime-discovery.mjs`（10）·
+  `tests/test-subpath-resolve.mjs`（17）；扩展 `test-landed-reuse.mjs`（+子目录与 0 网络断言）。
+- **变异验证**：逐条去掉修复（非交互开关 / 闸门识别 / 显式 profileDir / 运行时候选 / 子目录判据 /
+  真解析语义）⇒ 对应套件**各必须红**，随后逐字节还原（SHA-256 校验一致）。
+- 全离线：测试不出网、不起 GUI 进程、不给 ESM 命名空间打补丁；出网/spawn 走可注入单点，
+  并复用 `tests/probe-no-spawn.cjs` 探针（跑全量时预载，记「文件管理器启动 = 0」）。
+
 ## v0.5.44 — 控制台不再「手动拉起」：重启/重载统一走官方路径（改错，2026-10-10）
 
 > **用户红线原话**：「桌面端重启必须走官方的那种不报错重启，如果你走手动拉起之类的等等很可能会

@@ -61,8 +61,16 @@ function check(name, ok, info = '') {
   const bare = pnpmAddArgs('left-pad', undefined)
   check('pnpmAddArgs：registry 为空时不拼 `--registry undefined`（旧实现的垃圾参数）',
     !bare.includes('--registry') && !bare.join(' ').includes('undefined'), bare.join(' '))
-  check('pnpmAddArgs：fetchFlags=false 时只留原参数（降级用）',
-    pnpmAddArgs('left-pad', 'https://r', { fetchFlags: false }).join(' ') === 'add left-pad --registry https://r')
+  // 0.5.48：降级（fetchFlags=false）时**确实**只去掉 fetch 加固选项，
+  // 但 `--config.ci=true`（非交互位）**必须保留** —— 降级把 ci 位一起丢了的话，
+  // 供应链闸门命中的那条路又会退回"弹交互提问 ⇒ 无 TTY 永久挂住"。
+  const downgraded = pnpmAddArgs('left-pad', 'https://r', { fetchFlags: false })
+  check('pnpmAddArgs：fetchFlags=false 时去掉 fetch 加固选项（降级用）',
+    !downgraded.some((a) => String(a).startsWith('--fetch-timeout'))
+    && !downgraded.some((a) => String(a).startsWith('--fetch-retries')),
+    downgraded.join(' '))
+  check('pnpmAddArgs：降级后仍保留 --config.ci=true（非交互位不许因降级丢失）',
+    downgraded.join(' ') === 'add left-pad --registry https://r --config.ci=true', downgraded.join(' '))
   check('unknownPnpmOption：认 pnpm 的真实报错文案（两代都要认）',
     unknownPnpmOption("[ERROR] Unknown options: 'fetch-timeout', 'fetch-retries'") === true
     // pnpm 12（corepack 默认 12.6.0）：clap 风格文案 —— 2026-09-26 就是漏了这条，CI 真装真卸冒烟红

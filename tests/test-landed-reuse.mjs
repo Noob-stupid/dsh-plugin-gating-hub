@@ -94,6 +94,84 @@ const noPkg = [{ owner: 'probe-org', name: 'plugin', repo: 'probe-org/plugin', p
   disposeDir(ROOT)
 }
 
+// ── ⑤ 0.5.48：**子目录插件**（仓库根故意没有 package.json）也要能命中已落地副本 ────
+// 缺陷③现场：DeepSeek-Bot 这类仓库，真正的插件在 `<repo>/<subdir>/`，**根目录没有清单**。
+// 旧判据要求仓库根有 package.json ⇒ 这类仓库永远 hit:false ⇒ 本地明明已经落地，
+// 还是去网上重拉一遍 —— 恰好把"已落地优先 ⇒ 零网络"这条特性，对它最该服务的场景废掉了。
+{
+  const botRoot = join(ROOT, 'repos', 'DeepSeek-Bot', 'bot')
+  const botSub = join(botRoot, 'web-search')
+  mkdirSync(botSub, { recursive: true })
+  writeFileSync(join(botRoot, '.git'), 'gitdir: x\n', 'utf8') // 是仓库，但**根没有** package.json
+  writeFileSync(join(botSub, 'package.json'), JSON.stringify({ name: '@probe/web-search' }), 'utf8')
+  const botLanded = [{ owner: 'DeepSeek-Bot', name: 'bot', repo: 'DeepSeek-Bot/bot', path: botRoot }]
+  const deps = { listLanded: () => botLanded }
+
+  check('★ 缺陷③：根没有清单、但目标子目录有清单 ⇒ **命中**（旧实现恒 false）',
+    findLandedRepo('DeepSeek-Bot/bot', { ...deps, subdir: 'web-search' }).hit === true)
+  check('命中时如实带出是哪个子目录（可追溯）',
+    findLandedRepo('DeepSeek-Bot/bot', { ...deps, subdir: 'web-search' }).subdir === 'web-search')
+  check('负控：不给子目录 ⇒ 不命中（不扩大命中面，老调用点语义逐项不变）',
+    findLandedRepo('DeepSeek-Bot/bot', deps).hit === false)
+  check('负控：子目录里没有清单 ⇒ 不命中（真半成品仍交给正常通道）',
+    findLandedRepo('DeepSeek-Bot/bot', { ...deps, subdir: 'nope' }).hit === false)
+  // 老行为不倒退：根有清单 ⇒ 命中（这里用 botRoot 的兄弟目录自建夹具，
+  // 不依赖上面已被 disposeDir 清掉的 withPkg）
+  const rootPkgDir = join(ROOT, 'repos', 'probe-org', 'plugin2')
+  mkdirSync(rootPkgDir, { recursive: true })
+  writeFileSync(join(rootPkgDir, 'package.json'), JSON.stringify({ name: '@probe/plugin2' }), 'utf8')
+  check('根**有**清单时照旧命中（老行为不倒退）',
+    findLandedRepo('probe-org/plugin2', {
+      listLanded: () => [{ repo: 'probe-org/plugin2', path: rootPkgDir }], subdir: 'web-search',
+    }).hit === true)
+  check('子目录形态的路径分隔/前导符安全（`./x` 不误判）',
+    findLandedRepo('DeepSeek-Bot/bot', { ...deps, subdir: './web-search' }).hit === true)
+}
+
+// ── ⑥ 0.5.48：子目录安装命中已落地副本 ⇒ **0 新网络请求**（正控：无副本才允许走网络）──
+{
+  const { acquireSubdirSource } = await import('../lib/server/domain/subdir-install.js')
+  const botRoot = join(ROOT, 'repos', 'DeepSeek-Bot', 'bot')
+
+  // 正控①：已落地 ⇒ 一个 clone 都不许发
+  let cloneCalls = 0
+  const reused = await acquireSubdirSource({
+    repo: 'DeepSeek-Bot/bot', dir: 'web-search', source: 'github',
+    deps: {
+      findLandedRepo: (repo, o) => findLandedRepo(repo, { listLanded: () => [{ repo: 'DeepSeek-Bot/bot', path: botRoot }], ...o }),
+      srcRoot: join(ROOT, 'src'),
+      gitClone: async () => { cloneCalls += 1; throw new Error('不该走网络：已落地副本应命中') },
+    },
+  })
+  check('★ 缺陷③端到端：子目录安装命中已落地副本 ⇒ reused=true', reused.ok === true && reused.reused === true, JSON.stringify({ ok: reused.ok, reused: reused.reused }))
+  check('★ **0 新网络请求**（clone 调用次数 = 0）', cloneCalls === 0, `cloneCalls=${cloneCalls}`)
+  check('复用的是落地目录里的那份（路径正确）',
+    reused.ok === true && String(reused.dir).toLowerCase() === join(botRoot, 'web-search').toLowerCase(), String(reused.dir))
+  check('笔记里如实写着零网络（用户可见）',
+    Array.isArray(reused.notes) && reused.notes.some((n) => n.includes('零网络')), JSON.stringify(reused.notes))
+
+  // 正控②：**没有**落地副本时才允许走网络（证明上面那个 0 不是"永远不走网络"）
+  let cloneCalls2 = 0
+  const fetched = await acquireSubdirSource({
+    repo: 'DeepSeek-Bot/bot', dir: 'web-search', source: 'github',
+    deps: {
+      findLandedRepo: () => ({ hit: false, path: null }),
+      srcRoot: join(ROOT, 'src2'),
+      gitClone: async (repo, dest) => {
+        cloneCalls2 += 1
+        const src = join(dest, 'web-search')
+        mkdirSync(src, { recursive: true })
+        writeFileSync(join(src, 'package.json'), JSON.stringify({ name: '@probe/web-search' }), 'utf8')
+        return { dir: dest, sparse: true, reused: false }
+      },
+    },
+  })
+  check('★ 正控：**没有**落地副本 ⇒ 才走网络取源码（证明"0 网络"不是恒真）',
+    cloneCalls2 === 1 && fetched.ok === true && fetched.reused === false, `cloneCalls=${cloneCalls2}`)
+
+  disposeDir(ROOT)
+}
+
 assert.ok(pass > 0)
 console.log(`\n${fail === 0 ? 'ALL PASS' : `${fail} FAILED`}（PASS ${pass} / FAIL ${fail}）`)
 process.exit(fail === 0 ? 0 : 1)
