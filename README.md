@@ -411,6 +411,30 @@ node scripts/safe-boot.mjs --mark-good            # mark a snapshot as good (nev
 
 Safe-boot snapshots live under `dshHome()/plugin-console/safe-boot/` (**not** in the profile directory),
 keeping the newest 3 plus the one you marked as good.
+
+### When the service won't start because **framework packages were wiped**
+
+The rollback above restores the **config layer** (`cordis.patch.yml`). There is a second failure
+class where the **package payloads** are gone — framework packages emptied or deleted. Then the
+patch is perfectly fine, restoring it changes nothing, and **the console itself runs inside dsh**:
+if dsh cannot boot, the console was never loaded (real outage, 2026-10-14: `cordis`'s store entity
+emptied plus `dsh-llm`/`dsh-tools`/`dsh-web` turned into empty directories ⇒
+`54 plugins failed to import` ⇒ `exit code=1`).
+
+That class needs the **out-of-process** closure preflight (also needs no running service):
+
+```bash
+node scripts/fw-preflight.mjs --check     # diagnose only: list unresolvable packages, write nothing
+node scripts/fw-preflight.mjs --repair    # restore from the **local npm cache** by lock integrity, then re-verify
+```
+
+The criterion is "**can the dependency closure be resolved**", not "is the directory empty" —
+the latter is completely blind to "the shell is still there, the inside was emptied"
+(measured: a naive empty-dir scan reported 237 false positives; the closure criterion passed all
+287 packages and named exactly the one that broke). `--repair` is **offline and never guesses a
+version** (a package missing from the lock is reported as `no-lock-entry`), and it **never kills or
+spawns a process and never grabs a port** (that is exactly what produces
+"The application failed to start or stopped unexpectedly") — restart the service yourself afterwards.
 ## Framework compatibility
 
 Measured on isolated instances (fresh `DSH_HOME`, real HTTP probes) — **supported: framework ≥ `0.1.5-rc.2`**, no workarounds needed.

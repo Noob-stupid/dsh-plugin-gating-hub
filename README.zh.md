@@ -346,6 +346,26 @@ node scripts/safe-boot.mjs --mark-good            # 把某份快照标记为"良
 
 安全启动快照落在 `dshHome()/plugin-console/safe-boot/`（**不在** profile 目录里），保留最近 3 份 +
 永不删你标记为"良好"的那份。
+
+### 服务打不开、且原因是**框架包被掏空**时
+
+上面那套恢复的是**配置层**（`cordis.patch.yml`）。另有一类事故坏的是**包实体**——
+框架包被清空或删除，此时补丁好端端的，恢复补丁没有任何用，而**控制台自己也是跑在 dsh 里的**，
+dsh 起不来它就从未加载（真机停机事故 2026-10-14：`cordis` 实体被掏空 +
+`dsh-llm`/`dsh-tools`/`dsh-web` 成了空目录 ⇒ `54 个插件 failed to import` ⇒ `exit code=1`）。
+
+这类事故要用**进程外**的闭包预检（同样不需要服务在跑）：
+
+```bash
+node scripts/fw-preflight.mjs --check     # 只诊断：列出解析不了的包，一个字节都不写
+node scripts/fw-preflight.mjs --repair    # 按 lock 的 integrity 从**本地 npm 缓存**装回，再复验
+```
+
+判据是"**依赖闭包能不能解析**"，不是"目录空不空"—— 后者对"目录壳还在、里面被掏空"这种形态
+完全免疫（真机实测：按"目录空不空"粗扫会误报 237 个；按闭包判据 287 个包精准通过）。
+`--repair` **不联网、不猜版本**（lock 里没有的包如实报 `no-lock-entry`），
+也**绝不 kill / spawn 进程或抢端口**（那正是「应用无法启动或已意外停止」的来源）——
+修完请自己重启服务。
 ## 框架兼容性
 
 在隔离实例（全新 `DSH_HOME` + 真实 HTTP 探针）实测：**支持框架 ≥ `0.1.5-rc.2`**，无需任何变通。

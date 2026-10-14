@@ -2,6 +2,118 @@
 
 All notable changes to dsh-plugin-hub.
 
+## v0.5.50 — 框架闭包预检：服务起不来时的治包出路（加法，2026-10-14）
+
+**纯加法**：新增 4 个模块 + 1 个脚本 + 1 套测试，**未改动任何现有文件的行为**（唯一的既有文件改动是
+`package.json` 的 `files` 白名单，见 §四）。
+
+### 现象（怎么发现的）
+
+用户报告"桌面端起不来"，日志：
+
+```
+Error: Cannot find package '…\_npx\1e7f6d9597241db0\node_modules\@deepseek-ai\cordis\index.js'
+    imported from …\@deepseek-ai\dsh-app-boot\lib\index.js
+```
+
+真机取证（2026-10-14）——**不是配置问题，是包实体没了**：
+
+| 包 | 形态 |
+| --- | --- |
+| `cordis` | 顶层 junction 还在，但它指向的 `.pnpm` 实体目录**被清空** |
+| `dsh-llm` / `dsh-tools` / `dsh-web` | 直接成了**空的真实目录**（清空时刻 12:38:26） |
+
+后果：dsh 启动即 `startup failed: 54 个插件 failed to import`，web 服务 `exit code=1`。
+
+### 为什么既有防线全部没拦住（**结构性盲区，不是某个判据写错**）
+
+| 防线 | 存的/看的 | 这次为什么无效 |
+| --- | --- | --- |
+| safe-boot 快照 | `cordis.patch.yml` 的**文本**（63 KB 全是配置） | 坏的是包实体；补丁当时好端端的 ⇒ 恢复它等于"把一份没坏的配置换成另一份没坏的配置" |
+| 环境指纹 `pnpmEntities` | **数** `.pnpm` 里 `@deepseek-ai*` 的**目录个数** | "目录壳还在、里面被掏空"⇒ 19 → 19 **计数不变** ⇒ 判定环境未变 ⇒ 不触发任何动作。且 `dsh-llm`/`dsh-tools`/`dsh-web` 住在**顶层**，那个计数**从来不覆盖它们** |
+| 自动禁用 | 针对"插件不适配" | 这次是框架包没了，不是插件问题 |
+
+**最根本的一条**：控制台插件是**跑在 dsh 里的**。dsh 起不来 ⇒ 插件从未加载
+（事故日志里 `plugin-console` 出现 **0 次**）⇒ 一切"面板里有按钮"的方案在这类事故面前等于没有。
+
+### ① 判据换成"能不能解析"（`infra/fw-closure.js`）
+
+从 dsh 的 `lib/bin.js` 出发，把 `@deepseek-ai/*` 的**依赖闭包整条走一遍**，
+谁 `resolve(name + '/package.json')` 失败谁就是坏的 —— 与目录长什么样无关。
+
+- 不存"数个数"那种对"掏空"免疫的盲区；
+- 不误报 `@scope` 目录与 `.pnpm` 历史残留（真机实测：按"目录空不空"粗扫本机会**误报 237 个**；
+  换成闭包判据后 **287 个包精准通过**，清空一个立刻**只点名那一个**）；
+- **坏包去重**：枢纽包（如 `dsh-tools`）坏掉会波及整条下游 —— 实测产出 **46 条**记录而全是同一个包。
+  去重后"一个坏包 = 一条记录 = 一次修复"，不会把真正的原因淹没在噪声里。
+
+### ② 修复源走本地 npm 缓存（`infra/npm-cache.js`，**零依赖、不联网**）
+
+按 `package-lock.json` 的 `integrity` 直读 npm cacache —— 布局是确定性的：
+`content-v2/sha512/<hex[0:2]>/<hex[2:4]>/<hex[4:]>`（`hex` = base64 解码 integrity 后的十六进制）。
+
+- **不 require npm 自带的 `cacache`/`tar`**：实测在 `D:\dsh` 目录下
+  `require('npm/node_modules/cacache')` 会炸 `ERR_INVALID_PACKAGE_CONFIG`（那儿有个 0 字节的
+  `package.json`）—— 把"打不开时唯一的出路"押在另一个可能坏的东西上，不划算。自带最小 tar 解析器。
+- 真机实测：110 KB 的包从"发现"到"装回"**1 秒内**完成。
+- 解包对条目路径做**树内校验**（拒绝绝对路径与 `..` 穿越）—— 坏缓存不许把文件写到树外。
+
+### ③ 编排（`domain/fw-preflight.js`）+ 进程外入口（`scripts/fw-preflight.mjs`）
+
+`探测 → 定计划 → 装回 → 复验`；**复验是重新走一遍闭包**，不靠"我装完了"自证。
+
+四条硬规矩：
+
+1. **只补缺的** —— 能解析的包一个字节都不写（实测：健康树再修一次，文件清单逐项不变）；
+2. **绝不 kill / spawn / 抢端口 / 建计划任务** —— 只做**文件级**修复。
+   这正是 2026-10-10 `restart.js` 下线的那套动作（会与宿主争端口 ⇒ `listen EADDRINUSE`；
+   kill 宿主 ⇒ 桌面端外壳弹「应用无法启动或已意外停止」）。**这条红线有测试钉死**（断言⑫ 扫源码）。
+3. **修复源必须可解释** —— 只从 lock 的 `integrity` + 本地缓存取，**不联网、不猜版本**；
+   lock 里没有该包 ⇒ 如实报 `no-lock-entry`，**不静默挑一个版本**。
+4. **改前留痕** —— 有内容的目标目录先改名成 `<name>.preflight-bak-<ts>`（空壳才直接替换），
+   与 `framework-residuals.js#isStaleBackupName` 的既有约定同族。
+
+真机故障演练（忠实重现事故形态：原地掏空、不留备份）：
+
+```
+① 修复前：走了 286 个包，1 个解析不了
+   ✗ @deepseek-ai/dsh-tools   ← @deepseek-ai/dsh-mcp-resources  (unresolvable)
+② 本次修复：成功 1 个
+   ✓ @deepseek-ai/dsh-tools@0.2.0-rc.2  → top-level  0.2.0-rc.2（27 个文件）
+③ 复验：走了 287 个包，0 个仍解析不了
+   ✓ 闭包已完整
+```
+
+**演练中抓到的设计错误（已修，并补了钉子测试）**：`cordis` 的坏法是"顶层 junction 还在、
+它指向的 `.pnpm` **实体**被掏空"—— 与 `dsh-llm` 那种"顶层本身就是空目录"**是两种形态**。
+第一版实现对两者一视同仁地把内容写进**顶层那个名字**，结果把顶层从"链接"改成了"真实目录"
+（实测：`LinkType` 由 `Junction` 变空、`store` 实身子项仍是 0）。后果不止是"多了一份副本"：
+
+- 模块身份不再共享 —— Cordis service 类 / LLM error 类靠 `instanceof` 与单例注册表相认，
+  这正是 `domain/link-self-sufficiency.js` 头注释里"**必须链接而不是复制**"记下的那条教训；
+- pnpm 后续重装会认为顶层"不是自己管的"，产生版本漂移与二次损坏。
+
+**修法**：目标是链接时（`lstat().isSymbolicLink()`）先 `realpath()` 解析出实体，
+**只把内容写进实体**，链接一个字节都不动；悬空链接则如实报失败、**不猜目标**。
+钉死断言：`tests/test-fw-preflight.mjs` ⑪d（顶层必须仍是链接 + 两侧 `realpath` 必须是同一份文件）
+与 ⑪e（取不到内容时复验必须报"仍不完整"，绝不假装成功）。
+
+### ④ 顺带修好的既有隐患：`files` 白名单漏了 `scripts/`
+
+`package.json` 的 `files` 原本只有 `["lib","cordis.patch.yml","SECURITY.md","icon.svg"]`
+—— 于是 **`scripts/safe-boot.mjs` 从来没被打进过包**，而 `safe-boot.js` 生成的每一份快照里都写着
+`restoreCommand: node scripts/safe-boot.mjs --restore-last-good`。
+
+⇒ **用户照着这条命令敲，只会得到"文件不存在"** —— 0.5.32 起精心留的那条逃生通道，
+在已发布的包里其实是断的。本次把 `scripts/safe-boot.mjs` 与 `scripts/fw-preflight.mjs`
+一并加进白名单（`npm pack --dry-run` 实测两者均已进包，共 124 个文件）。
+
+### ⑤ 本机环境下的既有红项（**与本次改动无关**）
+
+跑全量：99 套、失败 6 套。`git stash -u` 回到干净基线后**逐条同红**，属本机环境
+（桌面壳托管 409、npx 缓存损坏 —— 后者正是本次新增能力要处理的那类现场）。
+与 0.5.49 条目里记录的那批红项是同一组。
+
 ## v0.5.49 — 0.5.48 第四项修复的回退：子路径引用被连合法回退一起掐掉（改错，2026-10-14）
 
 **这是 0.5.48 自己引入的回归**，0.5.49 只修它，别的一律不动。
