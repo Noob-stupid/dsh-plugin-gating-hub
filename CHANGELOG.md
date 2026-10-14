@@ -2,6 +2,50 @@
 
 All notable changes to dsh-plugin-hub.
 
+## v0.5.50 之后的文档更正（2026-10-14）—— 只改说明，零行为改动
+
+对 0.5.48 第 ① 项修复做**实测回校**：那条修复本身**没有回归**（`--config.ci=true` 只加在
+`pnpmAddArgs`/`add` 路径，实测带/不带该旗 `pnpm add` 都照常装上并更新 lock；`pnpm remove`
+同样不受影响），但当时写进注释与 CHANGELOG 的**三条事实有两处不对**。本次只更正文字，
+三个 env 与 argv 的注入**原样保留、一个字节未动**。
+
+### ① 「无 TTY ⇒ pnpm 弹提问 ⇒ 管道永不关闭 ⇒ 永久挂住」—— 因果链不成立
+
+- **实测**（pnpm 11.7.0，`minimumReleaseAge` 设成天文数字 + 管道 stdin，五种配置各跑一次）：
+  无 ci 位 / `CI=true` / `npm_config_ci=true` / `--config.ci=true` / 两者齐上
+  —— **全部快速失败（`NO_MATURE_MATCHING_VERSION`），无一挂住**。
+- **原因**：pnpm 的 `canPrompt = !inCi && Boolean(process.stdin.isTTY)`（`dist/pnpm.mjs`
+  L194277-278）。管道下 `isTTY` 恒为假 ⇒ pnpm **从不**走 prompt 分支，直接 throw。
+- **真正读 stdin 等人的是 corepack**：`corepack.cjs` L22080-22088
+  （`if (process.env.COREPACK_ENABLE_DOWNLOAD_PROMPT === '1') { … if (process.stdin.isTTY
+  && !process.env.CI) { stderr.write('? Do you want to continue? [Y/n] ');
+  stdin.resume(); await once(stdin, 'data') } }`）—— 它的判据恰恰是 `process.env.CI`，
+  也就是 0.5.48 说"不是 pnpm 读的那一位"的那个变量。
+- **结论**：`infra/pnpm-release-gate.js` 的定位与价值不变（识别闸门命中 + 翻译成可操作错误、
+  绝不绕过），只是"为什么会挂住"要记在 corepack 头上。
+
+### ② `npm_config_ci=true` 对 pnpm 是空操作（那条"双保险"有一半是安慰剂）
+
+- `pnpm config list --json` 设了它之后 `ci` 仍为空；`pnpm install` 面对过时 lock 时
+  **不会**被 frozen 拒绝（正控：`--config.ci=true` 与 `CI=true` 都会拒绝）。
+- pnpm 只认自己的前缀 `pnpm_config_*`（含 argv 的 `--config.*`）；`npm_config_*` 只用于
+  npm 兼容项（如 registry）。⇒ env 那一行留着无害，但**不能再当成非交互的保证**。
+
+### ③ `CI=true` 确实点亮 ci 位，且不是 0.5.48 引入的
+
+- pnpm 自己的配置默认值就是 `ci: isCI`（`dist/pnpm.mjs` L145865），而 `isCI` 判 `env.CI`
+  （L143262）⇒ `opts3.ci` 随之为真。
+- 实测：只设 `CI=true`，`pnpm install` 面对过时 lock **会**被 frozen 拒绝；再加
+  `--no-frozen-lockfile` 即恢复照常（证伪组，证明拒绝确由 frozen 推导引起）。
+- 这一位 **v0.5.30 就已注入** `buildPnpmEnv`，不是 0.5.48 新增。`domain/lockfile-health.js`
+  的旧注释（"我们的 pnpm env 带 CI=true，pnpm 在 CI 下默认 frozen-lockfile"）本来就写对了，
+  与 0.5.48 的新注释自相矛盾 —— 以旧注释为准。
+
+### 更正落在哪
+
+`lib/server/infra/exec.js#pnpmEnvOverrides` 与 `#pnpmAddArgs`、`lib/server/infra/pnpm-release-gate.js`
+的头注释。**无任何行为代码改动**，未发版（文档级修正）。
+
 ## v0.5.50 — 框架闭包预检：服务起不来时的治包出路（加法，2026-10-14）
 
 **纯加法**：新增 4 个模块 + 1 个脚本 + 1 套测试，**未改动任何现有文件的行为**（唯一的既有文件改动是
