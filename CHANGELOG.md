@@ -65,6 +65,21 @@ runProfile() → 失败 → reportStartupFailure() → process.exit(1)`；
 - 另修：加 `import.meta.main` 守卫 —— 原先任何人 `import()` 这个脚本都会**意外启动常驻看门狗**
   （验证语法时就踩到过，还在后台留下了一个野进程，已清掉）。
 
+### 二、`.gitattributes`：Windows 脚本必须 CRLF（否则 clone 出来的是坏的）
+
+本仓库原先把 `* text=auto eol=lf` 钉死（2026-09-29 为治理行尾卫生而加）。问题是它会把
+`.cmd`/`.ps1` **也按 LF 检出** —— 而 **LF 的 `.cmd` 会坏**：cmd.exe 把注释行当命令执行
+（实测报 `'…' is not recognized as an internal or external command`）。
+
+- **npm 包不受影响**（npm 直接打工作区字节，实测包里 `.cmd` 是 CRLF）；
+- **但任何 git clone 出来的副本都会拿到坏掉的 `.cmd`** —— 这条不明显，只在"用户从源码装"
+  或"CI 里 checkout 后跑脚本"时才炸。
+
+**改法**：补 `*.cmd` / `*.bat` / `*.ps1` / `*.psm1` / `*.vbs` → `eol=crlf`
+（入库 LF、检出 CRLF，与其它文件的 LF 规矩不冲突）。验证方式不是"看配置"，而是
+`git ls-files --eol` 确认属性生效（`i/lf w/crlf attr/text eol=crlf`），
+并**真的 clone 一份**、在副本里跑那条 `.cmd`（成功）——本节的结论就是这么来的。
+
 ### 三、打包白名单：`files` 从"逐个列文件"改成整目录 `scripts`
 
 **为什么必须改**：`files` 原先是**逐个列文件**的（`scripts/safe-boot.mjs`、`scripts/fw-preflight.mjs`）。
