@@ -16,5 +16,19 @@
 *.yaml text eol=lf
 *.md   text eol=lf
 
+# Windows 脚本必须换行符例外（2026-10-14 补，实测踩到）：
+#   `* text=auto eol=lf` 会把 .cmd/.ps1 也按 LF 检出，而 **LF 的 .cmd 会坏**：
+#   cmd.exe 把注释行当命令执行（实测报 `'…' is not recognized as an internal or
+#   external command`）。npm 包不受影响（npm 直接打工作区字节），
+#   但**任何 git clone 出来的副本都会拿到坏掉的 .cmd** —— 所以在这里钉死 CRLF。
+#   注意：eol=crlf 是"入库 LF、检出 CRLF"，与其它文件的 LF 规矩不冲突。
+#   .ps1 同样要 CRLF（顺带要求 UTF-8 BOM：Windows PowerShell 5.1 读无 BOM 的
+#   .ps1 会按 ANSI 解码，中文乱码并破坏语法 —— 见 tests/test-fw-watchdog.mjs 的字节断言）。
+*.cmd  text eol=crlf
+*.bat  text eol=crlf
+*.ps1  text eol=crlf
+*.psm1 text eol=crlf
+*.vbs  text eol=crlf
+
 *.png binary
 *.exe binary

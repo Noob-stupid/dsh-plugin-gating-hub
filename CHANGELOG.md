@@ -2,11 +2,111 @@
 
 All notable changes to dsh-plugin-hub.
 
+## v0.5.51 — 框架闭包看门狗：崩溃自己抬起（不改官方代码）+ 更正 0.5.48 那条因果链（2026-10-14）
+
+### 一、新增：`scripts/fw-watchdog.mjs` —— 服务崩了自己修好地面
+
+**为什么需要**：0.5.50 的 `fw-preflight` 能治"框架包被掏空"，但它只能**手动**敲 ——
+而起不来的那一刻恰恰没有面板可用（面板是插件，起不来时它自己也没被加载）。
+
+**为什么不做成"启动前自动跑"**：官方启动链**没有**这个钩子（已只读取证）——
+`DeepSeek Harness.exe → dsh-desktop-host/lib/cli.js → runCli()（dsh/lib/bin.js:207）→
+runProfile() → 失败 → reportStartupFailure() → process.exit(1)`；
+`bin.js` 全文 254 行、读的环境变量为零；`dsh-app-boot` 只有 `DSH_SNAPSHOT=replay` 与
+`loadEnv()`（读 `.env`，且能设的名字有黑名单）——**只能设配置，不能"启动前跑脚本"**；
+失败路径也不 spawn 任何外部命令。想在启动前自动修必须**改官方外壳**，且 DSH 一升级就被覆盖。
+
+**所以走观测**：官方不留钩子，但留了一个可观测事实 ——
+**外壳进程还在，而它的 HOST 服务子进程没了**（事故的真实形态）。
+
+判据（进程树事实，与端口无关）：
+1. 外壳进程在跑（`DeepSeek Harness.exe` 且命令行**不含** `--type=`）；
+2. HOST 服务子进程**不在**（命令行含 `dsh-desktop-host/lib/index.js` 的那个）；
+3. 连续 N 轮（默认 2 轮 ≈ 40s）都如此 ⇒ 才动手（避开"正在启动/正在重启"的窗口）。
+
+动作：`fw-preflight --check` → 闭包坏 ⇒ `--repair` → `--check` 复验。
+修完**不自己拉起服务**：官方崩溃恢复/relaunch 会自己重试，看门狗只把地面修平
+—— 用户观感就是"崩了自己又起来了"。
+
+**红线（写进脚本与测试）**：不杀进程、不抢端口、不 spawn dsh、不改官方任何文件。
+
+- `scripts/fw-watchdog.mjs` — 看门狗本体
+  （`--daemon` 后台守护 / `--status` / `--tick` / `--once` / 无参 = 前台常驻）
+- `scripts/fw-watchdog.cmd` — 手动跑入口（自己解析 node：桌面宿主注入的 → 桌面端自带运行时 → PATH）
+- `scripts/fw-watchdog-task.ps1` — 注册/卸载/查看计划任务（登录时启动、失败自动重启 3 次）
+- `tests/test-fw-watchdog.mjs` — 17 项断言，**破坏→恢复演练全离线**（注入进程事实 + 沙箱 stub 预检，
+  绝不碰真框架树）；含四条负控（闭包好时**不许**瞎修、外壳没在跑时零动作、服务活着时零动作、
+  "探针必须真读到进程数"防坏探针静默失效），外加六条**脚本文件格式钉子**（见下）
+
+**`--daemon` 是怎么定下来的（不弹窗口这条要求，试错三次）**：
+1. 计划任务直接跑 `node.exe` ⇒ Windows 弹出**可见的控制台窗口**（本机实测桌面出现一个
+   Windows Terminal，标题就是 node 的绝对路径）—— 用户截图发现，不能接受；
+2. 改用 `.vbs` 启动器（`WshShell.Run …, 0`）⇒ **wscript 挂住、拉不起子进程**（实测两次都没起来，
+   任务一直停在 Running）；
+3. **最终做法**：任务跑 `node … --daemon`，脚本**自己以 detached + `stdio:'ignore'` +
+   `windowsHide` 再拉起一份**并立刻返回 ⇒ 任务那条命令秒退、真正干活的那份无窗口在后台跑；
+   重复启动由 pid 锁（`fw-watchdog.pid`）挡住 ⇒ 幂等。
+   实测：任务状态 `Ready`、结果码 0、后台进程在跑、**桌面上无任何可见窗口**。
+
+**开发中实测踩到并修掉的四个坑（全部留了钉子测试）**：
+- **块注释里的通配写法把注释提前闭合**：注释里写 `profiles` + 星号 + `/node_modules` 时，
+  其中的"星号+斜杠"直接结束块注释 ⇒ 整个脚本 `SyntaxError`、看门狗**从未真正运行过**。
+  钉子用的是"`node --check` 能否解析"，**不是**正则猜注释边界 ——
+  第一版启发式反而被 `profiles/*/` 这种写法骗过、对真文件误报（自证断言因此红了），
+  换成解析器说话后既准又能抓构造的坏样本。
+- **PowerShell 的 `$host` 是只读自动变量**：赋值报 `Cannot overwrite variable Host…` ⇒
+  探针恒返回 0 ⇒ 看门狗永远以为"外壳没在跑"、**静默失效**。改用 `$hostN`/`$shellN`，由测试钉住。
+- **`.cmd` 必须是 CRLF + 纯 ASCII**：LF 行尾会让 cmd.exe 把注释当命令执行
+  （实测报 `'…' is not recognized as an internal or external command`）；
+  中文注释在 OEM 代码页下同样会破坏行结构。
+- **`.ps1` 必须带 UTF-8 BOM**：Windows PowerShell 5.1 读**无 BOM** 的 `.ps1` 会按 ANSI 解码 ⇒
+  中文变乱码并**破坏语法**（实测：编辑工具剥掉 BOM 后脚本直接 ParserError）。
+  三种坏法都不会被任何 lint 报出来，只有真去执行才炸 ⇒ 全部钉进测试（字节级检查，Linux CI 也跑）。
+- 另修：加 `import.meta.main` 守卫 —— 原先任何人 `import()` 这个脚本都会**意外启动常驻看门狗**
+  （验证语法时就踩到过，还在后台留下了一个野进程，已清掉）。
+
+### 三、打包白名单：`files` 从"逐个列文件"改成整目录 `scripts`
+
+**为什么必须改**：`files` 原先是**逐个列文件**的（`scripts/safe-boot.mjs`、`scripts/fw-preflight.mjs`）。
+本版新增的三个看门狗文件按那种写法**根本不会进包** —— 而 CHANGELOG 却会承诺这个能力，
+等于发一张空头支票。这正是刚刚修过的那个坑的同一族：`safe-boot.mjs` 曾因白名单漏了 `scripts/`
+而**从未进过包**，可它生成的每份快照里都印着 `restoreCommand: node scripts/safe-boot.mjs …`，
+用户照敲只会得到"文件不存在"。
+
+**改法**：`"scripts"`（整目录）。`npm pack --dry-run` 实测：**124 → 131 个文件**，
+九个脚本全部进包（`safe-boot.mjs`、`fw-preflight.mjs`、`fw-watchdog.mjs`、`fw-watchdog.cmd`、
+`fw-watchdog-task.ps1`，外加 `apply-framework-patch.cjs` / `apply-npm-names.cjs` /
+`build-index.cjs` / `diag-blocks.mjs` 四个既有维护脚本，多约 17KB）。
+**代价与取舍（如实记）**：整目录会多带那四个既不自动运行、也无副作用的维护脚本；
+换来的是"以后新增脚本不会再漏"。逐文件列举那种写法已经害过一次（safe-boot.mjs），
+所以这里选**不易再错**的那一边。
+
+### 四、更正 0.5.48 那条因果链（只改说明，零行为改动）
+
+0.5.48 第 ① 项修复本身**没有回归**，但它写下的因果链**实测都不成立**：
+
+- **「pnpm 弹提问 ⇒ 读 stdin 到 EOF ⇒ 永久挂住」不成立**：pnpm 的
+  `canPrompt = !inCi && Boolean(process.stdin.isTTY)`，管道下 `isTTY` 恒为假 ⇒ 从不 prompt。
+  五种 ci 配置实测**全部快速失败、无一挂住**。
+- **那"挂到 90s / 180s"其实是我们的超时常量**：`runPnpmAdd` 默认 `timeout = 90000`、
+  `link-self-sufficiency#installTargetDependencies` 默认 `timeoutMs = 180000` —— 与当时观察**逐一吻合**
+  ⇒ 当时是"某次操作超过我们设的超时、被我们杀掉"，**不是**等输入等到天荒地老。
+  那次为什么慢**至今没有证据**（最可能是网络）。
+- **corepack 也不是默认真凶**：它有全链唯一一处读 stdin 的提问，但入口 shim 第一行就关了它
+  （`COREPACK_ENABLE_DOWNLOAD_PROMPT ??= '0'`），本机也没设过 ⇒ 默认不开。
+- `npm_config_ci=true` 对 pnpm 自己的配置项是**空操作**（只认 `pnpm_config_*`）；
+  `CI=true` **确实**点亮 ci 位（pnpm 配置默认值 `ci: isCI`），且 **v0.5.30 就已注入**。
+- **如实结论**：0.5.48 那条"永久挂住"的**根因至今未查明**，能确定的只有"不是 pnpm 的交互提问"。
+
+更正落在 `lib/server/infra/exec.js#pnpmEnvOverrides` 与 `#pnpmAddArgs`、
+`lib/server/infra/pnpm-release-gate.js` 的头注释，以及本文件。**无任何行为代码改动**
+（两个 lib 文件剥注释后与父提交逐字节相同）。
+
 ## v0.5.50 之后的文档更正（2026-10-14）—— 只改说明，零行为改动
 
 对 0.5.48 第 ① 项修复做**实测回校**：那条修复本身**没有回归**（`--config.ci=true` 只加在
 `pnpmAddArgs`/`add` 路径，实测带/不带该旗 `pnpm add` 都照常装上并更新 lock；`pnpm remove`
-同样不受影响），但当时写进注释与 CHANGELOG 的**三条事实有两处不对**。本次只更正文字，
+同样不受影响），但当时写下的**整套因果链实测都不成立**。本次只更正文字，
 三个 env 与 argv 的注入**原样保留、一个字节未动**。
 
 ### ① 「无 TTY ⇒ pnpm 弹提问 ⇒ 管道永不关闭 ⇒ 永久挂住」—— 因果链不成立
@@ -16,13 +116,23 @@ All notable changes to dsh-plugin-hub.
   —— **全部快速失败（`NO_MATURE_MATCHING_VERSION`），无一挂住**。
 - **原因**：pnpm 的 `canPrompt = !inCi && Boolean(process.stdin.isTTY)`（`dist/pnpm.mjs`
   L194277-278）。管道下 `isTTY` 恒为假 ⇒ pnpm **从不**走 prompt 分支，直接 throw。
-- **真正读 stdin 等人的是 corepack**：`corepack.cjs` L22080-22088
-  （`if (process.env.COREPACK_ENABLE_DOWNLOAD_PROMPT === '1') { … if (process.stdin.isTTY
-  && !process.env.CI) { stderr.write('? Do you want to continue? [Y/n] ');
-  stdin.resume(); await once(stdin, 'data') } }`）—— 它的判据恰恰是 `process.env.CI`，
-  也就是 0.5.48 说"不是 pnpm 读的那一位"的那个变量。
-- **结论**：`infra/pnpm-release-gate.js` 的定位与价值不变（识别闸门命中 + 翻译成可操作错误、
-  绝不绕过），只是"为什么会挂住"要记在 corepack 头上。
+  也就是说，0.5.48 描述的机制与 pnpm 自己的代码**互相矛盾**。
+
+### ①-b 那"挂到 90s / 180s"是什么：**我们自己的超时常量**
+
+- `runPnpmAdd` 默认 `timeout = 90000`（`infra/exec.js`）；
+  `link-self-sufficiency#installTargetDependencies` 默认 `timeoutMs = 180000`。
+- 这两个数字与当时的观察（"挂到 90s / 180s 被杀"）**逐一吻合** ⇒ 当时发生的是
+  **"某次 pnpm 操作超过了我们设的超时、被我们杀掉"**，而不是"它等输入等到天荒地老"。
+- **那次为什么慢，至今没有证据**（最可能是网络：registry 慢/被挡）。
+  `--fetch-timeout=60000` / `--fetch-retries=1` 正是为这一类加固的（0.5.24 起就在）。
+- **corepack 也不是默认真凶**：corepack 确有全链唯一一处读 stdin 的提问
+  （`corepack.cjs` L22080-22088，判据 `process.stdin.isTTY && !process.env.CI`），
+  但入口 shim 第一行就把它关掉了（`process.env.COREPACK_ENABLE_DOWNLOAD_PROMPT ??= '0'`），
+  本机用户级/系统级均未设过该变量 ⇒ **默认不开**；只有显式设成 `1` 才会问。
+- **如实结论**：0.5.48 那条"永久挂住"的**根因至今未查明**；能确定的只有
+  "不是 pnpm 的交互提问"。`infra/pnpm-release-gate.js` 的定位与价值不变
+  （识别闸门命中 + 翻译成可操作错误、绝不绕过），但**别再照那段因果链去找原因**。
 
 ### ② `npm_config_ci=true` 对 pnpm 是空操作（那条"双保险"有一半是安慰剂）
 
