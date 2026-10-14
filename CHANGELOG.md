@@ -6,6 +6,17 @@ All notable changes to dsh-plugin-hub.
 
 ### 一、新增：`scripts/fw-watchdog.mjs` —— 服务崩了自己修好地面
 
+> ⚠️ **装上本插件不会自动获得守护。** 这个看门狗**默认不注册、也不自启** ——
+> 插件的 `lib/` 里对看门狗是**零引用**（不碰计划任务、不 spawn 它）。它随包只提供脚本，
+> **需要你主动跑一次安装器**才会成为常驻守护：
+> ```
+> powershell -ExecutionPolicy Bypass -File <插件目录>\scripts\fw-watchdog-task.ps1
+> ```
+> （卸载加 `-Uninstall`，看状态加 `-Status`，立刻跑一轮加 `-RunNow`）
+> 这么设计是因为"偷偷给自己装一个常驻计划任务"不是一个插件该替用户做的决定：
+> 它会常驻、会开机自启、会在后台周期性探进程树。所以选择**显式安装**。
+> 不装也完全没关系 —— 出事时仍可手动敲 `fw-preflight --check / --repair`。
+
 **为什么需要**：0.5.50 的 `fw-preflight` 能治"框架包被掏空"，但它只能**手动**敲 ——
 而起不来的那一刻恰恰没有面板可用（面板是插件，起不来时它自己也没被加载）。
 
