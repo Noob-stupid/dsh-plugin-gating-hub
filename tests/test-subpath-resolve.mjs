@@ -16,7 +16,7 @@
 //   ④ 真机形态复刻：exports 里**不含** './package.json' 时，`pkg/package.json` 解析必失败
 //      —— 这条正是旧实现踩的坑，留着当"旧行为确实坏"的证据
 import { strict as assert } from 'node:assert'
-import { mkdirSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { resolvePackageJson } from '../lib/server/infra/paths.js'
@@ -103,6 +103,58 @@ put('node_modules/@scope/tool/settings.js', 'export default 2\n')
   try { ok = req.resolve('ds-bot/web-search') } catch {}
   check('★ 证据：而按真实解析语义 `ds-bot/web-search` **是成功的**（所以引用本身没问题）',
     typeof ok === 'string' && ok.includes('web-search'), String(ok))
+}
+
+// ── ⑥ 0.5.49 改错：子路径引用**也必须认 fallbackBase 那条真实解析** ──────────────
+// 缺陷现场（0.5.48 回归，本机实测）：0.5.48 那道"子路径禁止再退兜底"的闸写在 fallbackBase
+// 那次真实解析**之前** ⇒ 只在 profile 里、框架树里没有的第三方子路径引用
+// （真机：`@linxin666/dsh-web-all/plugin-manager`）从"解得出"退回 null
+// ⇒ 面板里那批行的版本/安装日期/仓库全变空。
+// 判据本身没错，错在位置：要挡的是"按包名找清单"那两条兜底，**不是**"解析这个引用本身"。
+{
+  // 只在 second base 里存在的子路径包（= profile 回退现场的离线复刻）
+  const baseB = join(ROOT, 'second-base')
+  put('second-base/node_modules/@only/here/package.json', pkgJson({
+    name: '@only/here', version: '9.9.9', exports: { '.': './main.js', './settings': './settings.js' },
+  }))
+  put('second-base/node_modules/@only/here/main.js', 'export default 1\n')
+  put('second-base/node_modules/@only/here/settings.js', 'export default 2\n')
+  const emptyBase = join(ROOT, 'empty-base-for-6')
+
+  const viaFallback = resolvePackageJson('@only/here/settings', emptyBase, baseB)
+  check('★ 0.5.49 核心：只在 fallbackBase 里的**子路径**引用必须解得出来（0.5.48 在这里返回 null ⇒ 回归）',
+    viaFallback !== null && viaFallback === join(baseB, 'node_modules', '@only', 'here', 'package.json'), String(viaFallback))
+  check('对照：同一基准下裸包名一直解得出来（说明夹具与基准都对）',
+    resolvePackageJson('@only/here', emptyBase, baseB) === join(baseB, 'node_modules', '@only', 'here', 'package.json'))
+  check('对照：框架基准（baseDir）能解析时优先走它，不被 fallback 抢走',
+    resolvePackageJson('ds-bot/web-search', ROOT, baseB) === botPkg)
+  check('★ 负控不放宽：两个基准都没有的子路径 ⇒ 仍然 null',
+    resolvePackageJson('@only/here/nope', emptyBase, baseB) === null)
+  check('★ 负控不放宽：只在 fallback 里有**包根**、却引用不存在的子路径 ⇒ 仍然 null'
+    + '（这正是"按包名找清单"那两条兜底必须被挡住的原因）',
+    resolvePackageJson('@only/here/does-not-exist', emptyBase, baseB) === null)
+}
+
+// ── ⑦ 0.5.49 第二个改错：向上找清单时不许被"子目录里的私有子清单"骗走 ──────────
+// 真机现场：`@linxin666/dsh-web-all/plugin-manager` 的 exports 目标是 `./lib/shells/shell.js`，
+// 而 `lib/shells/package.json` 是构建产物用的私有子清单
+// （`{"name":"@linxin666/dsh-web-all-shells","private":true}` —— **没有 version**）。
+// 只取"最近的那份" ⇒ 版本/仓库全空，和"解不出来"一样坏，只是换了个坏法。
+{
+  put('node_modules/@nested/pkg/package.json', pkgJson({
+    name: '@nested/pkg', version: '3.1.4',
+    exports: { './feature': './lib/shells/entry.js' },
+  }))
+  put('node_modules/@nested/pkg/lib/shells/entry.js', 'export default 1\n')
+  put('node_modules/@nested/pkg/lib/shells/package.json', pkgJson({ name: '@nested/pkg-shells', private: true }))
+
+  const hit = resolvePackageJson('@nested/pkg/feature', ROOT)
+  check('★ 0.5.49 核心：向上找清单必须认**包名匹配**的那份，不能被子目录里的私有子清单截胡',
+    hit === join(ROOT, 'node_modules', '@nested', 'pkg', 'package.json'), String(hit))
+  check('对照：那份私有子清单确实存在（说明这条用例不是空转）',
+    existsSync(join(ROOT, 'node_modules', '@nested', 'pkg', 'lib', 'shells', 'package.json')))
+  check('对照：连子清单自己也没有 version（正因如此被截胡才会让面板版本为空）',
+    JSON.parse(readFileSync(join(ROOT, 'node_modules', '@nested', 'pkg', 'lib', 'shells', 'package.json'), 'utf8')).version === undefined)
 }
 
 // ── ⑤ 端到端：装后校验不再对子路径引用误报缺失 ────────────────────────────────

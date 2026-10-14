@@ -2,6 +2,66 @@
 
 All notable changes to dsh-plugin-hub.
 
+## v0.5.49 — 0.5.48 第四项修复的回退：子路径引用被连合法回退一起掐掉（改错，2026-10-14）
+
+**这是 0.5.48 自己引入的回归**，0.5.49 只修它，别的一律不动。
+
+### 现象（怎么发现的）
+
+用户问"上一次 hub 修复有没有损坏原有功能"，于是拿 0.5.48 与干净检出
+（`tests/.testdir/head-pristine`，v0.5.44）跑同一套用例对比，**净差正好 1 项**：
+
+| 用例 | 干净检出 v0.5.44 | 0.5.48 |
+| --- | --- | --- |
+| test-issue15-resolve | ❌ 1 项 | ❌ **2 项** |
+
+多出来的那项：`FAIL 全家桶: @linxin666/dsh-web-all/plugin-manager`（上一版解得出，这一版解不出）。
+其余红项（framework-versions / host-shape / peer-veto / bundle-guard /
+framework-upgrade-platform）在干净检出上**逐条同红**，属本机环境（桌面壳托管 409、npx 缓存损坏），
+**不是这次改动引入的**。
+
+### ① 判据放错位置：子路径引用把 profile 回退也一起掐了
+
+- **根因**：0.5.48 修"exports 子路径假阳性"时加的这道闸
+  （`if (isSubpathRef(pkgName)) return null`）写在了 **fallbackBase 那次真实解析之前**。
+  它要挡的是"按**包名**找清单"那两条兜底（防 `@scope/tool/nope` 命中包根清单被误判为好引用），
+  但位置一放错，连"解析这个引用本身"这条合法路径也一起没了。
+- **真机后果**：只在 profile 里、框架树里没有的第三方子路径引用
+  （`@linxin666/dsh-web-all/plugin-manager` 等）从"解得出"退回 `null`
+  ⇒ 面板里那批行的**版本 / 安装日期 / 仓库全变空**（实测 `/plugin-console/state` 确认，
+  这些行的 `version`、`repository` 确实是空的）。官方子路径行（`@deepseek-ai/dsh-web-app/startup` 等）
+  走的是框架基准，**不受影响** ⇒ 现场不显眼。
+- **修法**：这道闸只挡后两条兜底；子路径引用仍走**两个基准**的真实解析：
+  `baseDir 真实解析 → fallbackBase 真实解析 → 才 return null`。
+  负控**一条都没放松**：`@scope/tool/nope`、`ds-bot/does-not-exist` 仍然返回 `null`。
+
+### ② 顺带挖出的第二个坏法：向上找清单被"子目录私有子清单"截胡
+
+修完①之后真机复跑，解出来了 —— 但**解到的是错的清单**：
+
+- `@linxin666/dsh-web-all/plugin-manager` 的 exports 目标是 `./lib/shells/shell.js`，
+  而 `lib/shells/package.json` 是构建产物用的**私有子清单**
+  （`{"name":"@linxin666/dsh-web-all-shells","private":true}` —— **没有 version 字段**）。
+- 原来只取"**最近**的那份 package.json" ⇒ 拿到这份 ⇒ 版本照样为空。
+  和"解不出来"是同一个坏结果，只是换了个坏法（所以只修①并不够，这条是复跑时才发现的）。
+- **修法**：向上找时优先认**包名匹配**的那份清单；一路都不匹配才退回最近的那份
+  （不返回 null —— 包确实存在，只是清单不规范，此时宁可给出最近的那份，也不谎报"没这个包"）。
+
+### 测试
+
+`tests/test-subpath-resolve.mjs` 17 → 25 条，新增两组各带对照与负控：
+
+- ⑥ **只在 fallbackBase 里的子路径引用必须解得出来**（0.5.48 正是在这里返回 null），
+  外加四条对照/负控：裸包名一直解得出来、baseDir 能解析时不被 fallback 抢走、
+  两个基准都没有的子路径仍是 `null`、**只在 fallback 有包根但引用不存在子路径仍是 `null`**
+  （这条正是"按包名找清单"那两条兜底必须被挡住的原因）。
+- ⑦ 向上找清单**不许被子目录私有子清单截胡**，且对照断言那份子清单确实存在、
+  确实没有 `version`（证明这条用例不是空转）。
+
+全量：99 套，失败 **6** 套（修复前 7）—— 少的正是本次修掉的 `test-issue15-resolve`
+里那一项（该项从 2 红回到 1 红，剩下那条 `dsh-better-sidebar` 在干净检出上同样红，属环境）。
+`test-pnpm-runners` 由红转绿（用户的 npx 缓存已被另一个会话修好）。
+
 ## v0.5.48 — 四个真缺陷：供应链闸挂住 / pnpm 选错版本 / 子目录插件不命中落地副本 / exports 子路径假阳性（改错，2026-10-13）
 
 四个缺陷都是**装 `ds-bot` 时实测撞出来的**，本轮逐条修 + 逐条给了可失败的断言与变异验证。
