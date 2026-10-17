@@ -77,6 +77,8 @@ const ROUTES = [
   '/compat-mode',
   '/compat-stamp',
   '/declare-installed',
+  // link 开发式安装清单（0.5.54 加法）：纯只读
+  '/links',
   // 依赖锁体检 / 重建（2026-09-27 加法）：check 只读，repair 必须显式调用
   '/lockfile-check',
   '/lockfile-repair',
@@ -113,6 +115,8 @@ const SCHEMAS = [
   //   用户看到的是"插件静默消失"）。契约变化 ⇒ 这里必须同步，正是本套存在的意义。
   ['GET', '/plugin-console/state', undefined, 200, ['compat', 'compatGate', 'compatPending', 'components', 'entries', 'framework', 'gating', 'github', 'host', 'installJobs', 'ok', 'patch', 'patchHeal', 'patchPath', 'pendingRestart', 'recentFailures', 'rollback', 'selfVersion', 'skippedBundles']],
   ['GET', '/plugin-console/sources', undefined, 200, ['giteeStatus', 'ok', 'sources']],
+  // link 开发式安装清单（0.5.54）：纯只读；items 每项含 target/ready/垫片/持久化
+  ['GET', '/plugin-console/links', undefined, 200, ['count', 'error', 'items', 'ok', 'readyCount']],
   ['GET', '/plugin-console/skills-installed', undefined, 200, ['ok', 'pluginSkills', 'skills']],
   ['GET', '/plugin-console/framework-upgrade-status', undefined, 200, ['message', 'ok', 'status']],
   ['POST', '/plugin-console/details', { entryId: 'include:demo' }, 200, ['entryId', 'meta', 'moduleName', 'ok', 'readme', 'rowId']],
