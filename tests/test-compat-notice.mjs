@@ -24,7 +24,7 @@ mkdirSync(join(HOME, 'plugin-console'), { recursive: true })
 process.env.DSH_HOME = HOME
 
 const {
-  COMPAT_ACK_FILE, DEFAULT_NOTICE_MODE, NOTICE_MODES, readCompatAck, resolveNoticeState, writeCompatAck,
+  COMPAT_ACK_FILE, DEFAULT_NOTICE_MODE, NOTICE_MODES, SUPPORTED_WEB_APP_PATTERN, readCompatAck, resolveNoticeState, writeCompatAck,
 } = await import('../lib/server/domain/compat.js')
 
 let passed = 0
@@ -79,6 +79,20 @@ check('⑦ ack 落盘 / 读回；文件损坏 → 降级为没 ack 过（不抛�
 check('⑧ 三态常量固定（always / once-per-version / off；默认 once-per-version）', () => {
   assert.deepEqual(NOTICE_MODES, ['always', 'once-per-version', 'off'])
   assert.equal(DEFAULT_NOTICE_MODE, 'once-per-version')
+})
+
+// ── ⑨ 受支持系列（2026-10-15 加法）────────────────────────────────────────────
+// 真机现场：框架已到 0.2.1-rc.2，而这里原先只认 0.1.x ⇒ 面板长期挂着一条过期的红字警告，
+// 可控制台在 0.2.x 上实际工作正常。所以把 0.2.x 正式纳入；但**未验证的新系列仍必须报警**
+// （警告的价值是"这个系列我没验证过"，不是"越新越好"）。
+// 正控 + 负控都在，防止有人把它一路放宽成"永远不响"。
+check('⑨ 受支持系列：0.1.x / 0.2.x 支持；0.3 / 1.0 / 空的仍不支持（负控）', () => {
+  for (const v of ['0.1.0', '0.1.7-rc.2', '0.1.1-rc.1', '0.2.0', '0.2.0-rc.2', '0.2.1-rc.1', '0.2.1-rc.2']) {
+    assert.equal(SUPPORTED_WEB_APP_PATTERN.test(v), true, `${v} 应判为受支持`)
+  }
+  for (const v of ['0.3.0-rc.1', '1.0.0', '0.0.9', '10.1.0', '']) {
+    assert.equal(SUPPORTED_WEB_APP_PATTERN.test(v), false, `${v} 不应判为受支持`)
+  }
 })
 
 console.log(passed > 0 && process.exitCode !== 1 ? `\n${passed} PASS / 全绿` : `\n${passed} PASS / 有失败`)

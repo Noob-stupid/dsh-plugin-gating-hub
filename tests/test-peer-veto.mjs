@@ -105,6 +105,15 @@ console.log('\n=== ③ 域级：三种结局的措辞必须分得开 ===')
     peersCase?.kind === 'peers' && /peer 不满足/u.test(peersCase.reason) && peersCase.reason.includes('^0.0.1-rc.3') && peersCase.reason.includes(FW_VERSION), JSON.stringify(peersCase))
   check('③-① 带出路提示（清残留 / 更新 / 精确版本豁免）',
     typeof peersCase.hint === 'string' && /更新/u.test(peersCase.hint) && /compatibility\.json/u.test(peersCase.hint))
+  // ★ 0.5.52 加法：否决必须说清"判的是哪一份副本"。
+  //   真机现场：桌面端 asar 内有一份 0.2.1-rc.2（与框架匹配），profile 内是 0.2.0-rc.2（会加载的那份）；
+  //   面板显示版本走框架 base 优先 ⇒ 同一张卡片出现「版本 0.2.1-rc.2」+「peer 不满足」自相矛盾。
+  //   判据不该改基准（判定必须反映"会加载哪一份"），但必须**说出来**，让人能对上号。
+  check('③-① 否决带回「判据用的那份副本」（judged.version + judged.path，能让卡片自解释）',
+    peersCase?.judged?.version === '0.0.1-rc.3'
+      && typeof peersCase.judged.path === 'string'
+      && peersCase.judged.path.endsWith('package.json'),
+    JSON.stringify(peersCase?.judged))
   const okCase = peerVetoFor({ moduleName: '@fake/peer-ok', profileDir, frameworkVersion: FW_VERSION })
   check('③-② peer 满足 → null（不产出）', okCase === null, JSON.stringify(okCase))
   const missingCase = peerVetoFor({ moduleName: '@fake/missing-pkg', profileDir, frameworkVersion: FW_VERSION })
