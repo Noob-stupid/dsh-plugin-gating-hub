@@ -51,6 +51,27 @@ All notable changes to dsh-plugin-hub.
 ⇒ 所以加了**可靠性闸**：拿不到安装锚点 / 拿不到框架版本时，返回 `reliable: false` + 空清单 + 一条说明，
 **绝不制造假警报**。这也是本套测试里 ⑦ 那三条负控钉住的东西。
 
+### 顺带修复：桌面端那个"永远点不通"的回滚按钮
+
+用户当天还问了一句：「那个 dsh 版本回退确认在官方桌面端能成功回退是吧」。查实结论是 **不能**，
+而且是**刻意的**：
+
+- `routes/framework-upgrade.js` 与 `routes/framework.js` 都用 `refuseWhenShellHosted()` 守卫 ——
+  外壳托管时返回 **409**，文案「本实例由桌面端外壳托管，请在桌面端内重启/更新」。
+  这道守卫是历史事故的修补：回滚脚本曾按端口 Stop-Process 杀掉 Electron 承载的 host，
+  重新拉起时找不到 bin.js，外壳记了一次 crash。
+- `detectHostShape()` 的 5 条信号（Electron 版本 / `ELECTRON_RUN_AS_NODE` / 路径含 `app.asar` /
+  `electron(.exe)` / `resourcesPath`）在官方桌面端**全部命中**。
+- 但 `state.js` 算 `rollback.applicable` 时**只看**"有没有回滚点 + 版本是否已回退"，
+  没看外壳托管 ⇒ 面板照旧渲染一个可点的「回滚到上一版」⇒ **点下去必然 409**。
+
+修法（纯加法、只读）：`/state` 与 `/compat-status` 都下发 `host: { hosted, kind, notice }`
+（判据与守卫**共用** `detectHostShape`，不写第二份）；客户端据此把回滚按钮从 `rollbackUsable`
+里排除、禁用升级按钮并把服务端那句 notice 作为 tooltip 与行内说明，
+「升级安全」面板的回滚点也改标"不可用 + 原因"，而不是"可用：X → Y"。
+
+**不是**要让桌面端能回滚（拒绝是有理由的），而是**别让人点了才知道**。
+
 ### 测试
 
 `tests/test-bundle-veto.mjs`（新增，12 条，全离线夹具）：

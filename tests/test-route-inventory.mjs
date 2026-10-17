@@ -111,7 +111,7 @@ const SCHEMAS = [
   // 2026-09-24：门控面板要显示「具体是哪些插件」→ /state 新增 gating 明细块
   // 2026-10-15（0.5.53）：新增 skippedBundles（被框架整层跳过的 bundle —— 过去完全不可见，
   //   用户看到的是"插件静默消失"）。契约变化 ⇒ 这里必须同步，正是本套存在的意义。
-  ['GET', '/plugin-console/state', undefined, 200, ['compat', 'compatGate', 'compatPending', 'components', 'entries', 'framework', 'gating', 'github', 'installJobs', 'ok', 'patch', 'patchHeal', 'patchPath', 'pendingRestart', 'recentFailures', 'rollback', 'selfVersion', 'skippedBundles']],
+  ['GET', '/plugin-console/state', undefined, 200, ['compat', 'compatGate', 'compatPending', 'components', 'entries', 'framework', 'gating', 'github', 'host', 'installJobs', 'ok', 'patch', 'patchHeal', 'patchPath', 'pendingRestart', 'recentFailures', 'rollback', 'selfVersion', 'skippedBundles']],
   ['GET', '/plugin-console/sources', undefined, 200, ['giteeStatus', 'ok', 'sources']],
   ['GET', '/plugin-console/skills-installed', undefined, 200, ['ok', 'pluginSkills', 'skills']],
   ['GET', '/plugin-console/framework-upgrade-status', undefined, 200, ['message', 'ok', 'status']],
