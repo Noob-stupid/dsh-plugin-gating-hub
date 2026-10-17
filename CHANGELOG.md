@@ -2,6 +2,55 @@
 
 All notable changes to dsh-plugin-hub.
 
+## v0.5.55 — 一行健康摘要：176 个按钮里，先说清"我该先处理哪件"（2026-10-15）
+
+### 起因
+
+审计里最朴素的结论：面板有 **176 个按钮 / 3 个区块**，而信息散在六处（兼容门控、peer 否决、
+持久化、依赖锁、框架残留、闭包预检）。用户打开面板时**没有任何地方能回答**：
+"我这套安装现在整体健康吗？有哪几件事需要我处理？" —— 该点的找不到，不该点的全在眼前。
+
+### 做了什么（只做折叠，不新增判据、不新增 IO）
+
+新增 `lib/server/domain/install-health.js`：**纯函数**，输入全部是 `/state` 里**已经算好**的块
+（否决行、被跳过的 bundle、待适配行、补丁自愈遗留项），输出一句话摘要 + 分项计数。
+因此可以放进 `/state` 返回，**不带来任何额外读盘/联网/spawn**。
+
+`GET /plugin-console/state` 新增 `health: { issues, items: [{ kind, severity, count, label }] }`，
+客户端把它摆在面板**最上面**一行：
+
+> 需要处理 3 类问题：被框架跳过的 bundle 2 · 被框架否决的插件行 6 · 待适配确认的行 1
+
+严重度只有两档，刻意简单：**blocker**（看不到/用不了）与 **warn**（有风险）。
+
+### 一条继承自 0.5.53 的纪律
+
+`skippedBundles.reliable === false` 时**不计入**健康摘要（判据不可靠就宁可不报，绝不制造假警报）。
+这条在 `tests/test-install-health.mjs` 的 ③ 里钉死 —— 两个模块守同一条规矩。
+
+### 顺带修好的真机问题（不是代码，是数据）
+
+真机 E2E 报出 `ds-bot` 的 4 个框架 peer 垫片**记录还在、链接已失效**（大概率被某次
+`pnpm install` 按 lock 修剪）。已用**插件自己的规范路径**（`ensureLinkSelfSufficiency`，
+不是手搓链接）修复，并顺带修好另外两个同样缺垫片的插件：
+
+| 插件 | 修前 | 修后 |
+|---|---|---|
+| `ds-bot` | 缺 4 个 peer 垫片 | **ready=true**（新建 4 个） |
+| `@dsh-external/dsh-super-injector` | 缺 3 个 | **ready=true**（新建 3 个） |
+| `@openviking/dsh-memory-plugin` | 缺 3 个 | **ready=true**（新建 3 个） |
+
+修后 link 清单：**7 个里 3 个自足**（修前 0 个）。仍不自足的 4 个原因已查清并如实列出：
+`dsh-opencode-go` 缺的 2 个 peer **在垫片根里不存在**（框架树里有、`profiles/node_modules`
+那 174 个 junction 里没有）—— 属框架层不完整，控制台不硬造；`dsh-breadboard` 目标是 profile 树外的
+`D:\dsh-breadboard`；`dsh-grade-mode` 与 `react` 缺的是**依赖**（要走 pnpm，不是垫片能解决的）。
+
+### 测试
+
+`tests/test-install-health.mjs`（新增，6 条，纯离线）：全健康时 issues=0（正控）· 被跳过的 bundle 计为
+blocker · **reliable=false 不计入**（负控）· 各来源分别计数且严重度正确 · **issues 是类数不是条目总数** ·
+畸形输入（null/非对象/字段为 null）不抛不虚报。`tests/test-route-inventory.mjs` 同步登记 `/state` 的 `health` 字段。
+
 ## v0.5.54 — 开发式链接（link）清单：把"算得出来却从不给你看"的那层摊开（2026-10-15）
 
 ### 起因：审计结论 + 用户点名的方向
