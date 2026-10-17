@@ -76,6 +76,38 @@ profile 里 @deepseek-ai/dsh-experimental-auto-review = 0.2.0-rc.2   peers 全�
 **明确没做的事**：没有为了让卡片"看起来一致"而放宽判据。被否决的这些包**确实是 0.2.0-rc.2**，
 而运行时框架是 0.2.1-rc.2 —— 否决是对的，错的只是"面板没告诉你它判的是另一份"。
 
+### 第三处修复：面板永远说"已是最新版本" ⇒ "禁用 → 更新适配 → 启用"这条流程走不完
+
+**用户原话**（2026-10-15）：「我们原本意思就是如果不适配先禁用，然后再更新适配启用吧，
+那现在是版本也对了，但是显示这样」。
+
+**根因：候选一直拿得到，但没有任何一处在用 `next`。**
+
+1. npm 上 `@deepseek-ai/*` 的 `dist-tags.latest` 是**远古版本**（本机实测 `latest=0.1.6-alpha.1`、
+   `next=0.2.1-rc.2`）—— 仓库里 `install.js` 早就记着这个坑（"npm 上这些内部包的
+   dist-tags.latest 是远古版本，必须显式版本"）
+2. 服务端 `dropStaleUpdateCandidates` 按"低于已装"把 `latest` **清成 null**（这是对的，防降级）
+3. 但**客户端只认 `latest`**（`client.js`：`updateCheck.latest && …`）⇒ 看到 null ⇒ 报"已是最新版本"
+4. 而 `next`（= `0.2.1-rc.2`，**正是能解决 peer 不匹配的那个版本**）服务端一直下发着，**从没被用过**
+
+框架那张卡片早就有这个语义（`pickFrameworkTarget`：latest 优先，latest 不高于当前而 next 更新时取 next），
+插件卡片没跟上 —— 于是「不适配 → 禁用 → 更新 → 启用」这条既定流程**卡在第三步**。
+
+**修法（把框架那套语义搬到插件侧，同一口径）**：
+
+- `domain/update-candidates.js` 新增 `pickUpdateTarget({latest,next,beta})` —— latest 优先，否则 next，
+  再否则 beta，全空返回 null。安全性由调用顺序保证：只接受**已净化**的候选（低于已装的已被清成 null），
+  所以"取第一个非空"天然等于"取一个确实更高、且 latest 优先"的版本
+- `routes/framework.js` 的 `/check-update` 把它算好放进响应的 `target` 字段
+- `client.js` 改用 `updateCheck.target ?? updateCheck.latest`
+  （**回落兼容老服务端**：字段缺失时行为与旧版一字不差）
+- 测试：`test-update-version-pick` 新增 ⑥-b 四条（latest 空时取 next / latest 优先于 next /
+  三者皆空 ⇒ null / 空串不算候选），并同步更新那两条"精确字符串"接线断言
+  —— 它们正是为这种接线改动而设的，改了就红、红了就同步更新，是设计而非噪音
+
+**这条修好之后**：那批被否决的插件在面板上会显示「有更新：0.2.0-rc.2 → 0.2.1-rc.2」并给出更新按钮，
+**点一下就能把「禁用 → 更新 → 启用」走完** —— peer 版本对上，否决自然消失。
+
 ### 测试
 
 `tests/test-compat-notice.mjs` 新增 ⑨（正控：`0.1.x` / `0.2.x` 7 个版本判支持；

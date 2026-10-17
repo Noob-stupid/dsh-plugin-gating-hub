@@ -35,7 +35,7 @@ process.env.DSH_HOME = HOME
 const BASE_URL = 'file:///'
 
 const { pickNewerSemver } = await import('../lib/server/infra/semver.js')
-const { dropStaleUpdateCandidates } = await import('../lib/server/domain/update-candidates.js')
+const { dropStaleUpdateCandidates, pickUpdateTarget } = await import('../lib/server/domain/update-candidates.js')
 
 let failed = 0
 const check = (label, cond, extra) => {
@@ -132,9 +132,9 @@ check('⑤ 卡片按钮判据没被削弱：updateMap 命中仍显示「更新 �
 // ── ⑥ 服务端兜底：低于已装版本的候选不当作"新版"（字段名不变）──────────────────
 const candidatesSrc = readFileSync(join(ROOT, 'lib', 'server', 'domain', 'update-candidates.js'), 'utf8')
 check('⑥ framework.js 的 /check-update 兜底调用了净化模块（字段名不变）',
-  /import \{ dropStaleUpdateCandidates \} from '\.\.\/domain\/update-candidates\.js'/u.test(frameworkSrc)
+  /import \{ dropStaleUpdateCandidates, pickUpdateTarget \} from '\.\.\/domain\/update-candidates\.js'/u.test(frameworkSrc)
   && frameworkSrc.includes("dropStaleUpdateCandidates({ latest, next, beta }, packageName, ctx.baseUrl ?? 'file:///', profileDirOf(ctx))")
-  && frameworkSrc.includes('sendJson(res, 200, { ok: true, packageName, latest, next, beta, depsOutdated, error, source, migrate })'))
+  && frameworkSrc.includes('sendJson(res, 200, { ok: true, packageName, latest, next, beta, target: pickUpdateTarget({ latest, next, beta }), depsOutdated, error, source, migrate })'))
 check('⑥ 净化模块只收已解开的 baseUrl / profileDir（domain 层不认识 cordis ctx，架构守卫 ⑤）',
   /import \{ entryPkgMeta \} from '\.\.\/infra\/paths\.js'/u.test(candidatesSrc)
   && !/(?<![\w$.])ctx(?![\w$])/u.test(candidatesSrc.replace(/\/\/[^\n]*/gu, '').replace(/\/\*[\s\S]*?\*\//gu, '')))
@@ -148,6 +148,22 @@ check('⑥ ★ 真机数据（桩 profile 已装 0.2.0-rc.2）：镜像 latest 0
 check('⑥ 未安装的包（读不到已装版本）⇒ 候选原样保留（既有行为一字不动）',
   JSON.stringify(dropStaleUpdateCandidates({ latest: '0.1.0', next: null, beta: null }, '@noob-stupid/not-installed-xyz', BASE_URL, PROFILE))
   === JSON.stringify({ latest: '0.1.0', next: null, beta: null }))
+
+// ── ⑥-b 更新目标（0.5.52 加法）：latest 优先，否则 next，再否则 beta ──────────────
+// 真机现场（2026-10-15）：npm 上 `@deepseek-ai/*` 的 dist-tags.latest 是远古版（0.1.6-alpha.1），
+// 对已装 0.2.0-rc.2 属"更低"⇒ 被净化成 null；而 next=0.2.1-rc.2 确实更高。
+// 客户端原先只认 latest ⇒ 永远显示「已是最新版本」，「禁用→更新→启用」走不完。
+// 正控 + 负控都钉：能选中 next；三者全空时必须返回 null（绝不凭空造一个"更新"）。
+check('⑥-b 目标选取：latest 为空时取 next（真机现场）',
+  pickUpdateTarget({ latest: null, next: '0.2.1-rc.2', beta: null }) === '0.2.1-rc.2')
+check('⑥-b 目标选取：latest 优先于 next（稳定版优先，与框架 pickFrameworkTarget 同口径）',
+  pickUpdateTarget({ latest: '0.3.0', next: '0.4.0-rc.1', beta: null }) === '0.3.0')
+check('⑥-b 目标选取：三者皆空 ⇒ null（负控：没有更高版本就不许造一个）',
+  pickUpdateTarget({ latest: null, next: null, beta: null }) === null
+  && pickUpdateTarget({}) === null
+  && pickUpdateTarget(null) === null)
+check('⑥-b 目标选取：空串不算候选（不让 "" 变成一个"更新到空版本"）',
+  pickUpdateTarget({ latest: '', next: '0.2.1-rc.2', beta: null }) === '0.2.1-rc.2')
 
 // ── ⑦ 本机化纪律：本轮新增/改动文件里 0 处本机绝对路径 / 用户名（与既有同类扫描同口径）──
 {
