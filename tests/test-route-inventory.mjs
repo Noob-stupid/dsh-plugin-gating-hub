@@ -79,6 +79,8 @@ const ROUTES = [
   '/declare-installed',
   // link 开发式安装清单（0.5.54 加法）：纯只读
   '/links',
+  // 兼容豁免写入（0.5.56 加法）：把被跳过 bundle 的出路做成可点动作
+  '/compat-exempt',
   // 依赖锁体检 / 重建（2026-09-27 加法）：check 只读，repair 必须显式调用
   '/lockfile-check',
   '/lockfile-repair',
@@ -121,6 +123,8 @@ const SCHEMAS = [
   ['GET', '/plugin-console/framework-upgrade-status', undefined, 200, ['message', 'ok', 'status']],
   ['POST', '/plugin-console/details', { entryId: 'include:demo' }, 200, ['entryId', 'meta', 'moduleName', 'ok', 'readme', 'rowId']],
   ['POST', '/plugin-console/compat-gate', {}, 200, ['compatGate', 'ok']],
+  // 兼容豁免写入（0.5.56）：缺参时必须是 400 且带可读原因（不能 500）
+  ['POST', '/plugin-console/compat-exempt', {}, 400, ['details', 'error', 'ok']],
   // 2026-09-23：面板改成「可选版本列表」→ 契约新增 alpha / tagDefault / versions 三个字段
   ['POST', '/plugin-console/framework-check', {}, 200, ['alpha', 'checkedAt', 'current', 'latest', 'next', 'ok', 'registryError', 'tagDefault', 'target', 'versions']],
   ['POST', '/plugin-console/ai-empower/list', {}, 200, ['ok', 'tasks']],
