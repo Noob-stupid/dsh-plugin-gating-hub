@@ -81,6 +81,9 @@ const ROUTES = [
   '/links',
   // 兼容豁免写入（0.5.56 加法）：把被跳过 bundle 的出路做成可点动作
   '/compat-exempt',
+  // 开发区根 + 钉住（0.5.57 加法）
+  '/dev-roots',
+  '/pin-dev-dir',
   // 依赖锁体检 / 重建（2026-09-27 加法）：check 只读，repair 必须显式调用
   '/lockfile-check',
   '/lockfile-repair',
