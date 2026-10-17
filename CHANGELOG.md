@@ -2,6 +2,67 @@
 
 All notable changes to dsh-plugin-hub.
 
+## v0.5.53 — 被框架整层跳过的 bundle 终于可见：插件不再"静默消失"（2026-10-15）
+
+### 现象（用户真机，2026-10-15）
+
+> 「为啥有的插件我本身是有的，但是没显示呢，比如 opviking 的 memory 插件」
+
+`@openviking/dsh-memory-plugin`：装了、在 profile 的 `dependencies`（`link:` 钉着）、
+在 `dsh.profile.bundles` 里、自己的 bundle 补丁也正常 —— 可**面板上一个字都没有**，连"未加载"都不是。
+
+### 根因：两层否决，只有一层可见
+
+框架 `dsh-app-boot` 对插件有**两道**闸，而控制台过去只补出了第二道：
+
+| 层 | 判据 | 后果 | 控制台过去 |
+|---|---|---|---|
+| **bundle 级**（`loadProfileDirectory`） | **bundle 自身**的 dsh peers | 不满足 ⇒ `throw` ⇒ 整个 bundle 层进 `skippedBundles` ⇒ **它要插的行根本不存在** | **完全不知道**（全仓 grep 只有一句提示文案提过兼容豁免） |
+| **行级**（`evaluatePluginCompatibility` + preflight） | 每个模块的 peers | 行存在但被禁用 ⇒ 列表里可见、标"未加载" | 已复算并显示（0.5.33 起） |
+
+被 bundle 级拒掉的那种，**在列表里没有任何位置可挂** —— 用户看到的是"消失"，不是"出错"。
+这是所有 UX 形态里最伤的一种：连"出错了"都不算。
+
+### 修法：把这道闸也复算出来（纯只读，不改任何东西）
+
+新增 `lib/server/domain/bundle-veto.js`，判据与框架**逐字对齐**：
+
+- **解析顺序 = 安装锚点优先、profile 兜底**（框架注释原文：内置 bundle 永远来自运行中的 dsh 安装，
+  不用 profile 本地副本；顺序搞反会把内置 bundle 误报成"被跳过"）
+- 只看 `@deepseek-ai/dsh` / `@deepseek-ai/dsh-*` 这类 peer（复用 `peer-veto.js#unsatisfiedPeers`，不写第二份比较）
+- **豁免优先**：profile 的 `compatibility.json`（`"包@精确版本": ["DSH版本"...]`）命中当前框架版本
+  ⇒ 框架不跳过 ⇒ 我们也不报；坏文件/坏记录一律降级为"无豁免"（与框架同款）
+- 三种原因**分开说**：`peers`（版本不满足）/ `no-bundle`（没有 dsh.bundle 声明）/ `missing`（包体解析不到）
+  —— 出路完全不同，混为一谈会把人带偏
+
+`GET /plugin-console/state` 新增 `skippedBundles: { items, reliable, note }`；
+客户端在面板顶部（兼容提示下方）渲染一块「被框架跳过的 bundle（N 个）」，逐条给包名 + 版本 + 原因，
+出路放 tooltip。
+
+### ⚠️ 一个必须记下来的设计教训：**判据不可靠时宁可不报**
+
+第一版直接拿 `profile` 优先去解析，真机试算（离线调模块跑真实 desktop profile）立刻暴露：
+**5 个 bundle 被报成"被跳过"，其中 `@deepseek-ai/dsh-web-app` 明明正在正常工作**。
+
+根因还是那个老问题：**普通 Node 读不进 Electron 的 asar** ⇒ 安装锚点解析失败 ⇒ 全部回落到 profile 副本
+（0.2.0-rc.2）⇒ 与运行时 0.2.1-rc.2 不符 ⇒ 假警报。生产环境（Electron）里锚点是可解析的
+（面板那句"当前 0.2.1-rc.2"正是同一套解析出来的），但**不能靠环境假设**。
+
+⇒ 所以加了**可靠性闸**：拿不到安装锚点 / 拿不到框架版本时，返回 `reliable: false` + 空清单 + 一条说明，
+**绝不制造假警报**。这也是本套测试里 ⑦ 那三条负控钉住的东西。
+
+### 测试
+
+`tests/test-bundle-veto.mjs`（新增，12 条，全离线夹具）：
+解析顺序（安装优先）· 内置满足不报（正控）· peers 不满足要报且原因可读 · `no-bundle` 与 `peers` 分开 ·
+`missing` · **豁免优先**（授权后不报 / 版本不匹配仍报 / 坏文件降级）· **可靠性闸**（无锚点 ⇒ 不报 / 无框架版本 ⇒ 不报 / 空清单是正常空态）。
+架构守卫 ALL PASS（`bundle-veto.js` 195 行，在 600 行硬顶内）。
+
+### 明确没做的
+
+- **没有**自动授予豁免、没有自动改 `dsh.profile.bundles`、没有自动更新被跳过的 bundle —— 只做"看得见"
+- 没有改框架任何文件
+
 ## v0.5.52 — 受支持框架系列补上 0.2.x：那条过期的红字警告不再误报（2026-10-15）
 
 ### 现象（用户真机，2026-10-15）
