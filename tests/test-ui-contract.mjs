@@ -76,6 +76,12 @@ check('⑤ ★ /check-update 必须下发 target（latest→next→beta），客
   assert.match(CLIENT, /updateCheck\.target \?\? updateCheck\.latest/u, '客户端没有优先用 target（会退回只认 latest）')
 })
 
+// ── ⑤-b target 必须被**存进状态**（0.5.68 事故：服务端给了、渲染用了、状态里却没存）──
+check('⑤-b ★ updateCheck 状态必须保存 target/next（只存 latest ⇒ 永远显示"已是最新"）', () => {
+  assert.match(CLIENT, /target: data\.target \?\? null/u, '状态拷贝里没有 target —— 渲染拿到的永远是 undefined')
+  assert.match(CLIENT, /next: data\.next \?\? null/u, '状态拷贝里没有 next')
+})
+
 // ── ⑥ 卡片上的每个动作都要有对应路由（"点了没反应/404"）──────────────────
 check('⑥ ★ 客户端调用的每个 /plugin-console 接口都必须已注册（防"按钮背后没路"）', () => {
   const called = new Set()
