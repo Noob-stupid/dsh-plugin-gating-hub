@@ -88,6 +88,9 @@ const ROUTES = [
   // 依赖锁体检 / 重建（2026-09-27 加法）：check 只读，repair 必须显式调用
   '/lockfile-check',
   '/lockfile-repair',
+  // 0.5.84 加法（用户第 7 项）：<DSH_HOME>/plugin-console 的磁盘体检（只读）与**确认后**清理
+  '/disk-audit',
+  '/disk-cleanup',
   // 结构化建议动作（2026-09-27 加法）：只认白名单动作类型，argv 由服务端自拼
   '/run-suggested',
   // 补丁体检（2026-09-28 加法）：只读；补丁里引用的包在当前框架树里是否还在（真机事故：

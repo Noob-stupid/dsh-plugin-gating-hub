@@ -111,6 +111,9 @@ jobs:
           # 0.5.84 加法：功能包工具栏的 link 入口（点开打 /plugin-console/links；安全面板的折叠展示保留；
           # 主面板里仍不许出现 fill()）
           node tests/test-links-toolbar.mjs
+          # 0.5.84 加法：plugin-console 目录的磁盘体检（只读）+ 显式确认后清理
+          # （当前回滚点指向的备份必须 protected；未确认一个文件都不动；删完读回核实）
+          node tests/test-disk-audit.mjs
           # 批次 A-①（2026-09-27）：git 克隆的停滞判据（-c http.lowSpeedLimit=1 -c http.lowSpeedTime=20）
           # 含一段**真 git** 对着本机"只连不传"桩源的 ≈20 秒判死断言（不出外网，CI 可跑）
           node tests/test-git-stall-guard.mjs
