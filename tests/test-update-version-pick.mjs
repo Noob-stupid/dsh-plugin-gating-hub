@@ -156,8 +156,12 @@ check('⑥ 未安装的包（读不到已装版本）⇒ 候选原样保留（�
 // 正控 + 负控都钉：能选中 next；三者全空时必须返回 null（绝不凭空造一个"更新"）。
 check('⑥-b 目标选取：latest 为空时取 next（真机现场）',
   pickUpdateTarget({ latest: null, next: '0.2.1-rc.2', beta: null }) === '0.2.1-rc.2')
-check('⑥-b 目标选取：latest 优先于 next（稳定版优先，与框架 pickFrameworkTarget 同口径）',
-  pickUpdateTarget({ latest: '0.3.0', next: '0.4.0-rc.1', beta: null }) === '0.3.0')
+check('⑥-b 目标选取：按**版本高低**选（0.4.0-rc.1 高于 0.3.0 ⇒ 选 next）',
+  pickUpdateTarget({ latest: '0.3.0', next: '0.4.0-rc.1', beta: null }) === '0.4.0-rc.1')
+check('⑥-b 目标选取：latest 确实更高时仍选 latest（防止反向改错成"永远选 next"）',
+  pickUpdateTarget({ latest: '1.0.0', next: '0.9.0-rc.1', beta: null }) === '1.0.0')
+check('⑥-b 目标选取：真机现场（latest 远古 alpha / next 0.2.1-rc.2）⇒ 选 next',
+  pickUpdateTarget({ latest: '0.1.7-alpha.1', next: '0.2.1-rc.2', beta: null }) === '0.2.1-rc.2')
 check('⑥-b 目标选取：三者皆空 ⇒ null（负控：没有更高版本就不许造一个）',
   pickUpdateTarget({ latest: null, next: null, beta: null }) === null
   && pickUpdateTarget({}) === null
