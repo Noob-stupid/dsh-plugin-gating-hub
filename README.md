@@ -461,12 +461,72 @@ Verification matrix, raw logs and the one framework-side caveat (`0.1.2-rc.1` sh
 
 ---
 
+### Update integrity
+
+An update can be requested for a specific version. That version is carried into every download channel; if
+a channel ends up with a different version, the job reports a failure with both versions named, and the
+existing copy on disk is kept rather than replaced. The manifest and lock record a **version number** for
+such packages — a normal install does not produce a `link:`.
+
+Installs and updates are tracked per target: two different plugins can update at the same time, while the
+same plugin cannot be started twice.
+
+A finished install leaves two small records under `<DSH_HOME>/plugin-console/`:
+
+- `pending-restart.json` — plugins that are installed but not yet loaded, so the panel can keep showing
+  "installed · takes effect after restart" across a host restart. Entries are dropped once the plugin is
+  actually loaded.
+- `install-jobs.json` — the last fifty settled jobs, with the requested version, the version that landed,
+  and the error if any. A failure can therefore still be explained after the process that produced it is gone.
+
+Drift between the manifest and the lock is reconciled in the background with a cooldown, without blocking
+`/state`. Source-type dependencies (`link:`, `file:`, git) are excluded from that automation. A mismatch is
+reported as a failure only when it would actually lose the plugin; a lock or version drift is shown as a
+collapsible note instead.
+
+### Dev links (`link`)
+
+`link:` is a **development** mechanism — ordinary download installs and updates do not produce it. The
+`link` entry in the feature-pack toolbar is the working surface for it:
+
+- pick a registered dev root from the dropdown, or type an absolute path;
+- **Pin** is a two-step action: it first returns a read-only plan, and executes only after you confirm. No
+  code path skips that confirmation;
+- each row shows the target directory and its last-modified time, which is how you tell whether it is the
+  directory you are editing right now;
+- per-row actions appear only when they apply — **fill dependencies**, **build shims** (no pnpm run), and
+  **unpin**;
+- **Browse…** is rendered only when the desktop preload bridge is present. On a web instance it is not
+  rendered, rather than shown as a button that cannot work.
+
+### Disable provenance
+
+A row can be off for different reasons, and the panel distinguishes them:
+
+- **disabled by this console's patch** — removing the patch block enables it normally;
+- **disabled by the plugin or the framework default** — the console can only write an explicit
+  `disabled: false` override, which is what the **forced on by patch** badge refers to;
+- **force-enable had no effect** — the override exists but the row still is not running, and no peer veto
+  explains it. That override can be revoked from the row.
+
+### Operational details
+
+- Market enrichment runs behind a single limiter: four concurrent requests, one in flight per URL, a
+  ten-minute memory for failures and a five-minute success cache. A batch of unreachable mirrors therefore
+  cannot saturate the connection or delay installs.
+- `Disk audit` lists what occupies `<DSH_HOME>/plugin-console` and deletes only after an explicit
+  confirmation. The framework rollback point counts as protected.
+- The gate panel shows the current pending adaptations up front and keeps its history collapsed.
+
 ## Known limitations
 
-- Host code changes require a **service restart**: the panel's restart button only points at the
-  **official path** (restart inside the desktop client; the console never kills or spawns a
-  process — a manual relaunch would fight the host for the port and produce
-  "The application could not start or stopped unexpectedly"); client changes just need a page refresh;
+- Host code changes require a **service restart**; client changes only need a page refresh.
+  - On a **desktop-hosted** instance the console **refuses** to restart and says so: the official path is to
+    fully quit and reopen the client. It never kills or spawns a process there — a manual relaunch would
+    fight the host for the port and produce "The application could not start or stopped unexpectedly".
+  - On a **standalone (web) instance** the restart button is available: it relaunches detached, waits for
+    the port to free, and lets the old process exit gracefully. The toolbar entry is rendered only where it
+    can work — a desktop-hosted instance does not show it.
 - Live GitHub search depends on GitHub reachability (browser-direct + server fallback;
   during network-blackout windows retry later);
 - Version detection works for npm-published packages; skill-type repos have no version concept;
