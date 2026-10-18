@@ -19,6 +19,7 @@
 //
 // 全离线：不发一次真实网络请求（fetch 全替身），不碰真实 DSH_HOME。
 import { strict as assert } from 'node:assert'
+import { readFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 
@@ -259,6 +260,15 @@ check('⑥ 目标目录的改动时间：有就显示（本地化），拿不到
   const texts = panel.view().texts.join('\n')
   assert.ok(/linksMtime \d{4}[/-]\d{1,2}[/-]\d{1,2}/u.test(texts), `没显示改动时间：${texts.slice(0, 300)}`)
   assert.ok(texts.includes('linksMtime —'), `拿不到时间时该显示「—」：${texts.slice(0, 300)}`)
+})
+
+check('⑥ ★ 时间口径挂在行 tooltip 上（"直接下一层、不含 node_modules"这类误差要能查到）', () => {
+  const rowNode = panel.view().nodes.find((n) => typeof n.props?.title === 'string' && n.props.title.includes('linksMtimeHint'))
+  assert.ok(rowNode, '行的 title 里没有时间口径说明')
+  // 面板里的 t 是键名直通，所以真文案去源文件里查（两种语言都要有，别只修一边）
+  const src = readFileSync(join(REPO, 'lib', 'client.js'), 'utf8')
+  assert.ok(src.includes('不含 node_modules'), '中文口径说明里没有讲清 node_modules 被排除')
+  assert.ok(src.includes('node_modules / .git excluded'), '英文口径说明缺失（只修了一边）')
 })
 
 await checkAsync('③ ★ 钉住是两段式：先只读计划（不带 confirm），计划里给出包名与步骤', async () => {
