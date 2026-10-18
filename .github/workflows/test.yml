@@ -96,6 +96,9 @@ jobs:
           # 0.5.24 加法（选项 2）：显式动作「允许这些构建脚本」——最小改动 + 改前备份 + 写后读回核实 +
           # 未点击时文件 sha256 不变（负例）+ 绝不 exec/spawn（源码级安全边界）；全离线
           node tests/test-allow-builds.mjs
+          # 0.5.84 加法：市场富化的出口闸 —— 并发 ≤ 4 / 失败 10 分钟不再重试 / 成功短缓存 5 分钟 /
+          # 同一 URL 单飞 / 单次预算压到 4s；并断言 enrichItems 真的走这道闸（防"加了模块没人用"）
+          node tests/test-enrich-throttle.mjs
           # 批次 A-①（2026-09-27）：git 克隆的停滞判据（-c http.lowSpeedLimit=1 -c http.lowSpeedTime=20）
           # 含一段**真 git** 对着本机"只连不传"桩源的 ≈20 秒判死断言（不出外网，CI 可跑）
           node tests/test-git-stall-guard.mjs
