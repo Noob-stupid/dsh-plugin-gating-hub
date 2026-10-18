@@ -114,6 +114,9 @@ jobs:
           # 0.5.84 加法：plugin-console 目录的磁盘体检（只读）+ 显式确认后清理
           # （当前回滚点指向的备份必须 protected；未确认一个文件都不动；删完读回核实）
           node tests/test-disk-audit.mjs
+          # 0.5.84（用户第 8 项）：桌面端框架回滚的**只读可行性结论**的可核查部分
+          # （docs/framework-rollback-desktop.md 与代码前提一致；桌面端仍是拒绝；无人往 app.asar 写）
+          node tests/test-desktop-rollback-feasibility.mjs
           # 批次 A-①（2026-09-27）：git 克隆的停滞判据（-c http.lowSpeedLimit=1 -c http.lowSpeedTime=20）
           # 含一段**真 git** 对着本机"只连不传"桩源的 ≈20 秒判死断言（不出外网，CI 可跑）
           node tests/test-git-stall-guard.mjs
