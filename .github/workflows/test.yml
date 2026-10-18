@@ -99,6 +99,9 @@ jobs:
           # 0.5.84 加法：市场富化的出口闸 —— 并发 ≤ 4 / 失败 10 分钟不再重试 / 成功短缓存 5 分钟 /
           # 同一 URL 单飞 / 单次预算压到 4s；并断言 enrichItems 真的走这道闸（防"加了模块没人用"）
           node tests/test-enrich-throttle.mjs
+          # 0.5.84 判据降噪：「未持久化」只在会丢插件时报红（清单无条目 / 重启挂不上），
+          # 其余（lock 形态、清单与磁盘版本）降级为提示；同时钉死 persisted/note 闸门没被放松
+          node tests/test-persist-severity.mjs
           # 批次 A-①（2026-09-27）：git 克隆的停滞判据（-c http.lowSpeedLimit=1 -c http.lowSpeedTime=20）
           # 含一段**真 git** 对着本机"只连不传"桩源的 ≈20 秒判死断言（不出外网，CI 可跑）
           node tests/test-git-stall-guard.mjs
