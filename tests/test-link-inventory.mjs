@@ -145,5 +145,47 @@ check('⑦ 没有 link 依赖 ⇒ 空清单（count=0，不抛）', () => {
   assert.deepEqual({ count: r.count, items: r.items.length }, { count: 0, items: 0 })
 })
 
+// ── ⑧ 目标目录的改动时间（0.5.87 加法）────────────────────────────────────
+// 判据必须**含直接下一层**：Windows 上改文件内容**不会**更新目录自身的 mtime，
+// 只取目录会让人看到"我明明刚改过、时间还是上周"，而这条字段的用途正是「这是不是我正在改的那个」。
+{
+  const { targetMtimeOf } = await import('../lib/server/domain/link-inventory.js')
+  const { utimesSync } = await import('node:fs')
+  const dir = join(ROOT, 'dev', 'mtime-plugin')
+  writeJson(join(dir, 'package.json'), { name: 'mtime-plugin', version: '1.0.0' })
+  writeFileSync(join(dir, 'index.js'), 'export const a = 1\n', 'utf8')
+  mkdirSync(join(dir, 'node_modules', 'noise'), { recursive: true })
+  writeFileSync(join(dir, 'node_modules', 'noise', 'x.js'), 'noise\n', 'utf8')
+  const dirOld = new Date('2026-01-01T00:00:00.000Z')
+  const fileNew = new Date('2026-10-18T06:03:00.000Z')
+  const nmNewest = new Date('2026-12-31T23:59:00.000Z')
+  utimesSync(dir, dirOld, dirOld)
+  utimesSync(join(dir, 'package.json'), dirOld, dirOld)
+  utimesSync(join(dir, 'index.js'), fileNew, fileNew)
+  utimesSync(join(dir, 'node_modules', 'noise', 'x.js'), nmNewest, nmNewest)
+  utimesSync(join(dir, 'node_modules'), nmNewest, nmNewest)
+
+  check('⑧ ★ 改动时间取"目录 + 直接下一层"里最新的那个（改文件内容也算）', () => {
+    const got = targetMtimeOf(dir)
+    assert.equal(got, fileNew.toISOString(), `期望子文件的时间，实际 ${got}`)
+  })
+  check('⑧ ★ node_modules 与 .git 不参与（否则永远是"刚刚"）', () => {
+    assert.notEqual(targetMtimeOf(dir), nmNewest.toISOString())
+    assert.equal(targetMtimeOf(null), null, '拿不到就是 null（面板渲染成「—」，不编造）')
+    assert.equal(targetMtimeOf(join(ROOT, 'dev', 'no-such-dir')), null)
+  })
+  const invMtime = buildLinkInventory({ profileDir: (() => {
+    const p = join(ROOT, 'mtime-profile')
+    writeJson(join(p, 'package.json'), { name: 'p', private: true, dependencies: { 'mtime-plugin': `link:${dir.replace(/\\/gu, '/')}` } })
+    return p
+  })(), home: HOME })
+  check('⑧ /links 的每一行都带 targetMtime（且是 ISO 字符串，不是布尔/数字）', () => {
+    const row = invMtime.items.find((x) => x.packageName === 'mtime-plugin')
+    assert.ok(row, '清单里没有 mtime-plugin')
+    assert.equal(typeof row.targetMtime, 'string', JSON.stringify(row.targetMtime))
+    assert.equal(row.targetMtime, fileNew.toISOString())
+  })
+}
+
 rmSync(ROOT, { recursive: true, force: true })
 console.log(passed > 0 && process.exitCode !== 1 ? `\n${passed} PASS / 全绿` : `\n${passed} PASS / 有失败`)
