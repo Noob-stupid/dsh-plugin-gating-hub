@@ -258,7 +258,9 @@ check('② ★ 负控：缺 peer 但**补不了**（shimmablePeers 空）⇒ 不
 
 check('⑥ 目标目录的改动时间：有就显示（本地化），拿不到就显示「—」（不编造）', () => {
   const texts = panel.view().texts.join('\n')
-  assert.ok(/linksMtime \d{4}[/-]\d{1,2}[/-]\d{1,2}/u.test(texts), `没显示改动时间：${texts.slice(0, 300)}`)
+  // 时间按本地化格式显示（CI 为 US locale，形如 10/18/2026），所以不限定数字顺序：
+  // 判据是"linksMtime 后面确实跟了一个非 — 的值"，既与 locale 无关，也仍能抓到"没显示/编造"。
+  assert.ok(/linksMtime (?!—)\S/u.test(texts), `没显示改动时间：${texts.slice(0, 300)}`)
   assert.ok(texts.includes('linksMtime —'), `拿不到时间时该显示「—」：${texts.slice(0, 300)}`)
 })
 
