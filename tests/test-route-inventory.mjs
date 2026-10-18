@@ -484,7 +484,7 @@ for (const [method, path, body, wantStatus, wantKeys] of SCHEMAS) {
     Array.isArray(pending) && row !== null && row.packageName === PKG && row.bundle === true,
     `pendingRestart=${JSON.stringify(pending)}`)
   check('pendingRestart 行字段固定（jobId/repo/packageName/bundle/finishedAt）',
-    row !== null && JSON.stringify(Object.keys(row).sort()) === JSON.stringify(['bundle', 'finishedAt', 'jobId', 'packageName', 'repo']),
+    row !== null && JSON.stringify(Object.keys(row).sort()) === JSON.stringify(['at', 'bundle', 'finishedAt', 'jobId', 'packageName', 'persisted', 'repo']),
     row === null ? '（没有该任务）' : Object.keys(row).join(','))
 
   // ② /uninstall 接受 { jobId }（旧代码在这里返回 400「entryId 无效」）

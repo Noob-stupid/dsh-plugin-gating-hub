@@ -94,8 +94,8 @@ check('★ 404 依赖写的是 link:（不是会 404 的裸版本号）',
   pinned.form === 'link' && pinnedSpec === wantLink, JSON.stringify({ form: pinned.form, spec: pinnedSpec }))
 check('★ link 目标真的物化出来了（<DSH_HOME>/plugin-src/<包名>）',
   existsSync(join(HOME, 'plugin-src', '@fake', 'release-only', 'package.json')), pinnedSpec)
-check('★ 已按 link: 记录时才给出"已按 link: 形式记录"的说明（文案与实际一致）',
-  typeof pinned.depNote === 'string' && pinned.depNote.includes(pinnedSpec) && pinned.depNote.includes('已按 link: 形式记录'), String(pinned.depNote).slice(0, 80))
+check('★ 已按 link: 记录时才给出"源码安装（本地物化）"的说明（文案与实际一致）',
+  typeof pinned.depNote === 'string' && pinned.depNote.includes(pinnedSpec) && pinned.depNote.includes('源码安装（本地物化）'), String(pinned.depNote).slice(0, 80))
 const pinnedAgain = await declareProfileDependency(profileDir, '@fake/release-only', null, { syncLock: false, probe: probe404 })
 check('★ 幂等：再次声明仍是 link:（不会被退回版本号）',
   pinnedAgain.changed === false && readManifest().dependencies['@fake/release-only'] === wantLink, JSON.stringify({ changed: pinnedAgain.changed, spec: pinnedAgain.spec }))
@@ -106,7 +106,7 @@ writePkg('@fake/maybe-registry', '2.0.0')
 const unsure = await declareProfileDependency(profileDir, '@fake/maybe-registry', null, { syncLock: false, probe: probeDown })
 const unsureSpec = readManifest().dependencies['@fake/maybe-registry']
 check('★ 探测不到（网络）：写版本号但 form=unknown，不冒充已钉住',
-  unsure.form === 'unknown' && unsureSpec === '2.0.0' && !String(unsure.depNote).includes('已按 link: 形式记录'), JSON.stringify({ form: unsure.form, spec: unsureSpec }))
+  unsure.form === 'unknown' && unsureSpec === '2.0.0' && !String(unsure.depNote).includes('源码安装（本地物化）'), JSON.stringify({ form: unsure.form, spec: unsureSpec }))
 check('★ 探测不到时下发结构化「钉住」动作（老客户端忽略该字段，向后兼容）',
   unsure.suggested?.kind === 'pin-dependency' && unsure.suggested?.payload?.action === 'pin-dependency'
   && unsure.suggested?.payload?.packageName === '@fake/maybe-registry'

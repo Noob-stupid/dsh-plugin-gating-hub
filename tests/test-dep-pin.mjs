@@ -3,12 +3,12 @@
 // 真问题（用户在真机上量到的状态，不是推测）：
 //   desktop profile 的清单里写着 `@dsh-external/dsh-graded-mode: 0.0.1-rc1`，而 npmmirror 与 npmjs
 //   **双双 404** —— 下次任何 pnpm 操作都是 ERR_PNPM_FETCH_404；同时面板在安装完成时却报了
-//   「已按 link: 形式记录依赖」（文案硬编码，没读回真实值）。本用例把修复钉成五条：
+//   「源码安装（本地物化）」（文案硬编码，没读回真实值）。本用例把修复钉成五条：
 //   ① 非 registry 包 → 清单写 link:（不是会 404 的裸版本号）
 //   ② 写清单后**自动做一次 lock 对账**：link: 的 lock 持久化走**定点写入 importer 条目**
 //      （0.5.39 起**不再**用 `pnpm add` 当持久化手段），写出后用 pnpm 的**只读**用法确认 lock 可解析
 //   ③ 随后 `pnpm install --lockfile-only` 退出码 0、不再报 404（**真 pnpm**，link: 不走 registry）
-//   ④ 文案按**实际写入形态**生成：写回没生效时绝不出现"已按 link: 形式记录依赖"
+//   ④ 文案按**实际写入形态**生成：写回没生效时绝不出现"源码安装（本地物化）"
 //   ⑤ registry 可解析的包行为不变（回归：仍写 <name>@<版本>，仍走既有 pnpm add 通道）
 //
 // 分组与门槛（缺环境要**响亮跳过**，绝不假装 PASS）：
@@ -90,8 +90,8 @@ console.log('=== 组 ①②④ 离线：写回形态 / lock 对账调用 / 文�
     pnpmAdd: async () => { pnpmAddCalled += 1 },
     deps: { writeImporter: stubFailingWriter },
   })
-  check('★ ④ 写入没生效时：文案不出现"已按 link: 形式记录依赖"（谎报修复）',
-    typeof plan.depNote === 'string' && !plan.depNote.includes('已按 link: 形式记录依赖') && /未写入/u.test(plan.depNote),
+  check('★ ④ 写入没生效时：文案不出现"源码安装（本地物化）"（谎报修复）',
+    typeof plan.depNote === 'string' && !plan.depNote.includes('源码安装（本地物化）') && /未写入/u.test(plan.depNote),
     String(plan.depNote).slice(0, 150))
   check('★ ④ 未生效时如实带上"清单里实际是什么" + 探测结论是"查无此包"（不是网络类）',
     plan.depNote.includes(String(readDeps()[FAKE])) && plan.depNote.includes('查无此包'), String(plan.depNote).slice(0, 150))
@@ -111,7 +111,7 @@ console.log('=== 组 ①②④ 离线：写回形态 / lock 对账调用 / 文�
     && probeFailureKind({ tried: ['fetch failed'] }) === 'network-timeout')
 
   // ── ④ 正例：定点写入真的把条目写进 lock（**我们自己的写入器**，不是 pnpm add）→
-  //     这时才允许出现"已按 link: 形式记录依赖"；只读校验用桩（离线，真 pnpm 那组另有覆盖）
+  //     这时才允许出现"源码安装（本地物化）"；只读校验用桩（离线，真 pnpm 那组另有覆盖）
   //     注意：0.5.39 起**没有任何一步**会替我们造 node_modules 的链接（那正是被去掉的 pnpm add），
   //     所以"成功"的夹具必须本来就处于健康形态（node_modules 是指向 plugin-src 的链接）。
   const stubVerifyOk = async () => ({ verified: true, via: 'stub', reason: null })
@@ -147,8 +147,8 @@ console.log('=== 组 ①②④ 离线：写回形态 / lock 对账调用 / 文�
       })
       return again.lockUpdated === true && readFileSync(join(PROFILE, 'pnpm-lock.yaml'), 'utf8') === lockBefore && readFileSync(manifestPath, 'utf8') === manifestBefore
     })(), '')
-  check('★ ④ 写回生效后才出现"已按 link: 形式记录依赖"，且文案里的路径与清单**当前值**一致',
-    typeof planOk.depNote === 'string' && planOk.depNote.includes('已按 link: 形式记录依赖') && planOk.depNote.includes(actual),
+  check('★ ④ 写回生效后才出现"源码安装（本地物化）"，且文案里的路径与清单**当前值**一致',
+    typeof planOk.depNote === 'string' && planOk.depNote.includes('源码安装（本地物化）') && planOk.depNote.includes(actual),
     String(planOk.depNote).slice(0, 160))
   check('★ ④ 生效时不再下发建议动作（不需要用户再做什么）',
     Array.isArray(planOk.suggestedActions) && planOk.suggestedActions.length === 0, JSON.stringify(planOk.suggestedActions))
@@ -182,9 +182,9 @@ console.log('=== 组 ①②④ 离线：写回形态 / lock 对账调用 / 文�
   // ── 网络探测没成功（不是 404）时：不猜、也不谎报，写版本号 + 如实记 note + 给建议动作
   writeManifest({ [FAKE]: FAKE_VERSION })
   const unknown = await declareProfileDependency(PROFILE, FAKE, null, { syncLock: false, probe: probeDown })
-  check('★ 探测不到（网络）时 form=unknown、清单仍是版本号、note 里不出现"已按 link: 形式记录"',
+  check('★ 探测不到（网络）时 form=unknown、清单仍是版本号、note 里不出现"源码安装（本地物化）"',
     unknown.form === 'unknown' && readDeps()[FAKE] === FAKE_VERSION
-    && !String(unknown.depNote).includes('已按 link: 形式记录') && unknown.suggested?.kind === 'pin-dependency',
+    && !String(unknown.depNote).includes('源码安装（本地物化）') && unknown.suggested?.kind === 'reconcile-lock',
     JSON.stringify({ form: unknown.form, spec: readDeps()[FAKE] }))
 }
 
