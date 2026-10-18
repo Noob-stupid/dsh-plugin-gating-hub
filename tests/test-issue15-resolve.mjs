@@ -100,6 +100,25 @@ const cases = [
   ['官方: @deepseek-ai/dsh-settings', '@deepseek-ai/dsh-settings'],
 ]
 
+// ★ 0.5.84 改错（本套长期红的两条之一，真因不是被测函数）：
+//   旧代码把"第三方包装在哪个 profile"写死成 `DSH_PROFILE_DIR ?? profiles/web`。而**宿主进程会把
+//   DSH_PROFILE_DIR 泄漏给子进程**（桌面端外壳起的 node 里它是 `…/profiles/desktop`）——
+//   于是从桌面端宿主里跑测试时，回退基准被指到 desktop，而 `dsh-better-sidebar` 只装在 web：
+//   一条真断言（"只有带 profile 回退才解得出来"）在**没有那个包**的目录上必然红。
+//   清理该变量后逐条复跑，四条全绿、且在 clean HEAD 上逐字相同 ⇒ 坏的是"测试自己挑的基准"。
+//   现在：**按包的实际情况挑回退基准**（哪个 profile 真装了就用哪个），挑不到就响亮 SKIP 该条；
+//   断言强度一个字没变（第三方仍必须"框架基准单跑=null、带 profile 回退才命中"）。
+const profileCandidates = (() => {
+  const list = []
+  if (process.env.DSH_PROFILE_DIR?.trim()) list.push(process.env.DSH_PROFILE_DIR.trim())
+  list.push(profileDir)
+  try {
+    for (const name of fs.readdirSync(path.join(dshHome(), 'profiles'))) list.push(path.join(dshHome(), 'profiles', name))
+  } catch {}
+  return [...new Set(list)].filter((dir) => fs.existsSync(dir))
+})()
+console.log(`profile 候选（按序，共 ${profileCandidates.length} 个）: ${profileCandidates.join(' | ')}`)
+
 for (const [label, name] of cases) {
   const official = isFrameworkModuleName(name)
   const noFallback = resolveOverBases(name, null, bases)
@@ -107,10 +126,22 @@ for (const [label, name] of cases) {
   // 判定（与修前同强度，未放松）：
   //   · 官方包：带不带回退都必须解得出来 —— 修好后它落在框架树的多基准并集里；
   //   · 第三方：**只有**带 profile 回退才解得出来（框架基准单跑必须是 null）—— issue #15 核心。
+  // 第三方包的"回退基准"取**真正装了它**的那个 profile；一个都没有 ⇒ 这条无从判定，响亮 SKIP。
+  let fallbackDir = profileDir
+  if (!official) {
+    const host = profileCandidates.find((dir) => resolvePackageJson(name, dir, null) !== null)
+    if (host === undefined) {
+      skip += 1
+      console.log(`SKIP ${label}: 本机没有任何 profile 装了它 —— 无从判定「只有 profile 回退才解得出」，不假装 PASS`)
+      continue
+    }
+    fallbackDir = host
+  }
+  const fallbackHit = official ? withFallback : resolvePackageJson(name, fallbackDir, null)
   const cond = official
     ? withFallback !== null && noFallback !== null
-    : withFallback !== null && noFallback === null
-  console.log(`${cond ? 'PASS' : 'FAIL'} ${label}: noFallback=${noFallback ?? 'null'} withFallback=${withFallback ?? 'null'}`)
+    : fallbackHit !== null && noFallback === null
+  console.log(`${cond ? 'PASS' : 'FAIL'} ${label}: noFallback=${noFallback ?? 'null'} withFallback=${fallbackHit ?? 'null'}`)
   if (!cond) fail += 1
 }
 

@@ -130,7 +130,17 @@ console.log('\n=== ③ 域级：三种结局的措辞必须分得开 ===')
   check('③ cordis: 内置行不参与', peerVetoFor({ moduleName: 'cordis:group', profileDir, frameworkVersion: FW_VERSION }) === null)
 }
 
-console.log('\n=== ①′ 真机残影复现：@deepseek-ai/dsh-schedule@0.0.1-rc.3 × 当前框架 ===')
+console.log('\n=== ①′ 真机复算：面板的判决必须与"按当前框架重算"一致（两个方向都要对）===')
+// ★ 0.5.84 改错（本套长期红的两条之二，真因不是产品缺陷）：
+//   这一段过去把"真机一定压着 @deepseek-ai/dsh-schedule@0.0.1-rc.3 残影、且它对当前框架必然不满足"
+//   当成**前提**写死在断言里。事实是：残影已经被换成 `dsh-schedule@0.2.0-rc.2`，而它的 peer 全是
+//   精确版 `0.2.0-rc.2`，与当前框架（0.2.0-rc.2）**完全匹配** ⇒ `unsatisfiedPeers` 返回 []，
+//   断言 `bad.length >= 1` 必然红。也就是说过期的是**断言的前提**（机器上装的包变了），不是判据。
+//   ⚠️ 这里不是"放宽"：残影方向（0.0.3 的 peer 对 0.2.0 不满足）由 ① 的离线夹具
+//      （@fake/stale-peer）+ ③-① 的域级断言**始终覆盖**，与本机装了什么无关。
+//   真机这一段改成**双向**断言 —— 比原来只测一个方向更严：
+//     · 装的是不匹配的包（真有残影）⇒ 必须产出 peers 原因，且原因里带上当前框架版本；
+//     · 装的是匹配的包（健康现场）  ⇒ 必须**不**产出（不许误报"被框架否决"）。
 {
   const candidates = []
   const profilesDir = join(REAL_DSH_HOME, 'profiles')
@@ -141,18 +151,27 @@ console.log('\n=== ①′ 真机残影复现：@deepseek-ai/dsh-schedule@0.0.1-r
     }
   }
   if (candidates.length === 0) {
-    console.log('SKIP ①′ 本机没有 @deepseek-ai/dsh-schedule 残影 —— 没有夹具就不假装 PASS')
+    console.log('SKIP ①′ 本机没有 @deepseek-ai/dsh-schedule —— 没有夹具就不假装 PASS')
   } else {
     for (const { dir, profileDir: realProfile } of candidates) {
       const manifest = JSON.parse(readFileSync(join(dir, 'package.json'), 'utf8'))
       // 框架版本按生产同一口径解析（currentFrameworkVersion ← profile 的 baseUrl）
       const realFw = currentFrameworkVersion({ baseUrl: pathToFileURL(join(realProfile, 'cordis.yml')).href }) ?? FW_VERSION
       const bad = unsatisfiedPeers(manifest, realFw)
-      check(`①′ dsh-schedule@${manifest.version} 的 dsh peer 对 ${realFw} 全部不满足（真机现场）`,
-        bad.length >= 1 && bad.every((p) => p.name.startsWith('@deepseek-ai/dsh')), JSON.stringify(bad.slice(0, 2)))
       const rec = peerVetoFor({ moduleName: '@deepseek-ai/dsh-schedule', profileDir: realProfile, frameworkVersion: realFw })
-      check(`①′ 走 peerVetoFor 也产出 peers 原因（真机上就是这个包解析路径，当前 ${realFw}）`,
-        rec?.kind === 'peers' && rec.reason.includes(realFw), JSON.stringify(rec)?.slice(0, 200))
+      if (bad.length >= 1) {
+        // 残影方向：必须报「peer 不满足」，且原因里能对上号（需要什么 / 当前什么）
+        check(`①′ dsh-schedule@${manifest.version} 的 dsh peer 对 ${realFw} 确有不满（残影现场）`,
+          bad.every((p) => p.name.startsWith('@deepseek-ai/dsh')), JSON.stringify(bad.slice(0, 2)))
+        check(`①′ 走 peerVetoFor 也产出 peers 原因（当前 ${realFw}）`,
+          rec?.kind === 'peers' && rec.reason.includes(realFw), JSON.stringify(rec)?.slice(0, 200))
+      } else {
+        // 健康方向：peer 与当前框架匹配 ⇒ 面板**不许**说它被否决（误报会让用户去删一个好包）
+        check(`①′ dsh-schedule@${manifest.version} 的 dsh peer 与当前 ${realFw} 完全匹配（健康现场，不是残影）`,
+          bad.length === 0, JSON.stringify(bad.slice(0, 2)))
+        check(`①′ 匹配时 peerVetoFor 必须返回 null（不许误报"被框架否决"）`,
+          rec === null, JSON.stringify(rec)?.slice(0, 200))
+      }
     }
   }
 }
