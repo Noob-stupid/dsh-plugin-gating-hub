@@ -105,9 +105,10 @@ const LINKS = {
   ],
 }
 
-/** 装一份"假宿主"全局（window/document/localStorage/fetch），并记下每次请求。 */
+/** 装一份"假宿主"全局（window/document/localStorage/fetch），并记下每次请求与每次目录对话框调用。 */
 function installHost({ withPicker }) {
   const fetchLog = []
+  const picker = { calls: 0, value: 'D:/picked/from/dialog', pick: async () => { picker.calls += 1; return picker.value } }
   globalThis.fetch = async (path, options) => {
     const body = options?.body === undefined ? null : JSON.parse(options.body)
     fetchLog.push({ path: String(path), body, method: options?.method ?? 'GET' })
@@ -134,9 +135,9 @@ function installHost({ withPicker }) {
     return reply({ ok: true })
   }
   globalThis.localStorage = { getItem: (key) => (String(key).includes('toolbar-open') ? '1' : ''), setItem: () => {}, removeItem: () => {} }
-  if (withPicker) globalThis.__DSH_DIRECTORY_PICKER__ = { pick: async () => 'D:/picked/from/dialog' }
+  if (withPicker) globalThis.__DSH_DIRECTORY_PICKER__ = picker
   else delete globalThis.__DSH_DIRECTORY_PICKER__
-  return fetchLog
+  return { fetchLog, picker }
 }
 
 /** 载入一份 client.js 实例（不同 query ⇒ 全新模块实例，各自有自己的 directoryPicker）。 */
@@ -181,7 +182,9 @@ const flushAsync = async (times = 6) => { for (let i = 0; i < times; i += 1) awa
 const t = (key) => key
 
 // ═══ A. 桌面端（宿主提供系统目录对话框）═══════════════════════════════════════
-const fetchLog = installHost({ withPicker: true })
+const host = installHost({ withPicker: true })
+const fetchLog = host.fetchLog
+const picker = host.picker
 const desktop = await loadClient('desktop')
 const ctx = {
   effect: (fn) => { try { fn() } catch {} return () => {} },
@@ -208,6 +211,15 @@ check('① 桌面端（有桥）渲染「浏览…」；下拉与路径输入都
   assert.ok(flat.nodes.some((n) => n.tag === 'select'), '没有开发区下拉')
   assert.ok(flat.nodes.some((n) => n.tag === 'input' && n.props.placeholder === 'linksDirPlaceholder'), '没有路径输入框')
   assert.ok(panel.hasButton('linksBrowse'), '带目录对话框的宿主要显示「浏览…」')
+})
+
+await checkAsync('① ★ 点「浏览…」真的调用宿主对话框，并把选中的路径填进输入框（不是摆设）', async () => {
+  assert.equal(picker.calls, 0, '还没点就调了对话框')
+  panel.click('linksBrowse')
+  await flushAsync()
+  assert.equal(picker.calls, 1, '点了「浏览…」却没有调用宿主的目录对话框')
+  const input = panel.view().nodes.find((n) => n.tag === 'input' && n.props.placeholder === 'linksDirPlaceholder')
+  assert.equal(input.props.value, picker.value, `选中的路径没有填进输入框：${JSON.stringify(input.props.value)}`)
 })
 
 check('② ★ 行内动作按服务端结论出现：缺依赖→[补齐依赖]，能造垫片→[造垫片]', () => {
