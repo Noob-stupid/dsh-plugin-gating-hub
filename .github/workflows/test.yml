@@ -111,6 +111,14 @@ jobs:
           # 0.5.84 加法：功能包工具栏的 link 入口（点开打 /plugin-console/links；安全面板的折叠展示保留；
           # 主面板里仍不许出现 fill()）
           node tests/test-links-toolbar.mjs
+          # 0.5.87 加法：link 面板从「只读清单」升级为「可操作」——
+          #   ① 域层：定点补齐（kind=deps 只装依赖 / kind=shims 只造垫片，互不越界；幂等；失败不谎报）
+          node tests/test-link-repair.mjs
+          #   ② 域层：取消钉住（只认 link:/file:；两段式；pnpm 失败/读回不符都回滚；三处读回核实）
+          node tests/test-unpin-dev-dir.mjs
+          #   ③ 界面层：假 React **真渲染**主面板再真点按钮（「浏览…」只在宿主有目录对话框时存在；
+          #      行内动作按服务端结论出现；钉住/取消钉住都是两段式，第一段绝不带 confirm）
+          node tests/test-links-actions-ui.mjs
           # 0.5.84 加法：plugin-console 目录的磁盘体检（只读）+ 显式确认后清理
           # （当前回滚点指向的备份必须 protected；未确认一个文件都不动；删完读回核实）
           node tests/test-disk-audit.mjs
