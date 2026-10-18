@@ -119,6 +119,9 @@ jobs:
           #   ③ 界面层：假 React **真渲染**主面板再真点按钮（「浏览…」只在宿主有目录对话框时存在；
           #      行内动作按服务端结论出现；钉住/取消钉住都是两段式，第一段绝不带 confirm）
           node tests/test-links-actions-ui.mjs
+          #   ④ 路由层：body 真的到 handler（0.5.87 修的就是这条：/pin-dev-dir 的 POST body 过去根本没到）；
+          #      /links 带 targetMtime；写动作只认包名、路径一律由服务端决定
+          node tests/test-link-actions-routes.mjs
           # 0.5.84 加法：plugin-console 目录的磁盘体检（只读）+ 显式确认后清理
           # （当前回滚点指向的备份必须 protected；未确认一个文件都不动；删完读回核实）
           node tests/test-disk-audit.mjs
