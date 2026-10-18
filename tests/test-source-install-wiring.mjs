@@ -281,10 +281,10 @@ console.log('\n── ③ 负控 A：真装失败（物已在盘上）⇒ link: 
   })
   const note = String(declared.depNote ?? '')
   check('③ 真装那一步确实被调用了（失败路径不是"跳过真装"）', addCalls.length === 1 && addCalls[0] === TGZ_URL, JSON.stringify(addCalls))
-  check('★③ 真装失败 ⇒ 回落既有 link: 路径（插件至少能加载）', declared.form === 'link' && String(declared.spec).startsWith('link:'), JSON.stringify({ form: declared.form, spec: declared.spec }))
-  check('★③ 文案含「已装上（link 方式）」', note.includes('已装上（link 方式）'), note.slice(0, 200))
-  check('★③ 文案含真装失败原因（点名原因原文）', note.includes('真装失败：') && note.includes('该 tarball 形态不被接受'), note.slice(0, 260))
-  check('★③ 文案含「可一键真装」', note.includes('可一键真装'), note.slice(0, 260))
+  check('★③ 真装失败 ⇒ **不再回落 link:**（spec 为 null，清单不写）', declared.spec === null && declared.form === 'source', JSON.stringify({ form: declared.form, spec: declared.spec }))
+  check('★③ 文案**不得**出现「已装上（link 方式）」', !note.includes('已装上（link 方式）'), note.slice(0, 200))
+  check('★③ 文案含真装失败原因（点名原因原文）', note.includes('真装失败') && note.includes('该 tarball 形态不被接受'), note.slice(0, 300))
+  check('★③ 文案指明出路（可重试真装 / 或改用本地目录安装）', note.includes('一键真装') && note.includes('本地目录'), note.slice(0, 300))
   check('★③ **不得**出现"已完整安装"之类说法', !/已完整安装/u.test(note), note.slice(0, 200))
   check('★③ 下发结构化「一键真装」动作（payload 里**没有** spec/命令位置）',
     declared.suggested?.kind === 'real-install' && declared.suggested?.payload?.action === 'real-install'
@@ -292,9 +292,8 @@ console.log('\n── ③ 负控 A：真装失败（物已在盘上）⇒ link: 
     && !/command|argv|shell/u.test(Object.keys(declared.suggested?.payload ?? {}).join(',')),
     JSON.stringify(declared.suggested))
   check('③ 失败也要留记录（一键真装要能取到规格）', readSourceSpec({ packageName: PKG, home: HOME })?.spec === TGZ_URL, JSON.stringify(readSourceSpec({ packageName: PKG, home: HOME })))
-  check('③ 回落后的清单 = link: 且物化副本真的在 plugin-src 里',
-    String(manifestDeps()[PKG] ?? '').startsWith('link:')
-    && existsSync(join(HOME, 'plugin-src', ...PKG.split('/'), 'package.json')),
+  check('③ 真装失败后**清单保持未写**（不出现 link: 记录）',
+    manifestDeps()[PKG] === undefined,
     JSON.stringify({ spec: manifestDeps()[PKG] ?? null }))
 }
 
@@ -352,6 +351,13 @@ console.log('\n── ④ 负控 B：下载/取样失败 ⇒ 如实失败，绝�
 console.log('\n── ⑤ real-install 动作：规格只认服务端记录 ──────────────────────────')
 {
   const PKG = '@probe/sampled-a' // ③ 里已留下记录（TGZ_URL）
+  // ★ A-① 之后 ③ 不再把包写进清单（真装失败不落盘）⇒ 这里补一条清单夹具，
+  //   让 ⑤ 仍然测试"动作只认服务端记录"这件事本身，而不是被前置状态带崩。
+  {
+    const mf = JSON.parse(readFileSync(join(PROFILE, 'package.json'), 'utf8'))
+    mf.dependencies = { ...(mf.dependencies ?? {}), [PKG]: TGZ_URL }
+    writeFileSync(join(PROFILE, 'package.json'), `${JSON.stringify(mf, null, 2)}\n`, 'utf8')
+  }
   const seen = []
   const runAdd = async (args) => {
     seen.push(args.join(' '))
