@@ -18,11 +18,11 @@
 | 1 | 桌面端框架代码在 `resources/app.asar` 里 | 该文件 182,794,869 字节；`resources/app.asar.unpacked/` 只放了解包出来的原生/大件（office kit、fflate 等），**没有框架 JS 的可写副本** |
 | 2 | 普通 Node 进程**读不进** asar | `fs.readFileSync('<…>/resources/app.asar/dsh/package.json')` → `ENOENT`；`existsSync` → `false`。asar 是单文件归档，只有 Electron 打过补丁的 fs 认识它 |
 | 3 | 我们的"框架在哪"指向 npx 缓存树 | `frameworkBases('<profile>')` → `<npm cache>/_npx/<hash>/node_modules`；`framework-rollback.json` 的 `fwRoot` / `checkpointDir` 也在这棵树里 |
-| 4 | 两边的版本**已经不一致** | 桌面端可执行文件的 FileVersion = `0.2.1-rc.2`；而我们解析出来的框架版本 = `0.2.0-rc.2` |
+| 4 | 版本来源只有一处，且**当前显示是对的** | `/state.framework.version` 与 `/compat-status` 实测均为 `0.2.1-rc.2`，与桌面端运行时一致；`0.2.0-rc.2` 是 **回滚点**（上一次的备份），按设计就该是旧的 |
 | 5 | 插件拿不到官方重启通道 | 见 `lib/server/domain/restart.js` 顶部取证：桌面端 IPC 表里没有 restart/relaunch，外壳只认 `shutdown` |
 | 6 | 今天的回滚在桌面端**已经是拒绝** | 路由第一行就是 `refuseWhenShellHosted(res)`；`tests/test-restart-official-path.mjs` 钉着这条 |
 
-事实 4 是这次调研里最值得单独记一笔的：**面板显示的框架版本可能本来就是错的**（我们读的是 npx 树，桌面端跑的是 asar）。
+事实 4 **更正（2026-10-18 复核）**：早先判断"面板显示的框架版本可能本来就是错的"是**误判** —— 实测 `/state.framework.version` 与 `/compat-status` 都返回 `0.2.1-rc.2`，与桌面端运行时一致。`0.2.0-rc.2` 是回滚备份（`framework-backups/`）与 npx 缓存树的版本，按设计就该是上一版。**不需要改代码。**
 它不是回滚的问题，但和回滚是同一个根因 —— "我们以为的框架"和"真正在跑的框架"不是同一份。
 
 ## 二、为什么"把 npx 树恢复回去"不够
