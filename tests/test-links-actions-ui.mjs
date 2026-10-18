@@ -222,6 +222,21 @@ await checkAsync('① ★ 点「浏览…」真的调用宿主对话框，并把
   assert.equal(input.props.value, picker.value, `选中的路径没有填进输入框：${JSON.stringify(input.props.value)}`)
 })
 
+await checkAsync('① ★ 从下拉选开发区 ⇒ 路径补成草稿（根本身不能钉住，要接着写根里的插件目录）', async () => {
+  const flat = panel.view()
+  const select = flat.nodes.find((n) => n.tag === 'select')
+  assert.ok(select, '没有开发区下拉')
+  // 下拉里必须真的列出服务端给的根（不是空列表、不是写死的）
+  const options = panel.view().nodes.filter((n) => n.tag === 'option').map((n) => String(n.props?.children ?? ''))
+  assert.ok(options.includes('D:/dev') && options.includes('D:/plugin-src'), `下拉里没有服务端给的根：${options.join(' | ')}`)
+  select.props.onChange({ currentTarget: { value: 'D:/dev' } })
+  const input = panel.view().nodes.find((n) => n.tag === 'input' && n.props.placeholder === 'linksDirPlaceholder')
+  assert.equal(input.props.value, 'D:/dev/', `选了根之后应是待续写的草稿：${JSON.stringify(input.props.value)}`)
+  // 反斜杠风格也照原样补，不混用分隔符
+  panel.view().nodes.find((n) => n.tag === 'select').props.onChange({ currentTarget: { value: 'C:\\my-dev' } })
+  assert.equal(panel.view().nodes.find((n) => n.tag === 'input' && n.props.placeholder === 'linksDirPlaceholder').props.value, 'C:\\my-dev\\')
+})
+
 check('② ★ 行内动作按服务端结论出现：缺依赖→[补齐依赖]，能造垫片→[造垫片]', () => {
   const flat = panel.view()
   const labels = flat.buttons.map((b) => String(b.props?.children ?? ''))

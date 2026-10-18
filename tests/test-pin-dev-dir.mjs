@@ -87,6 +87,17 @@ check('② ★ 根本身不算"之内"（父目录也必须拒，否则等于放
   assert.equal(DR.checkInsideDevRoots(HOME, SRC).ok, false, '根本身应拒绝')
   assert.equal(DR.checkInsideDevRoots(HOME, HOME).ok, false)
 })
+// 0.5.87 改错：判据不变（根本身照旧拒绝），但**话要说准** —— 旧文案说"不在任何已注册的开发区根里"，
+// 而它恰恰就是那个根，会把人引去"再注册一个根"这条错路。面板把这句话原样显示给用户，所以文案也是行为。
+check('② ★ 根被拒时的原因必须是"这就是根本身"，不能再说"不在任何已注册的开发区根里"', () => {
+  const reason = String(DR.checkInsideDevRoots(HOME, SRC).reason)
+  assert.ok(reason.includes('开发区根本身'), reason)
+  assert.ok(reason.includes('<插件目录名>'), `应给出下一步（指向根里的插件目录）：${reason}`)
+  assert.ok(!reason.includes('不在任何已注册'), `旧文案未修正：${reason}`)
+  // 反向：真正在根外的目录仍用原来那句话（不许把两种情形混成一句）
+  const outside = String(DR.checkInsideDevRoots(HOME, OUTSIDE).reason)
+  assert.ok(outside.includes('不在任何已注册'), outside)
+})
 check('② ★ 兄弟前缀不算之内（`C:\\dev` 不能命中 `C:\\devil` 这类）', () => {
   const norm = DR.normalizePath(join(SRC, 'in-root'))
   assert.equal(DR.isInside(norm, DR.normalizePath(SRC)), true)
