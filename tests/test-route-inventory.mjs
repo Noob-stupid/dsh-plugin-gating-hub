@@ -85,6 +85,9 @@ const ROUTES = [
   // 开发区根 + 钉住（0.5.57 加法）
   '/dev-roots',
   '/pin-dev-dir',
+  // link 面板的写动作（0.5.87 加法）：定点补齐（deps/shims）+ 取消钉住（两段式）
+  '/link-repair',
+  '/unpin-dev-dir',
   // 依赖锁体检 / 重建（2026-09-27 加法）：check 只读，repair 必须显式调用
   '/lockfile-check',
   '/lockfile-repair',
@@ -134,6 +137,11 @@ const SCHEMAS = [
   ['POST', '/plugin-console/compat-gate', {}, 200, ['compatGate', 'ok']],
   // 兼容豁免写入（0.5.56）：缺参时必须是 400 且带可读原因（不能 500）
   ['POST', '/plugin-console/compat-exempt', {}, 400, ['details', 'error', 'ok']],
+  // link 面板的写动作（0.5.87）：只对**本 profile 的 link:/file: 依赖**生效 ——
+  // 拿一个清单里没有的包名 ⇒ 必须是 400「不是 link:/file: 依赖」（绝不对任意包名动手）。
+  ['POST', '/plugin-console/link-repair', { packageName: 'not-a-link-dep' }, 400, ['error', 'ok']],
+  // 取消钉住的第一段是**只读计划**：同一条判据 ⇒ 400 + 明细（spec=null 说明没读到任何来源）
+  ['POST', '/plugin-console/unpin-dev-dir', { packageName: 'not-a-link-dep' }, 400, ['details', 'error', 'ok']],
   // 2026-09-23：面板改成「可选版本列表」→ 契约新增 alpha / tagDefault / versions 三个字段
   ['POST', '/plugin-console/framework-check', {}, 200, ['alpha', 'checkedAt', 'current', 'latest', 'next', 'ok', 'registryError', 'tagDefault', 'target', 'versions']],
   ['POST', '/plugin-console/ai-empower/list', {}, 200, ['ok', 'tasks']],
@@ -222,6 +230,38 @@ for (const [method, path, body, wantStatus, wantKeys] of SCHEMAS) {
     check(`★ 方法唯一性：POST ${p.replace('/plugin-console', '')} 不被接受（只读接口只声明 GET）`,
       r.status !== 200, `status=${r.status}`)
   }
+}
+
+// ── ②a-2 POST 路由必须**真的收到 body**（0.5.87 改错）──────────────────────────
+// 真机缺陷（2026-10-18）：`/dev-roots` 与 `/pin-dev-dir` 被登记进了 ROUTES_EARLY，而 handle() 的
+//   earlyHit 分支**不传 body、也不调 readBody**（readBody 在 405 守卫之后）。于是：
+//     · POST /dev-roots {action:'add',dir} 永远走 list 分支（注册根这个能力**根本用不了**）；
+//     · POST /pin-dev-dir {dir} 永远返回 403「没有提供目录」（面板点「钉住」必失败）。
+//   这类"接线了但死"只能靠真发一次带 body 的请求才能发现 —— 契约表与路由清单当时都是绿的。
+// 判据：带 body 的 POST 必须**产出与 body 一致的结果**（正控）—— 两条都真的读了 body。
+{
+  const { mkdirSync, writeFileSync } = await import('node:fs')
+  const probeRoot = join(HOME, 'dev-roots-probe')
+  mkdirSync(probeRoot, { recursive: true })
+  const added = await call('POST', '/plugin-console/dev-roots', { action: 'add', dir: probeRoot })
+  check('★ POST /dev-roots 真的吃到了 body（action=add 被识别并写进登记表）',
+    added.status === 200 && Array.isArray(added.json?.roots)
+    && added.json.roots.some((r) => String(r).toLowerCase().replace(/\\/gu, '/').endsWith('/dev-roots-probe')),
+    `status=${added.status} roots=${JSON.stringify(added.json?.roots)?.slice(0, 200)}`)
+  const listed = await call('POST', '/plugin-console/dev-roots', { action: 'list' })
+  check('POST /dev-roots 的 list 分支照旧可用（回归）', listed.status === 200 && Array.isArray(listed.json?.roots))
+
+  // pin 的**只读计划**段：目标必须在已注册的根里（默认根 = <DSH_HOME>/plugin-src）
+  const pinDir = join(HOME, 'plugin-src', 'pin-probe')
+  mkdirSync(pinDir, { recursive: true })
+  writeFileSync(join(pinDir, 'package.json'), JSON.stringify({ name: 'pin-probe', version: '0.1.0', dsh: { bundle: {} } }), 'utf8')
+  const planned = await call('POST', '/plugin-console/pin-dev-dir', { dir: pinDir })
+  check('★ POST /pin-dev-dir 真的吃到了 body（拿到 dir ⇒ 200 + 只读计划；过去恒 403「没有提供目录」）',
+    planned.status === 200 && planned.json?.applied === false && planned.json?.packageName === 'pin-probe',
+    `status=${planned.status} body=${JSON.stringify(planned.json)?.slice(0, 200)}`)
+  check('★ 计划段绝不写清单（两段式：确认才动）',
+    !existsSync(join(profileDir, 'package.json')) || !String(readFileSync(join(profileDir, 'package.json'), 'utf8')).includes('pin-probe'),
+    '只读计划阶段就把 pin-probe 写进了 profile 清单')
 }
 
 // ── ②a-0 依赖锁体检必须是**只读**的（2026-09-27 加法）─────────────────────────────
