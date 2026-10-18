@@ -102,6 +102,9 @@ jobs:
           # 0.5.84 判据降噪：「未持久化」只在会丢插件时报红（清单无条目 / 重启挂不上），
           # 其余（lock 形态、清单与磁盘版本）降级为提示；同时钉死 persisted/note 闸门没被放松
           node tests/test-persist-severity.mjs
+          # 0.5.84 加法：清单↔lock 口径不一致的**后台自动对账**（绝不阻塞 /state、10 分钟冷却、
+          # 失败即停、来源型依赖不自动修、测试进程不跑 pnpm）
+          node tests/test-lock-autofix.mjs
           # 批次 A-①（2026-09-27）：git 克隆的停滞判据（-c http.lowSpeedLimit=1 -c http.lowSpeedTime=20）
           # 含一段**真 git** 对着本机"只连不传"桩源的 ≈20 秒判死断言（不出外网，CI 可跑）
           node tests/test-git-stall-guard.mjs
