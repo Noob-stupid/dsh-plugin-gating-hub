@@ -105,6 +105,9 @@ jobs:
           # 0.5.84 加法：清单↔lock 口径不一致的**后台自动对账**（绝不阻塞 /state、10 分钟冷却、
           # 失败即停、来源型依赖不自动修、测试进程不跑 pnpm）
           node tests/test-lock-autofix.mjs
+          # 0.5.84 加法：独立实例的 detached 重拉（桌面端托管仍忽略计划；启动器等端口空了再起新实例；
+          # 不 kill / 不建计划任务 / 不自删；进程原语只经 infra/egress.js 的 spawnDetached 出口）
+          node tests/test-standalone-relaunch.mjs
           # 批次 A-①（2026-09-27）：git 克隆的停滞判据（-c http.lowSpeedLimit=1 -c http.lowSpeedTime=20）
           # 含一段**真 git** 对着本机"只连不传"桩源的 ≈20 秒判死断言（不出外网，CI 可跑）
           node tests/test-git-stall-guard.mjs

@@ -133,6 +133,32 @@ const ps1Before = new Set(readdirSync(tmpdir()).filter((n) => ps1Pattern.test(n)
     rel.channel === RESTART_CHANNEL.desktopClient && rel.message.startsWith(MANUAL_LAUNCH_REMOVED_NOTE) && rel.details.manualLaunch === 'removed')
   check('文案常量与判据一致（同一个承担者，不各写一份）',
     DESKTOP_CLIENT_RESTART_NOTICE.includes('请在桌面端客户端里重启') && STANDALONE_RESTART_NOTICE.includes('请手动重启这个 dsh web 进程'))
+
+  // ── ★ 0.5.84（用户第 5 项）：**只有非 shell 托管**才允许 detached 重拉 ──────────────
+  // 独立 dsh web 的现场与桌面端完全不同：它自己就是那个进程、端口也归它，
+  // 事故成因（自杀 + 与宿主争端口）都不存在 ⇒ 给它一条真的重启路。
+  // 桌面端那一半**一个字没动**：即使把重拉计划递进去也必须被忽略（下面第二条就是钉这个的）。
+  const standPlan = { ok: true, reason: null, plan: { bin: 'C:/fake/bin.js', args: ['web', '--port', '3080'], port: 3080, cwd: null } }
+  const stand = restartPathDecision({ hosted: false, relaunch: standPlan })
+  check('负控→新路（判据）：独立实例 + 有重拉计划 ⇒ channel=standalone-relaunch、ok=true、status=200',
+    stand.channel === RESTART_CHANNEL.standaloneRelaunch && stand.ok === true && stand.status === 200, `channel=${stand.channel} status=${stand.status}`)
+  check('负控→新路（判据）：允许 detached spawn，但 kill / 计划任务 / 自删仍恒为 false',
+    stand.spawns === true && stand.kill === false && stand.details.detached === true
+    && stand.details.kill === false && stand.details.scheduledTask === false && stand.details.selfDelete === false,
+    `spawns=${String(stand.details.spawns)} kill=${String(stand.details.kill)} task=${String(stand.details.scheduledTask)}`)
+  check('负控→新路（判据）：下发重拉计划（bin/args/port 都给到，前端与日志可判因）',
+    stand.details.plan?.bin === 'C:/fake/bin.js' && stand.details.plan?.port === 3080 && JSON.stringify(stand.details.plan?.args) === JSON.stringify(['web', '--port', '3080']),
+    JSON.stringify(stand.details.plan))
+  check('负控→新路（判据）：文案说清"不 kill 任何进程、不建计划任务"', /不 kill 任何进程/u.test(stand.message) && /不建计划任务/u.test(stand.message))
+  const hostedWithPlan = restartPathDecision({ hosted: true, relaunch: standPlan })
+  check('★ 红线不变：桌面端托管时**忽略**重拉计划 —— 仍 409 + spawns=false（桌面端永不 spawn）',
+    hostedWithPlan.channel === RESTART_CHANNEL.desktopClient && hostedWithPlan.spawns === false
+    && hostedWithPlan.status === 409 && hostedWithPlan.details.scheduledTask === false,
+    `channel=${hostedWithPlan.channel} spawns=${String(hostedWithPlan.spawns)}`)
+  const noPlan = restartPathDecision({ hosted: false, relaunch: { ok: false, reason: '找不到 DSH 的入口（bin.js）', plan: null } })
+  check('负控：独立实例但拿不到 bin.js ⇒ 回落 unavailable（409）且把原因说出来',
+    noPlan.channel === RESTART_CHANNEL.unavailable && noPlan.status === 409 && noPlan.spawns === false && String(noPlan.message).includes('bin.js'),
+    String(noPlan.message).slice(0, 80))
 }
 
 // ── ③ 真跑路由（正控 / 负控，进程内）────────────────────────────────────────────
@@ -165,9 +191,10 @@ const run = async (handler, pathname, deps) => {
   check('正控（路由）：**零子进程调用**（桌面端托管时连"尝试拉起"都不存在）', childCalls.length === at, childCalls.slice(at).join(', ') || '0 次')
 }
 {
-  // 负控（用户点名的那条）：官方不可用 ⇒ 绝不发生任何 spawn/kill，只出提示
+  // 负控（用户点名的那条）：官方不可用、且**递进去的重拉计划不可用** ⇒ 绝不发生任何 spawn/kill，只出提示。
+  // （0.5.84：独立实例**有**可用计划时会真重拉 —— 那条新路在下面单独测；这里钉的是"没有计划时的回落"。）
   const at = childCalls.length
-  const out = await run(routeRestart, '/plugin-console/restart', { hosted: false })
+  const out = await run(routeRestart, '/plugin-console/restart', { hosted: false, relaunch: null })
   check('负控（路由）：POST /restart 官方不可用 ⇒ 409 + 手动重启出路（不静默、不假成功）',
     out.status === 409 && out.json?.ok === false && out.json?.error === STANDALONE_RESTART_NOTICE
     && String(out.json?.error).includes('请手动重启这个 dsh web 进程'), `status=${out.status}`)
@@ -177,7 +204,7 @@ const run = async (handler, pathname, deps) => {
     RED_LINE_KEYS.every((k) => out.json?.details?.[k] === false))
 
   const at2 = childCalls.length
-  const rel = await run(routeFrameworkRelaunch, '/plugin-console/framework-relaunch', { hosted: false })
+  const rel = await run(routeFrameworkRelaunch, '/plugin-console/framework-relaunch', { hosted: false, relaunch: null })
   check('负控（路由）：POST /framework-relaunch（原「手动拉起」）⇒ 409 + 同一条出路 + **零 spawn/kill**',
     rel.status === 409 && String(rel.json?.error).startsWith(MANUAL_LAUNCH_REMOVED_NOTE)
     && String(rel.json?.error).includes('请手动重启这个 dsh web 进程') && childCalls.length === at2,
@@ -185,6 +212,47 @@ const run = async (handler, pathname, deps) => {
   const relOn = await run(routeFrameworkRelaunch, '/plugin-console/framework-relaunch', { hosted: true })
   check('正控（路由）：POST /framework-relaunch 桌面端托管 ⇒ 官方路径文案 + 零 spawn/kill',
     relOn.status === 409 && String(relOn.json?.error).includes('请在桌面端客户端里重启') && childCalls.length === at2)
+}
+// ── ★ 0.5.84：独立实例的**真重拉**（注入 spawn / delayedExit 替身，绝不真起进程、绝不真退出）──
+// 用户第 5 项的验收点全在这里：一次 detached spawn、零 kill、先回响应再退出；
+// 以及失败时**如实报错且不退出**（否则用户就真的没有实例了）。
+{
+  const at = childCalls.length
+  const spawns = []
+  const exits = []
+  const okOut = await run(routeRestart, '/plugin-console/restart', {
+    hosted: false,
+    relaunch: { ok: true, reason: null, plan: { bin: 'C:/fake/bin.js', args: ['web'], port: 3080, cwd: null } },
+    spawnDetached: async (cmd, argv, opts) => { spawns.push({ cmd, argv, env: opts?.env }); return { pid: 4242 } },
+    delayedExit: (ms) => { exits.push(ms) },
+  })
+  check('★ 新路（路由）：独立实例 POST /restart ⇒ 200 + restarted=true（不再是一律 409）',
+    okOut.status === 200 && okOut.json?.ok === true && okOut.json?.restarted === true && okOut.json?.channel === RESTART_CHANNEL.standaloneRelaunch,
+    `status=${okOut.status} channel=${String(okOut.json?.channel)}`)
+  check('★ 新路（路由）：**恰好一次** detached spawn，且命令是 node + 启动器（-e）',
+    spawns.length === 1 && spawns[0].cmd === process.execPath && spawns[0].argv?.[0] === '-e', JSON.stringify(spawns[0]?.cmd))
+  check('★ 新路（路由）：计划通过 DSH_RELAUNCH_PLAN 传给启动器（含 bin/args/port）',
+    (() => { try { const p = JSON.parse(spawns[0]?.env?.DSH_RELAUNCH_PLAN ?? '{}'); return p.bin === 'C:/fake/bin.js' && p.port === 3080 } catch { return false } })(),
+    String(spawns[0]?.env?.DSH_RELAUNCH_PLAN).slice(0, 90))
+  check('★ 新路（路由）：先回响应再退出（delayedExit 被调用一次），且**没有任何 kill**',
+    exits.length === 1 && childCalls.length === at, `exits=${JSON.stringify(exits)} childCalls=${childCalls.length - at}`)
+  check('★ 新路（路由）：红线四项里只有 spawns=true，kill/计划任务/自删仍为 false',
+    okOut.json?.details?.spawns === true && okOut.json?.details?.kill === false
+    && okOut.json?.details?.scheduledTask === false && okOut.json?.details?.selfDelete === false)
+
+  // 失败路径：spawn 抛错 ⇒ 500 如实报错，**且不退出**（否则用户就没有实例了）
+  const spawns2 = []
+  const exits2 = []
+  const badOut = await run(routeRestart, '/plugin-console/restart', {
+    hosted: false,
+    relaunch: { ok: true, reason: null, plan: { bin: 'C:/fake/bin.js', args: ['web'], port: 3080, cwd: null } },
+    spawnDetached: async () => { spawns2.push(1); throw new Error('模拟 EPERM') },
+    delayedExit: (ms) => { exits2.push(ms) },
+  })
+  check('★ 新路（路由）：起不来 ⇒ 500 + 如实原因（不假装重启了）',
+    badOut.status === 500 && badOut.json?.ok === false && /重启失败/u.test(String(badOut.json?.error)) && /EPERM/u.test(String(badOut.json?.error)),
+    `status=${badOut.status} error=${String(badOut.json?.error).slice(0, 60)}`)
+  check('★ 新路（路由）：起不来时**绝不退出进程**（delayedExit 零调用，用户仍有实例在用）', exits2.length === 0)
 }
 
 // ── ④ 真机路径负控：另起一个**普通 node 进程**（剥掉宿主标记）跑探针 ────────────────────
@@ -207,11 +275,21 @@ const { routeRestart, routeFrameworkRelaunch } = await import(${JSON.stringify(p
 const shape = detectHostShape()
 const mk = () => { const r = { status: 0, body: null }; r.writeHead = (s) => { r.status = s }; r.end = (p) => { r.body = p }; return r }
 const req = (p) => ({ method: 'POST', url: p, socket: {}, headers: {} })
-const rc = (p) => ({ url: new URL('http://127.0.0.1:3080' + p), pathname: p, method: 'POST', body: {}, deps: {} })
+// 0.5.84：探针里也**注入** spawn/退出替身 —— 独立实例现在会真的走 detached 重拉那条路，
+// 而探针**绝不能**真起一个 dsh 进程（那会再抢一次端口）。注入后仍然验证"真实判据 + 真实路由"。
+const spawned = []
+const rc = (p) => ({
+  url: new URL('http://127.0.0.1:3080' + p), pathname: p, method: 'POST',
+  body: {}, deps: {
+    relaunch: { ok: true, reason: null, plan: { bin: 'C:/fake/bin.js', args: ['web'], port: 3080, cwd: null } },
+    spawnDetached: async () => { spawned.push('spawn'); return { pid: 7 } },
+    delayedExit: () => { spawned.push('exit') },
+  },
+})
 const j = (r) => { try { return JSON.parse(r.body) } catch { return null } }
 const r1 = mk(); await routeRestart(req('/plugin-console/restart'), r1, rc('/plugin-console/restart'))
 const r2 = mk(); await routeFrameworkRelaunch(req('/plugin-console/framework-relaunch'), r2, rc('/plugin-console/framework-relaunch'))
-console.log('PROBE_JSON ' + JSON.stringify({ hosted: shape.hosted, reasons: shape.reasons, restartStatus: r1.status, restartChannel: j(r1)?.details?.channel, relaunchStatus: r2.status, relaunchChannel: j(r2)?.details?.channel, childCalls: calls }))
+console.log('PROBE_JSON ' + JSON.stringify({ hosted: shape.hosted, reasons: shape.reasons, restartStatus: r1.status, restartChannel: j(r1)?.details?.channel, relaunchStatus: r2.status, relaunchChannel: j(r2)?.details?.channel, childCalls: calls, injected: spawned }))
 `
   writeFileSync(probePath, probe, 'utf8')
   // 剥掉宿主标记：探针要以"用户在终端里跑 dsh web"的那台普通 node 的身份起
@@ -235,11 +313,18 @@ console.log('PROBE_JSON ' + JSON.stringify({ hosted: shape.hosted, reasons: shap
     skip('真机路径负控（普通 node 进程 = 独立实例）', `探针进程仍被判成外壳托管（reasons=${JSON.stringify(parsed.reasons)}）`)
   } else {
     check('真机路径负控：普通 node 进程被真实 detectHostShape 判为**独立实例**（hosted=false）', true, JSON.stringify(parsed.reasons))
-    check('真机路径负控：POST /restart ⇒ 409 + channel=unavailable（官方通道不可用，如实告知）',
-      parsed.restartStatus === 409 && parsed.restartChannel === RESTART_CHANNEL.unavailable, `status=${parsed.restartStatus} channel=${String(parsed.restartChannel)}`)
-    check('真机路径负控：POST /framework-relaunch ⇒ 409 + channel=unavailable', parsed.relaunchStatus === 409 && parsed.relaunchChannel === RESTART_CHANNEL.unavailable)
-    check('真机路径负控：两条路由在那台进程里**零子进程调用**（真 spawn 探针，不是桩）',
+    // 0.5.84：独立实例不再一律 409 —— 有可用重拉计划时走 standalone-relaunch（真重拉）；
+    // /framework-relaunch（原「手动拉起」按钮）仍保持下线文案（那是另一条按钮，语义没变）。
+    check('真机路径：POST /restart ⇒ 200 + channel=standalone-relaunch（独立实例支持真重启）',
+      parsed.restartStatus === 200 && parsed.restartChannel === RESTART_CHANNEL.standaloneRelaunch,
+      `status=${parsed.restartStatus} channel=${String(parsed.restartChannel)}`)
+    check('真机路径：POST /framework-relaunch ⇒ 409 + channel=unavailable（「手动拉起」按钮语义没变：它不递重拉计划，仍是"请手动重启"）',
+      parsed.relaunchStatus === 409 && String(parsed.relaunchChannel) === RESTART_CHANNEL.unavailable,
+      `status=${parsed.relaunchStatus} channel=${String(parsed.relaunchChannel)}`)
+    check('真机路径：那条进程里**零真实子进程调用**（spawn/退出都走了注入的替身）',
       Array.isArray(parsed.childCalls) && parsed.childCalls.length === 0, (parsed.childCalls ?? []).join(', ') || '0 次')
+    check('真机路径：注入的 spawn 与优雅退出各被调用一次（真路数，不是桩上跳舞）',
+      JSON.stringify(parsed.injected) === JSON.stringify(['spawn', 'exit']), JSON.stringify(parsed.injected))
   }
 }
 {
@@ -267,11 +352,27 @@ console.log('PROBE_JSON ' + JSON.stringify({ hosted: shape.hosted, reasons: shap
     const end = code.indexOf('\n}', from)
     return end === -1 ? code.slice(from) : code.slice(from, end + 2)
   }
+  // ★ 0.5.84：禁词表更新（用户第 5 项 = 独立实例允许 detached 重拉）。红线**本质没变**：
+  //   永远不许「杀进程 / 建计划任务 / 用 PowerShell 拉起」。重拉只允许经 domain/restart-launcher.js
+  //   的 relaunchDetached（进程原语在 infra/egress.js，单测可计数证明"没真起进程"）。
+  //   于是 `kill: false` 这类**字段**不再算禁词，而 process.kill / Stop-Process / schtasks / execFile
+  //   仍然一律不许出现在两条路由的可执行代码里。
   for (const name of ['routeRestart', 'routeFrameworkRelaunch']) {
     const body = bodyOf(name)
-    const hits = ['Start-Process', 'Stop-Process', 'schtasks', 'execFile', 'spawn(', 'kill'].filter((t) => body.includes(t))
-    check(`${name}：可执行代码里 0 处 kill/spawn/计划任务（去注释后扫 6 个禁词）`, hits.length === 0, hits.join(', ') || '0 处')
+    const hits = ['Start-Process', 'Stop-Process', 'schtasks', 'process.kill', 'child.kill', 'execFile', 'spawnSync', 'spawn(']
+      .filter((t) => body.includes(t))
+    check(`${name}：可执行代码里 0 处 kill/spawn/计划任务（去注释后扫 8 个禁词）`, hits.length === 0, hits.join(', ') || '0 处')
     check(`${name}：真的接到了唯一判据 restartPathDecision`, body.includes('restartPathDecision('))
+  }
+  // 重拉只许走唯一出口（谁都能 spawn 的路线不再存在）
+  {
+    const body = bodyOf('routeRestart')
+    check('routeRestart：detached 重拉只经 domain/restart-launcher.js#relaunchDetached（不自己起进程）',
+      body.includes('relaunchDetached(') && body.includes('planRelaunch(') && !body.includes('node:child_process'))
+    check('routeRestart：先回响应再退出（gracefulExit 在 sendJson/200 之后）',
+      body.indexOf('sendJson(res, 200') > 0 && body.indexOf('sendJson(res, 200') < body.indexOf('exit(500)'))
+    check('routeRestart：起不来时如实 500 且不退出（delayedExit 只在成功分支之后）',
+      /restarted: false|重启失败/u.test(body) && body.indexOf('重启失败') < body.indexOf('exit(500)'))
   }
   check('既有清残留能力保留（cleanupStaleFwTasks 仍被调用）',
     readFileSync(join(ROOT, '..', 'lib', 'index.js'), 'utf8').includes('cleanupStaleFwTasks()'))
