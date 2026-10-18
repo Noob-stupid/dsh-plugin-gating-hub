@@ -468,6 +468,15 @@ jobs:
       - name: Update-candidate judge (no downgrade prompts)
         run: node tests/test-update-version-pick.mjs
 
+      # 带版本的更新必须真的落到那个版本（0.5.87 改错）：真机 2026-10-18「更新报成功但版本没落住」。
+      #   · 正控：点名版本 ⇒ 磁盘 = 清单 = lock 三处都是目标版本（runInstallJob 全链路，桩通道，全离线）
+      #   · 负控①：正常 registry 安装/更新的整条流水线**绝不产出 link:/file:**（清单/lock/plugin-src 三处扫）
+      #     ＋尖牙：镜像元数据滞后（探测 404）也按版本号写回（从 registry 下载成功即证明该版本在）
+      #   · 负控②：通道装回来的不是目标版本 ⇒ 作业 failed、点名两版、清单与磁盘一字节不动、绝不 persisted:true
+      #   · 源码级防回退（版本号传到 curl / 版本闸在位 / 收口置位 registryProven）
+      - name: Versioned update must land that version (never emits link:)
+        run: node tests/test-update-version-persist.mjs
+
       # 真装真卸冒烟：在 CI 的 Linux 宿主上跑（临时 DSH_HOME，不碰真实目录）。
       # 为什么单独一步且**不带** DSH_TEST_SKIP_NETWORK：环境相关测试"没 profile 就整体 SKIP"，
       # 正是这个缺口让 `git.exe`、corepack Windows 路径这类硬编码在 Linux CI 上一直活着（2026-09-20 复盘）。
