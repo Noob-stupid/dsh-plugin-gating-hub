@@ -230,11 +230,11 @@ await checkAsync('① ★ 从下拉选开发区 ⇒ 路径补成草稿（根本�
   // 下拉里必须真的列出服务端给的根（不是空列表、不是写死的）
   const options = panel.view().nodes.filter((n) => n.tag === 'option').map((n) => String(n.props?.children ?? ''))
   assert.ok(options.includes('D:/dev') && options.includes('D:/plugin-src'), `下拉里没有服务端给的根：${options.join(' | ')}`)
-  select.props.onChange({ currentTarget: { value: 'D:/dev' } })
+  select.props.onChange({ currentTarget: { value: 'D:/dev' }, target: { value: 'D:/dev' } })
   const input = panel.view().nodes.find((n) => n.tag === 'input' && n.props.placeholder === 'linksDirPlaceholder')
   assert.equal(input.props.value, 'D:/dev/', `选了根之后应是待续写的草稿：${JSON.stringify(input.props.value)}`)
   // 反斜杠风格也照原样补，不混用分隔符
-  panel.view().nodes.find((n) => n.tag === 'select').props.onChange({ currentTarget: { value: 'C:\\my-dev' } })
+  panel.view().nodes.find((n) => n.tag === 'select').props.onChange({ currentTarget: { value: 'C:\\my-dev' }, target: { value: 'C:\\my-dev' } })
   assert.equal(panel.view().nodes.find((n) => n.tag === 'input' && n.props.placeholder === 'linksDirPlaceholder').props.value, 'C:\\my-dev\\')
 })
 
@@ -277,7 +277,7 @@ await checkAsync('③ ★ 钉住是两段式：先只读计划（不带 confirm�
   const before = fetchLog.length
   const flat = panel.view()
   const input = flat.nodes.find((n) => n.tag === 'input' && n.props.placeholder === 'linksDirPlaceholder')
-  input.props.onChange({ currentTarget: { value: 'D:/dev/demo' } })
+  input.props.onChange({ currentTarget: { value: 'D:/dev/demo' }, target: { value: 'D:/dev/demo' } })
   panel.rerender()
   panel.click('linksPinPlanBtn')
   await flushAsync()
