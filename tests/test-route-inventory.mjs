@@ -93,6 +93,8 @@ const ROUTES = [
   '/lockfile-repair',
   // issue #22 ① 加法：已安装插件「一键检测全部更新」—— 与 /check-update 共用同一个探针（判据不分叉）
   '/check-updates',
+  // issue #22 ②③ 加法：用户备注 / 用户徽章 / 用户自建分组（GET 只读 + POST 写，同一个路径）
+  '/annotations',
   // 0.5.84 加法（用户第 7 项）：<DSH_HOME>/plugin-console 的磁盘体检（只读）与**确认后**清理
   '/disk-audit',
   '/disk-cleanup',
@@ -172,6 +174,12 @@ const SCHEMAS = [
   // issue #22 ① 加法：批量检测的**入参校验**分支（不传 packageNames ⇒ 400，零网络；测试不该依赖 registry）
   // 响应字段固定为这四项：ok / error / code(可选) —— 这里只钉"是 400 且带可读原因"，不钉多余字段。
   ['POST', '/plugin-console/check-updates', {}, 400, ['error', 'ok']],
+  // issue #22 ②③ 加法：注解（用户备注/徽章/分组）。夹具里没有注解文件 ⇒ 空结构、零副作用、可预期。
+  // GET 只读：ok 恒 true，形状固定（坏文件时 ok:false + error，但字段一个不少）。
+  ['GET', '/plugin-console/annotations', undefined, 200, ['emptyFile', 'error', 'exists', 'file', 'groups', 'ok', 'plugins', 'repaired', 'stats', 'updatedAt', 'version']],
+  // POST 写：**domain 层校验失败**（note 不是字符串）⇒ 400，但**仍回整份状态**（面板据此重绘，不必再拉一次）。
+  // 注：不传 action 的那条走的是"缺参数"提前返回（只有 ok/error），不在这张表里钉。
+  ['POST', '/plugin-console/annotations', { action: 'note', packageName: 'not-installed-pkg', note: 123 }, 400, ['action', 'backup', 'changed', 'deleted', 'error', 'file', 'group', 'groups', 'index', 'key', 'movedFrom', 'ok', 'plugins', 'removedFrom', 'stats']],
 ]
 for (const [method, path, body, wantStatus, wantKeys] of SCHEMAS) {
   const r = await call(method, path, body)
