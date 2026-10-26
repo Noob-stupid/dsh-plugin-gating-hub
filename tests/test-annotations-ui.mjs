@@ -170,6 +170,12 @@ function cardBadgeLabels(view, title) {
 }
 const installHost = () => {
   const fetchLog = []
+  // 假服务端里的**可写副本**：写动作之间要能看到彼此的效果（建分组 → 加成员 → 改名 → 删），
+  // 但 GET（面板打开/重开）仍返回**静态夹具** ANNOTATIONS —— 两个作用刻意分开：
+  //   · ② 的"重新打开面板"断言依赖 GET 拿到夹具；
+  //   · ③ 的"建完立刻同步 / 框内增删 / 改名"依赖写动作之间共享同一份可变状态。
+  const live = { plugins: { ...ANNOTATIONS.plugins }, groups: ANNOTATIONS.groups.map((g) => ({ ...g, packages: [...g.packages] })) }
+  const annReply = (extra) => ({ ok: true, status: 200, json: async () => ({ ok: true, action: null, changed: true, error: null, backup: null, file: ANNOTATIONS.file, key: null, group: null, deleted: null, index: null, movedFrom: null, removedFrom: null, plugins: live.plugins, groups: live.groups, stats: ANNOTATIONS.stats, ...extra }) })
   globalThis.fetch = async (path, options) => {
     const body = options?.body === undefined ? null : JSON.parse(options.body)
     fetchLog.push({ path: String(path), body, method: options?.method ?? 'GET' })
@@ -178,17 +184,34 @@ const installHost = () => {
     if (path === '/plugin-console/sources') return reply({ ok: true, sources: { registries: [], gitSources: [], archiveSources: [], searchSources: [], primary: null } })
     if (path === '/plugin-console/annotations' && body === null) return reply(ANNOTATIONS)
     if (path === '/plugin-console/annotations') {
-      const next = { ...ANNOTATIONS, plugins: { ...ANNOTATIONS.plugins }, groups: ANNOTATIONS.groups.map((g) => ({ ...g, packages: [...g.packages] })) }
       if (body.action === 'note') {
-        if (String(body.note ?? '').trim() === '') delete next.plugins[body.packageName]
-        else next.plugins[body.packageName] = { ...(next.plugins[body.packageName] ?? {}), note: String(body.note).trim() }
+        if (String(body.note ?? '').trim() === '') delete live.plugins[body.packageName]
+        else live.plugins[body.packageName] = { ...(live.plugins[body.packageName] ?? {}), note: String(body.note).trim() }
+      }
+      if (body.action === 'group-create') {
+        const group = { id: 'gnew' + String(live.groups.length + 1), name: String(body.name ?? '').trim(), packages: [], collapsed: false }
+        live.groups.push(group)
+        return annReply({ action: body.action, group })
+      }
+      if (body.action === 'group-assign') {
+        const group = live.groups.find((g) => g.id === body.id)
+        if (group !== undefined) {
+          if (body.member === false) group.packages = group.packages.filter((p) => p !== body.packageName)
+          else if (!group.packages.includes(body.packageName)) group.packages.push(body.packageName)
+        }
+        return annReply({ action: body.action, key: body.packageName ?? null })
+      }
+      if (body.action === 'group-rename') {
+        const group = live.groups.find((g) => g.id === body.id)
+        if (group !== undefined) group.name = String(body.name ?? '')
+        return annReply({ action: body.action, group: group ?? null })
       }
       if (body.action === 'group-delete') {
-        const index = next.groups.findIndex((g) => g.id === body.id)
-        const deleted = index >= 0 ? next.groups.splice(index, 1)[0] : null
-        return reply({ ok: true, action: body.action, changed: true, error: null, backup: null, file: next.file, key: null, group: null, deleted: deleted === null ? null : { group: deleted, index }, index: null, movedFrom: null, removedFrom: null, plugins: next.plugins, groups: next.groups, stats: next.stats })
+        const index = live.groups.findIndex((g) => g.id === body.id)
+        const deleted = index >= 0 ? live.groups.splice(index, 1)[0] : null
+        return annReply({ action: body.action, deleted: deleted === null ? null : { group: deleted, index } })
       }
-      return reply({ ok: true, action: body.action, changed: true, error: null, backup: null, file: next.file, key: body.packageName ?? null, group: null, deleted: null, index: null, movedFrom: null, removedFrom: null, plugins: next.plugins, groups: next.groups, stats: next.stats })
+      return annReply({ action: body.action, key: body.packageName ?? null })
     }
     if (path === '/plugin-console/check-updates') return reply(CHECK_UPDATES)
     if (path === '/plugin-console/install') return reply({ ok: true, jobId: 'job-1' })
@@ -478,6 +501,104 @@ const A = await bootPanel({ badgeAreaWidth: 520, cacheKey: 'annotations-wide' })
     await waitUntil(() => fetchLog.slice(before).some((c) => c.body?.action === 'group-delete'), 'group-delete 请求')
     assert.equal(fetchLog.slice(before).find((c) => c.body?.action === 'group-delete').body.id, 'g1')
     await waitUntil(() => panel.hasButton('groupRestore'), '「撤销删除」入口')
+  })
+
+  // ── ③ 收口：新建分组 = 回车触发 + 入场动画 + 家族式横框 + 框内增删 + 主列表立刻同步 ───────────
+  const groupCreateInput = () => view().nodes.find((n) => n.tag === 'input' && n.props?.placeholder === 'groupCreatePlaceholder')
+  const groupFrames = () => view().nodes.filter((n) => n.props?.['data-usergroup'] === 'true')
+  const frameNamed = (name) => groupFrames().find((f) => flatten(f).nodes.some((n) => n.tag === 'strong' && n.props.title === name))
+
+  await checkAsync('③ 新建分组只认**回车**：打字期间一次请求都不发，回车才 POST group-create', async () => {
+    const before = fetchLog.length
+    assert.ok(groupCreateInput(), '面板里没有「新建分组」输入框')
+    for (const text of ['新', '新组', '新组A']) {
+      groupCreateInput().props.onChange({ target: { value: text } })
+      await flushAsync(3)
+      assert.equal(fetchLog.slice(before).filter((c) => c.body?.action === 'group-create').length, 0,
+        `打到「${text}」就发建组请求了（必须回车这个明确动作才建）`)
+    }
+    assert.equal(groupCreateInput().props.value, '新组A', '输入框该是受控的')
+    groupCreateInput().props.onKeyDown({ key: 'Enter', preventDefault: () => {} })
+    await waitUntil(() => fetchLog.slice(before).some((c) => c.body?.action === 'group-create' && c.body.name === '新组A'), 'group-create 请求')
+    assert.equal(groupCreateInput().props.value, '', '建完该把输入框清空')
+  })
+
+  await checkAsync('③ 主列表**立刻**出现新分组的横框：标题行 + 折叠箭头 + 与官方 family 同一套视觉语言', async () => {
+    // 写动作的响应是异步落的（setAnnotations 用服务端全量状态覆盖）⇒ 等它真的落到界面上再断言，
+    // 不然断言到的是"还没同步"的中间态（本轮实测踩到：frame 有了但动画标记还没到）。
+    await waitUntil(() => frameNamed('新组A') !== undefined && frameNamed('新组A').props['data-new-group'] === 'true', '带动画标记的新分组横框')
+    const frame = frameNamed('新组A')
+    assert.ok(frame, `主列表里没有新分组的横框：${groupFrames().map((f) => String(f.props['data-group-id'])).join(' | ')}`)
+    const flat = flatten(frame)
+    // 容器：与官方 family 区块同一个 .pc_detail 容器 + 同一条边框（"家族式"就在这里）
+    assert.ok(String(frame.props.className).includes('pc_detail'), `横框容器不是 family 那套：${frame.props.className}`)
+    assert.equal(String(frame.props.style?.border), '1px solid var(--dsw-alias-state-business-primary)',
+      `横框边框与官方 family 不一致：${JSON.stringify(frame.props.style?.border)}`)
+    // 标题行 + 折叠箭头（▾/▸ + 既有 familyCollapse/familyExpand 文案）
+    assert.ok(flat.nodes.some((n) => n.tag === 'strong' && n.props.title === '新组A'), '横框没有标题行')
+    const arrow = flat.buttons.find((b) => /^[▾▸]/u.test(String(b.props?.children ?? '')))
+    assert.ok(arrow, `横框没有折叠箭头：${flat.buttons.map((b) => String(b.props?.children ?? '')).join(' | ')}`)
+    // 新建出来的那个带动画标记
+    assert.equal(frame.props['data-new-group'], 'true', '新建的横框没有入场动画标记（data-new-group）')
+  })
+
+  check('③ 入场动画：150–300ms 纯 CSS，且 prefers-reduced-motion 下不播', () => {
+    const rule = /\.pc_groupNew\{([^}]*)\}/u.exec(SRC)
+    assert.ok(rule !== null, '样式里没有 .pc_groupNew（新建横框的入场动画）')
+    const ms = /(\d+)ms/u.exec(rule[1])
+    assert.ok(ms !== null, `.pc_groupNew 没写时长：${rule[1]}`)
+    const duration = Number(ms[1])
+    assert.ok(duration >= 150 && duration <= 300, `动画时长该在 150–300ms：${duration}ms`)
+    assert.ok(/animation:pcGroupIn/u.test(rule[1]), `动画名不是 pcGroupIn：${rule[1]}`)
+    assert.ok(/@keyframes pcGroupIn\{/u.test(SRC), '没有 pcGroupIn 关键帧')
+    assert.ok(/@media \(prefers-reduced-motion:reduce\)\{\.pc_groupNew\{animation:none\}\}/u.test(SRC),
+      '缺少 prefers-reduced-motion 的分支（系统开了减少动效就必须不播）')
+  })
+
+  await checkAsync('③ 横框里可以直接加入 / 移出插件（group-assign，加入后立刻在框里）', async () => {
+    const groupId = String(frameNamed('新组A')?.props['data-group-id'] ?? '')
+    assert.ok(groupId !== '', '拿不到新分组的 id')
+    const add = flatten(frameNamed('新组A')).nodes.find((n) => n.tag === 'select' && n.props?.['aria-label'] === 'groupMemberAdd')
+    assert.ok(add, '横框里没有「加进分组」的下拉')
+    const options = flatten(frameNamed('新组A')).nodes.filter((n) => n.tag === 'option').map((n) => String(n.props?.children ?? ''))
+    assert.ok(options.includes('dsh-search-tools'), `下拉里没有候选插件：${options.join(' | ')}`)
+    const before = fetchLog.length
+    add.props.onChange({ target: { value: 'dsh-search-tools' } })
+    await waitUntil(() => fetchLog.slice(before).some((c) => c.body?.action === 'group-assign'), 'group-assign（加入）请求')
+    const call = fetchLog.slice(before).find((c) => c.body?.action === 'group-assign')
+    assert.equal(call.body.packageName, 'dsh-search-tools', JSON.stringify(call.body))
+    assert.equal(call.body.id, groupId, `加入请求的分组 id 不对：${JSON.stringify(call.body)}`)
+    assert.notEqual(call.body.member, false, '加入请求不该带 member:false')
+    // 加进去之后：成员 chip 的 × 能直接移出（只解除归属）
+    await waitUntil(() => flatten(frameNamed('新组A') ?? { props: {} }).nodes.some((n) => n.props?.['aria-label'] === 'groupMemberRemove') ||
+      (frameNamed('新组A') !== undefined && flatten(frameNamed('新组A')).nodes.some((n) => n.props?.['aria-label'] === 'groupMemberRemove')), '成员 chip')
+    const frameNow = frameNamed('新组A')
+    assert.ok(frameNow, '加入成员后横框不见了')
+    const removeBtn = flatten(frameNow).nodes.find((n) => n.props?.['aria-label'] === 'groupMemberRemove')
+    assert.ok(removeBtn, '横框里没有移出成员（×）的入口')
+    const before2 = fetchLog.length
+    removeBtn.props.onClick()
+    await waitUntil(() => fetchLog.slice(before2).some((c) => c.body?.action === 'group-assign' && c.body.member === false), 'group-assign（移出）请求')
+    assert.equal(fetchLog.slice(before2).find((c) => c.body?.action === 'group-assign').body.packageName, 'dsh-search-tools')
+  })
+
+  await checkAsync('③ 重命名不退化：面板里就地编辑、**回车才写** group-rename，主列表跟着改', async () => {
+    const row = view().nodes.filter((n) => n.tag === 'li' && n.props.className === 'pc_row')
+      .find((li) => flatten(li).nodes.some((n) => n.tag === 'strong' && String(n.props.children ?? '') === '新组A'))
+    assert.ok(row, '面板的分组列表里找不到「新组A」那一行')
+    const renameBtn = flatten(row).buttons.find((b) => String(b.props?.children ?? '') === 'groupRename')
+    assert.ok(renameBtn, '找不到「重命名」按钮')
+    renameBtn.props.onClick()
+    const renameInput = view().nodes.find((n) => n.tag === 'input' && n.props?.['aria-label'] === 'groupRename')
+    assert.ok(renameInput, '点「重命名」后没有出现就地编辑框')
+    assert.equal(renameInput.props.value, '新组A', '编辑框该带出原名')
+    const before = fetchLog.length
+    renameInput.props.onChange({ target: { value: '新组B' } })
+    await flushAsync(3)
+    assert.equal(fetchLog.slice(before).filter((c) => c.body?.action === 'group-rename').length, 0, '打字期间就改名了（必须回车）')
+    view().nodes.find((n) => n.tag === 'input' && n.props?.['aria-label'] === 'groupRename').props.onKeyDown({ key: 'Enter', preventDefault: () => {} })
+    await waitUntil(() => fetchLog.slice(before).some((c) => c.body?.action === 'group-rename' && c.body.name === '新组B'), 'group-rename 请求')
+    await waitUntil(() => frameNamed('新组B') !== undefined, '主列表的横框跟着改名')
   })
 }
 
