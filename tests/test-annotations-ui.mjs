@@ -373,12 +373,16 @@ const A = await bootPanel({ badgeAreaWidth: 520, cacheKey: 'annotations-wide' })
     assert.ok(titles.includes('@fake/dsh-web-all'), `官方 family 区块不见了：${titles.join(' | ')}`)
   })
 
-  await checkAsync('③-c 「备注插件」面板：写备注回车 → 真的 POST /annotations（action=note）', async () => {
+  await checkAsync('③-c「备注插件」面板：列表默认收起 → 点开 → 写备注回车 → 真的 POST /annotations（action=note）', async () => {
     const before = fetchLog.length
     const openBtn = view().buttons.find((b) => b.props?.['aria-label'] === 'annotationsBtn')
     assert.ok(openBtn, '工具栏里没有「备注插件」入口（annotationsBtn）')
     openBtn.props.onClick()
-    await waitUntil(() => panel.hasButton('noteEdit') || panel.hasButton('noteEmpty'), '备注插件面板渲染')
+    // ★ 0.5.93 行为变更：面板打开时插件列表**收起** ⇒ 得先点开列表，才谈得上"改备注"。
+    //   旧断言假定打开面板就有 noteEdit/noteEmpty，随行为变更**有意识**改（理由见 commit message）。
+    await waitUntil(() => view().buttons.some((b) => b.props?.['aria-label'] === 'annotationsListToggle'), '备注插件面板渲染（列表摘要行）')
+    view().buttons.find((b) => b.props?.['aria-label'] === 'annotationsListToggle').props.onClick()
+    await waitUntil(() => panel.hasButton('noteEdit') || panel.hasButton('noteEmpty'), '展开后插件行渲染')
     const edit = view().buttons.find((b) => String(b.props?.children ?? '') === 'noteEdit')
     assert.ok(edit, `找不到「改备注」按钮：${view().buttons.map((b) => String(b.props?.children ?? '')).slice(0, 30).join(' | ')}`)
     edit.props.onClick()
@@ -390,6 +394,76 @@ const A = await bootPanel({ badgeAreaWidth: 520, cacheKey: 'annotations-wide' })
     const call = fetchLog.slice(before).find((c) => c.path === '/plugin-console/annotations' && c.body?.action === 'note')
     assert.equal(call.body.packageName, '@openviking/dsh-memory-plugin', JSON.stringify(call.body))
     assert.equal(call.body.note, '  新的备注  ', '备注原文应交给服务端（trim/校验在服务端）')
+  })
+
+  // ── ② 收口：插件列表默认收起 + 可搜索（每一条都能失败）────────────────────────────
+  const listToggle = () => view().buttons.find((b) => b.props?.['aria-label'] === 'annotationsListToggle')
+  const searchBox = () => view().nodes.find((n) => n.props?.['aria-label'] === 'annotationsSearch')
+  /** 面板里那份插件行的包名（只数 data-annotlist 这一棵子树，别和主列表的卡片混起来）。 */
+  const panelRowNames = () => {
+    const ul = view().nodes.find((n) => n.props?.['data-annotlist'] === 'true')
+    if (ul === undefined) return null
+    return flatten(ul).nodes.filter((n) => n.tag === 'li').map((li) => String(flatten(li).nodes.find((x) => x.tag === 'strong')?.props?.title ?? ''))
+  }
+  /** 面板卡片内部（`pc_modalCard`）的「改备注」按钮数 —— 不能算上主列表里展开着的详情页。 */
+  const panelNoteEditCount = () => {
+    const card = view().nodes.find((n) => n.props?.className === 'pc_modalCard')
+    return card === undefined ? -1 : flatten(card).buttons.filter((b) => String(b.props?.children ?? '') === 'noteEdit').length
+  }
+
+  check('② 列表可展开/收起：摘要行给「插件列表（N）· 点此展开」，收起时插件行与搜索框都不渲染', () => {
+    const toggle = listToggle()
+    assert.ok(toggle, '面板里没有列表开关（annotationsListToggle）')
+    assert.equal(String(toggle.props.children), 'annotationsListHide', `展开时摘要该说"点此收起"：${String(toggle.props.children)}`)
+    assert.ok(panelRowNames() !== null, '展开时没有插件列表（data-annotlist）')
+    toggle.props.onClick()
+    const collapsed = listToggle()
+    assert.equal(String(collapsed.props.children), 'annotationsListShow', `收起时摘要该说"点此展开"：${String(collapsed.props.children)}`)
+    assert.equal(panelRowNames(), null, '收起时仍在渲染插件列表')
+    assert.equal(searchBox(), undefined, '收起时不该有搜索框')
+    assert.equal(panelNoteEditCount(), 0, `收起时面板里仍在渲染插件行的备注按钮（${panelNoteEditCount()} 个）`)
+    collapsed.props.onClick()
+    assert.ok(panelRowNames() !== null, '再点一次应重新展开')
+  })
+
+  await checkAsync('② 每次打开面板都回到**收起**状态（不残留上次的展开/查询）', async () => {
+    // 先把查询框填上字，再关掉面板重新打开 —— 重新打开必须是"收起 + 空查询"
+    searchBox().props.onChange({ target: { value: 'search' } })
+    assert.equal(searchBox().props.value, 'search', '搜索框该是受控的')
+    view().buttons.find((b) => b.props?.['aria-label'] === 'annotationsBtn').props.onClick() // 关
+    await flushAsync(2)
+    view().buttons.find((b) => b.props?.['aria-label'] === 'annotationsBtn').props.onClick() // 开
+    await waitUntil(() => listToggle() !== undefined, '重新打开后的列表摘要行')
+    assert.equal(String(listToggle().props.children), 'annotationsListShow', '重新打开面板时列表应回到收起')
+    listToggle().props.onClick()
+    assert.equal(searchBox().props.value, '', '重新打开面板时查询词应清空')
+  })
+
+  check('② 搜索按**备注内容**即时过滤（边打边筛，不用点按钮）；过滤不清掉正在输入的内容', () => {
+    // 备注夹具：'记忆插件：给助手长期记忆'（重新打开面板会重读 GET /annotations，拿到的是这份夹具）
+    searchBox().props.onChange({ target: { value: '长期记忆' } })
+    assert.equal(searchBox().props.value, '长期记忆', '过滤把用户正在输入的内容清掉了')
+    const names = panelRowNames()
+    assert.ok(names !== null, '按备注过滤后把整份列表都滤掉了（应当只剩 mem 那一行）')
+    assert.equal(names.length, 1, `按备注过滤后应只剩 mem 那一行：${names.join(' | ')}`)
+    assert.ok(names[0].includes('@openviking/dsh-memory-plugin'), `过滤结果不对：${names.join(' | ')}`)
+  })
+
+  check('② 搜索按**包名 / rowId** 过滤（同一套即时过滤）', () => {
+    searchBox().props.onChange({ target: { value: 'dsh-search-tools' } })
+    assert.deepEqual(panelRowNames(), ['dsh-search-tools'], `按包名过滤结果不对：${panelRowNames()?.join(' | ')}`)
+    searchBox().props.onChange({ target: { value: 'web-all__pm' } })
+    assert.deepEqual(panelRowNames(), ['@fake/dsh-web-all/plugin-manager'], `按 rowId 过滤结果不对：${panelRowNames()?.join(' | ')}`)
+  })
+
+  check('② 无匹配要有文字（「没有匹配的插件」），不能空白；清空查询后恢复全部', () => {
+    searchBox().props.onChange({ target: { value: 'zzz-not-a-plugin' } })
+    assert.equal(panelRowNames(), null, '无匹配时不该还在渲染插件列表')
+    const texts = view().texts
+    assert.ok(texts.includes('annotationsNoMatch'), `无匹配时没有文字提示：${texts.slice(-12).join(' | ')}`)
+    assert.equal(searchBox().props.value, 'zzz-not-a-plugin', '无匹配时输入框里的字被清掉了')
+    searchBox().props.onChange({ target: { value: '' } })
+    assert.equal(panelRowNames().length, ENTRIES.length, `清空查询后应恢复全部 ${ENTRIES.length} 行：${panelRowNames()?.join(' | ')}`)
   })
 
   await checkAsync('③-d 删分组是两段式：第一下零写入，确认后才发 group-delete，并给「撤销删除」', async () => {
