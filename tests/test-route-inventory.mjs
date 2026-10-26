@@ -91,6 +91,8 @@ const ROUTES = [
   // 依赖锁体检 / 重建（2026-09-27 加法）：check 只读，repair 必须显式调用
   '/lockfile-check',
   '/lockfile-repair',
+  // issue #22 ① 加法：已安装插件「一键检测全部更新」—— 与 /check-update 共用同一个探针（判据不分叉）
+  '/check-updates',
   // 0.5.84 加法（用户第 7 项）：<DSH_HOME>/plugin-console 的磁盘体检（只读）与**确认后**清理
   '/disk-audit',
   '/disk-cleanup',
@@ -167,6 +169,9 @@ const SCHEMAS = [
   //   这里拿到的会是 405「不支持的方法」而不是 200 —— 契约断言与下面的 ②a-1 判据互为双保险。
   ['GET', '/plugin-console/preset-audit', undefined, 200, ['blockers', 'error', 'missing', 'ok', 'orphan', 'patchPath', 'presetCount', 'presetsRoot', 'stale', 'targetMissing']],
   ['GET', '/plugin-console/patch-audit', undefined, 200, ['bases', 'blockerCount', 'blockers', 'ok', 'patchPath', 'rows', 'warningCount', 'warnings']],
+  // issue #22 ① 加法：批量检测的**入参校验**分支（不传 packageNames ⇒ 400，零网络；测试不该依赖 registry）
+  // 响应字段固定为这四项：ok / error / code(可选) —— 这里只钉"是 400 且带可读原因"，不钉多余字段。
+  ['POST', '/plugin-console/check-updates', {}, 400, ['error', 'ok']],
 ]
 for (const [method, path, body, wantStatus, wantKeys] of SCHEMAS) {
   const r = await call(method, path, body)
