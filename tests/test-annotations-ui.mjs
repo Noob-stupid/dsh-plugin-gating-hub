@@ -11,18 +11,24 @@
 //      完成后出现「仅看可更新 · N」；卡片上出现可点的「更新 → vX」，点它 → POST /install 且**带上目标版本**。
 //   ①-b 「仅看可更新」真的过滤（只留可更新的那张卡），再点一次还原。
 //   ② 系统徽章一条不少 + 用户徽章在**它们之后**（顺序断言），用户徽章带 data-user-badge（虚线样式）。
-//   ②-b 宽度**测得到**（宽卡）时用户徽章正常显示；宽度**测不到/太窄**时尾部收进 `+N`（保守默认 320px），
-//      点 `+N` 能看到**全部**徽章（系统 + 用户）。两条各用一个实例跑，互不影响。
+//   ②-b **行为变更（0.5.93，用户定稿）**：卡片上不再出现「+N」——放不下的徽章直接看不见、不给任何
+//      "还有 N 个"的提示（与这个功能上线前一致），截断交给**纯 CSS**（固定高度 + overflow:hidden +
+//      white-space:nowrap），且客户端**不许再做宽度测量**（ResizeObserver 正是"徽章挤压变化"的源头）；
+//      全部徽章（系统 + 用户）在**详情页**里一次看全。
+//      → 旧断言「宽度测不到 ⇒ 收进 +N」「点 +N 看全部」随行为变更**有意识重写**（不是删除，理由写在
+//        commit message 与本段注释里）。
 //   ③ 用户备注/徽章块在详情页**最前面**（先于版本行），动作按钮在**最后**。
 //   ③-b 用户分组区块：官方 family 成员**不进**用户分组（官方 family 优先，用户拍定的规则）。
 //   ③-c 「备注插件」面板：写备注回车 → 真的 POST /annotations {action:'note'}；没备注时只显示「＋ 加备注」。
 //   ③-d 删分组是**两段式**（第一下只上膛、零写入），确认后才发 group-delete，并给「撤销删除」。
 import { strict as assert } from 'node:assert'
+import { readFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 
 const HERE = dirname(fileURLToPath(import.meta.url))
 const REPO = join(HERE, '..')
+const SRC = readFileSync(join(REPO, 'lib', 'client.js'), 'utf8')
 
 let passed = 0
 const check = (name, fn) => {
@@ -334,6 +340,31 @@ const A = await bootPanel({ badgeAreaWidth: 520, cacheKey: 'annotations-wide' })
     assert.ok(iCheck > iVersion, `动作按钮必须在版本/说明之后（check=${iCheck} version=${iVersion}）`)
   })
 
+  await checkAsync('②-b 详情页：全部徽章一次看全（系统徽章 + 用户徽章都在，卡片上放不下的也在这）', async () => {
+    // ★ 必须点**有用户徽章的那张卡**（mem）的「详情」：它被归进用户分组区块 ⇒ 不是列表里的第一张，
+    //   上面 ③ 点的"第一个详情按钮"其实是 search 那张卡（没有用户徽章）—— 拿它断言会假绿。
+    const memCard = view().nodes.filter((n) => n.tag === 'li' && n.props.className === 'pc_row')
+      .find((li) => flatten(li).nodes.some((n) => n.tag === 'strong' && n.props.title === '@openviking/dsh-memory-plugin'))
+    assert.ok(memCard, '找不到 mem 卡片')
+    const detailBtn = flatten(memCard).buttons.find((b) => String(b.props?.children ?? '') === 'details')
+    assert.ok(detailBtn, 'mem 卡片上没有「详情」按钮')
+    detailBtn.props.onClick()
+    const rowLabels = () => {
+      const row = view().nodes.find((n) => n.props?.['data-allbadges'] === 'true')
+      return row === undefined ? null : flatten(row).nodes.filter((n) => n.tag === 'span' && n.props.className === 'pc_tag').map((n) => String(n.props.children ?? ''))
+    }
+    await waitUntil(() => (rowLabels() ?? []).some((label) => label.includes('必装')), 'mem 详情页的「全部徽章」行')
+    const labels = rowLabels()
+    assert.ok(labels !== null, '详情页里没有「全部徽章」行（data-allbadges）')
+    for (const want of ['enabledTag', 'extraTag', '必装', '记忆类', '只看这个', '别删', '自用', '收藏']) {
+      assert.ok(labels.some((label) => label.includes(want)), `详情页"全部徽章"缺「${want}」：${labels.join(' | ')}`)
+    }
+    // 顺序与卡片一致：系统徽章在前、用户徽章在后
+    const iEnabled = labels.indexOf('enabledTag')
+    const iUser = labels.findIndex((label) => label.includes('必装'))
+    assert.ok(iEnabled >= 0 && iUser > iEnabled, `详情页徽章顺序不对（system=${iEnabled} user=${iUser}）：${labels.join(' | ')}`)
+  })
+
   check('③-b 用户分组区块：官方 family 成员**不进**用户分组（官方 family 优先）', () => {
     const flat = view()
     const titles = flat.nodes.filter((n) => n.tag === 'strong' && n.props.title !== undefined).map((n) => String(n.props.title))
@@ -376,7 +407,9 @@ const A = await bootPanel({ badgeAreaWidth: 520, cacheKey: 'annotations-wide' })
   })
 }
 
-// ═══ B. 窄卡 / 宽度拿不到（ref.current = null ⇒ 保守默认 320px）═══ ②-b 溢出收起
+// ═══ B. 0.5.93 行为变更：卡片上**不再收 +N**，放不下由纯 CSS 截断、全部徽章看详情页 ═══
+// 第二个实例刻意让"宽度拿不到"（ref.current === null）：旧实现会走保守默认 320px 那条路，
+// 新实现**根本不读宽度**，所以两个实例的卡片徽章必须**逐条相同**（这条就是我想要的反向钉子）。
 const B = await bootPanel({ badgeAreaWidth: null, cacheKey: 'annotations-narrow' })
 {
   const { view, rerender, fetchLog } = B
@@ -393,29 +426,37 @@ const B = await bootPanel({ badgeAreaWidth: null, cacheKey: 'annotations-narrow'
   await waitUntil(() => view().buttons.some((b) => b.props?.['aria-label'] === 'checkAllUpdates' && b.disabled === false), '/state 就绪')
   await waitUntil(() => view().nodes.some((n) => n.tag === 'div' && n.props.className === 'pc_badgeRow'), '徽章行渲染')
 
-  check('②-b 宽度拿不到 ⇒ 用保守默认 320px：放不下的尾部收进「+N」（单行不换行）', () => {
+  check('②-b 卡片上没有「+N」收起按钮（放不下就不显示，不给"还有几个"的提示）', () => {
     const card = view().nodes.filter((n) => n.tag === 'li' && n.props.className === 'pc_row').find((li) => flatten(li).nodes.some((n) => n.tag === 'strong' && n.props.title === '@openviking/dsh-memory-plugin'))
     assert.ok(card, '找不到 mem 卡片')
     const cardButtons = flatten(card).buttons
-    const overflow = cardButtons.find((b) => String(b.props?.children ?? '').startsWith('+'))
-    assert.ok(overflow, `mem 卡片上没出现 +N 收起按钮：${cardButtons.map((b) => String(b.props?.children ?? '')).join(' | ')}`)
-    const hidden = Number(String(overflow.props.children).slice(1))
-    assert.ok(hidden >= 1, `+N 的 N 应 ≥1：${overflow.props.children}`)
-    // 收起发生在尾部 ⇒ 系统徽章优先保留
-    const labels = cardBadgeLabels(view, '@openviking/dsh-memory-plugin')
-    assert.ok(labels.includes('enabledTag'), `收起后仍应保留系统徽章：${labels.join(' | ')}`)
+    const overflow = cardButtons.filter((b) => /^\+\d+/u.test(String(b.props?.children ?? '')))
+    assert.equal(overflow.length, 0, `卡片上仍有 +N 收起按钮：${cardButtons.map((b) => String(b.props?.children ?? '')).join(' | ')}`)
+    // 整个面板都不许再出现"还有 N 个"的入口（按钮或徽章）
+    const anyMore = view().nodes.filter((n) => String(n.props?.['aria-label'] ?? '').startsWith('badgeOverflowTip'))
+    assert.equal(anyMore.length, 0, '面板里仍出现 badgeOverflowTip 提示')
   })
 
-  check('②-b 点「+N」→ 全部徽章都看得到（系统 + 用户，用户带虚线样式）', () => {
-    const card0 = view().nodes.filter((n) => n.tag === 'li' && n.props.className === 'pc_row').find((li) => flatten(li).nodes.some((n) => n.tag === 'strong' && n.props.title === '@openviking/dsh-memory-plugin'))
-    flatten(card0).buttons.find((b) => String(b.props?.children ?? '').startsWith('+')).props.onClick()
+  check('②-b 徽章一条不少地渲染在卡片上（截断由 CSS 完成，不是"少渲染"）', () => {
     const labels = cardBadgeLabels(view, '@openviking/dsh-memory-plugin') ?? []
     for (const want of ['enabledTag', 'extraTag', '必装', '记忆类', '只看这个', '别删', '自用', '收藏']) {
-      assert.ok(labels.some((label) => label.includes(want)), `展开后缺徽章「${want}」：${labels.join(' | ')}`)
+      assert.ok(labels.some((label) => label.includes(want)), `卡片上缺徽章「${want}」：${labels.join(' | ')}`)
     }
-    const card1 = view().nodes.filter((n) => n.tag === 'li' && n.props.className === 'pc_row').find((li) => flatten(li).nodes.some((n) => n.tag === 'strong' && n.props.title === '@openviking/dsh-memory-plugin'))
-    const userTag = flatten(card1).nodes.find((n) => n.tag === 'span' && n.props.className === 'pc_tag' && String(n.props.children ?? '').includes('必装'))
-    assert.equal(userTag.props['user-badge'] ?? userTag.props['data-user-badge'], 'true', '用户徽章缺少区分样式')
+  })
+
+  check('②-b 徽章行：固定高度 + 单行不换行 + overflow:hidden（纯 CSS 截断），客户端**零宽度测量**', () => {
+    const rule = /\.pc_badgeRow\{([^}]*)\}/u.exec(SRC)
+    assert.ok(rule !== null, '找不到 .pc_badgeRow 的样式规则')
+    const body = rule[1]
+    for (const want of ['overflow:hidden', 'white-space:nowrap', 'flex-wrap:nowrap', 'height:20px']) {
+      assert.ok(body.includes(want), `.pc_badgeRow 缺「${want}」：${body}`)
+    }
+    // 先把注释剔掉再查 —— 注释里**提到**这些名字是说明，不是实现（假绿/假红都躲开）
+    const CODE = SRC.split('\n').map((line) => (/^\s*\/\//u.test(line) ? '' : line)).join('\n')
+    // 「不许做宽度测量」的钉子是**硬的**：代码里出现任何测量/观察都算复发
+    assert.equal(/ResizeObserver/u.test(CODE), false, '客户端代码里又出现了 ResizeObserver（宽度测量正是徽章抖动的来源）')
+    assert.equal(/clientWidth/u.test(CODE), false, '客户端代码里又出现了 clientWidth 宽度测量')
+    assert.equal(/fitBadgeList|fitBadgeChunks|badgeChipWidthOf/u.test(CODE), false, '徽章宽度估算函数又回来了（= 又在按测量值决定显示几个）')
   })
 }
 
