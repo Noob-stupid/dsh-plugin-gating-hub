@@ -26,7 +26,7 @@ jobs:
           fetch-depth: 0
 
       - name: Setup Node
-        uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           # 本仓库无 npm 依赖（build-index 只用 node 内置模块 + gh CLI），无需 cache: npm
           node-version: 22
