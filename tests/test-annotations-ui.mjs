@@ -388,12 +388,17 @@ const A = await bootPanel({ badgeAreaWidth: 520, cacheKey: 'annotations-wide' })
     assert.ok(iEnabled >= 0 && iUser > iEnabled, `详情页徽章顺序不对（system=${iEnabled} user=${iUser}）：${labels.join(' | ')}`)
   })
 
-  check('③-b 用户分组区块：官方 family 成员**不进**用户分组（官方 family 优先）', () => {
+  // 行为已按用户 2026-10-26 的要求反转：分组框**永远出现**（此前"成员全在官方 family 里就跳过"
+  // 会让用户建完分组在主列表什么都看不到，观感等于点了没反应）。同一插件仍不重复渲染 ——
+  // 这些成员留在官方 family 区块里，用户分组框内给一句 data-in-family 的说明。
+  check('③-b 用户分组区块：**永远画出来**（含只由官方 family 成员组成的分组），但成员不重复渲染', () => {
     const flat = view()
     const titles = flat.nodes.filter((n) => n.tag === 'strong' && n.props.title !== undefined).map((n) => String(n.props.title))
     assert.ok(titles.includes('记忆类'), `没有「记忆类」用户分组区块：${titles.join(' | ')}`)
-    assert.ok(!titles.includes('界面类'), `「界面类」只含官方 family 成员 ⇒ 不该出现用户分组区块：${titles.join(' | ')}`)
+    assert.ok(titles.includes('界面类'), `「界面类」只含官方 family 成员，但分组框仍必须出现：${titles.join(' | ')}`)
     assert.ok(titles.includes('@fake/dsh-web-all'), `官方 family 区块不见了：${titles.join(' | ')}`)
+    const notes = flat.nodes.filter((n) => n.props && n.props['data-in-family'] === 'true')
+    assert.ok(notes.length > 0, '成员都在官方 family 里时，框内应给一句 data-in-family 说明（不重复渲染卡片）')
   })
 
   await checkAsync('③-c「备注插件」面板：列表默认收起 → 点开 → 写备注回车 → 真的 POST /annotations（action=note）', async () => {
