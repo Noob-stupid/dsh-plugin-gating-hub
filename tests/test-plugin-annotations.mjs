@@ -308,10 +308,12 @@ console.log('\n=== ⑥ 校验（400 且零写盘）/ 分组语义 / 撤销 ===')
   await write({ action: 'group-assign', id: id1, packageName: 'rules-pkg' })
   const moved = await write({ action: 'group-assign', id: id2, packageName: 'rules-pkg' })
   const groupsNow = readFileJson().groups
-  check('⑥ ★ 一个包只属于一个分组：assign 到「搜索类」会从「记忆类」移出',
+  // 规则已按用户 2026-10-27 变更：**分组允许重叠** —— 一个插件可以同时属于多个分组。
+  // 旧断言（assign 会从「记忆类」移出）代表的是已废弃的"一个包最多一个分组"，故改写而非删除。
+  check('⑥ ★ 分组允许重叠：assign 到「搜索类」后，两个分组都含这个包',
     groupsNow.find((g) => g.id === id2).packages.includes('rules-pkg')
-    && !groupsNow.find((g) => g.id === id1).packages.includes('rules-pkg')
-    && JSON.stringify(moved.meta.movedFrom) === JSON.stringify([id1]),
+    && groupsNow.find((g) => g.id === id1).packages.includes('rules-pkg')
+    && JSON.stringify(moved.meta.movedFrom) === JSON.stringify([]),
     JSON.stringify(moved.meta))
   await write({ action: 'note', packageName: 'rules-pkg', note: '删除分组前后的备注' })
   await write({ action: 'badges', packageName: 'rules-pkg', badges: ['保留我'] })
