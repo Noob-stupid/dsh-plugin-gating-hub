@@ -1,7 +1,9 @@
 name: downloads-badge
 
 # npm 的 `downloads/point/*` 端点对本包返回 0（range 端点同周有数），所以徽章不能直接调它。
-# 这里按 range 端点逐日累加出「近 7 天」，写进 badges/downloads.json，由 shields 的 endpoint 徽章读取。
+# 这里按 range 端点累加，写两份 JSON 供 shields 的 endpoint 徽章读取：
+#   badges/downloads.json        近 7 天
+#   badges/downloads-total.json  自首次发布起的累计
 on:
   schedule:
     - cron: '17 3 * * *'
@@ -19,32 +21,42 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
-      - name: Compute last-7-day downloads from the range endpoint
+      - name: Recompute both download badges from the range endpoint
         run: |
           set -euo pipefail
           pkg='@noob-stupid/dsh-plugin-console'
-          # 用节点算日期，避免时区/格式踩坑
-          start=$(node -e "const d=new Date(Date.now()-6*864e5);console.log(d.toISOString().slice(0,10))")
-          end=$(node -e "console.log(new Date().toISOString().slice(0,10))")
-          url="https://api.npmjs.org/downloads/range/${start}:${end}/${pkg}"
-          json=$(curl -fsS --retry 3 --retry-delay 2 "$url")
-          total=$(printf '%s' "$json" | node -e "let s='';process.stdin.on('data',d=>s+=d).on('end',()=>{const j=JSON.parse(s);const n=(j.downloads||[]).reduce((a,x)=>a+(x.downloads||0),0);console.log(n)})")
-          echo "range ${start}..${end} → ${total}"
-          # 全 0 时不写盘：那是上游统计掉了数据，不是真的没人用（不编造也不把好数字擦成 0）
-          if [ "$total" = "0" ]; then echo "::warning::range 窗口内全为 0，保留上一份数据"; exit 0; fi
-          mkdir -p badges
-          node -e "
-            const fs=require('fs');
-            fs.writeFileSync('badges/downloads.json', JSON.stringify({
-              schemaVersion: 1, label: 'downloads', message: process.argv[1] + '/week', color: 'blue'
-            }, null, 2) + '\n');
-          " "$total"
-      - name: Commit when the number changed
+          created='2026-08-21'
+          week_start=$(node -e "console.log(new Date(Date.now()-6*864e5).toISOString().slice(0,10))")
+          today=$(node -e "console.log(new Date().toISOString().slice(0,10))")
+
+          sum() {
+            curl -fsS --retry 3 --retry-delay 2 \
+              "https://api.npmjs.org/downloads/range/$1:$2/${pkg}" |
+              node -e "let s='';process.stdin.on('data',d=>s+=d).on('end',()=>{const j=JSON.parse(s);console.log((j.downloads||[]).reduce((a,x)=>a+(x.downloads||0),0))})"
+          }
+
+          week=$(sum "$week_start" "$today")
+          total=$(sum "$created" "$today")
+          echo "week ${week_start}..${today} -> ${week}"
+          echo "total ${created}..${today} -> ${total}"
+
+          # 窗口内全 0 视为上游统计掉了数据：保留上一份，不把好数字擦成 0
+          write() {
+            node -e "
+              const fs=require('fs');
+              fs.writeFileSync(process.argv[1], JSON.stringify({
+                schemaVersion: 1, label: process.argv[2], message: process.argv[3], color: 'blue'
+              }, null, 2) + '\n');
+            " "$1" "$2" "$3"
+          }
+          if [ "$week" = "0" ]; then echo "::warning::近一周全 0，保留旧值"; else write badges/downloads.json 'downloads' "${week}/week"; fi
+          if [ "$total" = "0" ]; then echo "::warning::累计为 0，保留旧值"; else write badges/downloads-total.json 'downloads total' "${total}"; fi
+      - name: Commit when a number changed
         run: |
           set -euo pipefail
-          if git diff --quiet -- badges/downloads.json; then echo "没有变化"; exit 0; fi
+          if git diff --quiet -- badges/; then echo "没有变化"; exit 0; fi
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add badges/downloads.json
-          git commit -m "chore: refresh the weekly download count"
+          git add badges/
+          git commit -m "chore: refresh the download badges"
           git push
