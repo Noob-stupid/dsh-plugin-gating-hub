@@ -1,0 +1,20 @@
+version: 2
+
+updates:
+  # 仓库没有运行时依赖，但 workflow 里引用了 actions —— 让 Dependabot 盯着它们的版本
+  - package-ecosystem: 'github-actions'
+    directory: '/'
+    schedule:
+      interval: 'weekly'
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: 'ci'
+
+  # 没有 dependencies/devDependencies，但保留 npm 生态会在将来加依赖时自动生效
+  - package-ecosystem: 'npm'
+    directory: '/'
+    schedule:
+      interval: 'weekly'
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: 'chore'
