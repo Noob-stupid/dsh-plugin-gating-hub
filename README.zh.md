@@ -19,7 +19,7 @@
 [![Registry CI](https://img.shields.io/github/actions/workflow/status/Noob-stupid/dsh-plugin-gating-hub/registry.yml?label=registry%20CI&style=flat-square)](https://github.com/Noob-stupid/dsh-plugin-gating-hub/actions/workflows/registry.yml)
 [![topic: dsh-plugin](https://img.shields.io/badge/topic-dsh_plugin-4D6BFE?style=flat-square)](https://github.com/topics/dsh-plugin)
 [![npm version](https://img.shields.io/npm/v/@noob-stupid/dsh-plugin-console?style=flat-square)](https://www.npmjs.com/package/@noob-stupid/dsh-plugin-console)
-[![npm downloads](https://img.shields.io/endpoint?url=https%3A%2F%2Fraw.githubusercontent.com%2FNoob-stupid%2Fdsh-plugin-gating-hub%2Fmain%2Fbadges%2Fdownloads.json&style=flat-square)](https://raw.githubusercontent.com/Noob-stupid/dsh-plugin-gating-hub/main/badges/downloads.json)
+[![npm downloads](https://img.shields.io/endpoint?url=https%3A%2F%2Fcdn.jsdelivr.net%2Fgh%2FNoob-stupid%2Fdsh-plugin-gating-hub%40main%2Fbadges%2Fdownloads.json&style=flat-square)](https://www.npmjs.com/package/@noob-stupid/dsh-plugin-console)
 [![GitHub Release](https://img.shields.io/github/v/release/Noob-stupid/dsh-plugin-gating-hub?style=flat-square)](https://github.com/Noob-stupid/dsh-plugin-gating-hub/releases)[![dsh.so security](https://www.dsh.so/badge/dsh-plugin-hub.svg)](https://www.dsh.so/artifact/dsh-plugin-hub)
 [![dsh.so install · dsh 0.2.0-rc.1](https://www.dsh.so/badge/install/dsh-plugin-hub@0.2.0-rc.1.svg)](https://www.dsh.so/artifact/dsh-plugin-hub/)
 
