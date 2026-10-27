@@ -496,6 +496,14 @@ jobs:
       - name: Annotations UI behaviour (rendered + clicked)
         run: node tests/test-annotations-ui.mjs
 
+      # 「一键更新本组」的行为（用户 2026-10-27 要求确认）：
+      #   · 每个成员各查一次目标版本，逐个串行（不是并发一起打出去）
+      #   · 只给查到新版的成员发起更新；查不到的**不装**
+      #   · 发起时把该成员自己的目标版本作为 version 传下去
+      #   · 更新请求就是普通 /install，body 里没有任何跳过兼容检查的开关（门控无法被绕过）
+      - name: Group update behaviour (one at a time, with the right version)
+        run: node tests/test-group-update.mjs
+
       # 带版本的更新必须真的落到那个版本（0.5.87 改错）：真机 2026-10-18「更新报成功但版本没落住」。
       #   · 正控：点名版本 ⇒ 磁盘 = 清单 = lock 三处都是目标版本（runInstallJob 全链路，桩通道，全离线）
       #   · 负控①：正常 registry 安装/更新的整条流水线**绝不产出 link:/file:**（清单/lock/plugin-src 三处扫）
