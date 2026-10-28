@@ -509,6 +509,11 @@ jobs:
       - name: Group overlap and candidate paging
         run: node tests/test-groups-notes-paging.mjs
 
+      # 升级失败留下的改名残留补偿（2026-10-28 真机：框架起不来 Cannot find cordis）：
+      #   · 只有 .stale-* 时改回真名 · 真名已存在就跳过 · 只碰 .stale-* · 幂等
+      - name: Framework stale-rename repair
+        run: node tests/test-framework-stale-repair.mjs
+
       # 白屏防呆：把面板里能点的控件挨个点一遍，任何一次渲染抛错就红。
       #   2026-10-27 那次 ReferenceError（用了没声明）就是这类：旧套件只走到「面板打开」，仍然全绿。
       - name: Render sweep (nothing throws while clicking around)
