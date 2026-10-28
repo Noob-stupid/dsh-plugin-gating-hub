@@ -7,7 +7,10 @@
 //   ② 桌面端 host 形态（真机原样命令行的 execPath / argv）被判为外壳托管，且理由可读
 //   ③ 单个证据也能命中（ELECTRON_RUN_AS_NODE / versions.electron / resourcesPath / electron.exe）
 //   ④ 「父进程是 Electron 外壳」**不参与判定**（本机 3080 的父进程也是 Electron —— 否则就误杀独立实例）
-//   ⑤ `relaunchPrelude` 在非托管形态下与旧实现**逐字节相同**（25 行、无任何 DSH_HOSTED）；托管形态只多拒绝、不 spawn
+//   ⑤ `relaunchPrelude` 在非托管形态下**不带任何宿主分支**（内容级：助手齐备、无 DSH_HOSTED、
+//      与自动判定结果逐字节相同）；托管形态只多"标记 + 守卫"两行、只拒绝、不 spawn
+//      （2026-10-28：原来这里还钉了"恰好 25 行"——拉起实现因真机事故重写后行数变化就假红，
+//        已换成内容级断言，宿主不变量本身没放宽）
 //   ⑥ 路由里 4 处「会 kill/spawn 的框架动作」都接了守卫（静态接线，防以后被删掉）
 
 import { readFileSync } from 'node:fs'
@@ -85,11 +88,22 @@ const DESKTOP_HOST = { // 19387：DeepSeek Harness.exe --expose-internals …\ap
   const off = relaunchPrelude({ ...base, hosted: false })
   const auto = relaunchPrelude({ ...base })
   const on = relaunchPrelude({ ...base, hosted: true })
-  check('非托管形态：脚本行数与旧实现一致（25 行）', off.split('\r\n').length === 25, `${off.split('\r\n').length} 行`)
+  // 2026-10-28 改错（断言主题修正，不是放宽）：原来这里钉死「非托管形态恰好 25 行」——
+  // 那把两件不相干的事绑在一起了：「托管支持是纯加法」这个**宿主**不变量，和「拉起实现在这段里
+  // 有多少行」。后者这次因为真机事故（拉起要拿句柄 / 等一小段 / 抓退出码 / 判是否秒退）整体重写，
+  // 行数变成 76 行，于是**宿主守卫一个字没动也报红**（假红正说明这条断言钉错了对象）。
+  // 现在钉的是真正的不变量，而且是**内容级**的（比行数更难糊弄）：
+  //   · 非托管形态里必须齐备拉起实现的三件套助手 + 失败原因载体（$script:relaunchReason）；
+  //   · 非托管形态**不含任何宿主分支**、且与"自动判定"结果逐字节相同（下面两条 + 上一条）；
+  //   · 托管形态只在非托管形态上**多 2 行**（标记 + 守卫），不额外 spawn（再下一条）。
+  check('非托管形态：拉起实现齐备（Resolve/Invoke + 读尾部/端口助手 + 失败原因载体）',
+    ['function Resolve-DshBin', 'function Invoke-DshRelaunch', 'function Get-TailText', 'function Test-RelaunchPort', '$script:relaunchReason']
+      .every((needle) => off.includes(needle)),
+    `${off.split('\r\n').length} 行`)
   check('非托管形态：不含任何宿主守卫痕迹（逐字节不变）', !off.includes('DSH_HOSTED') && !off.includes('外壳托管'))
   check('未显式传 hosted 时自动判定，独立实例下与旧实现逐字节相同', auto === off)
   check('托管形态：写入 $script:DSH_HOSTED 标记', on.includes('$script:DSH_HOSTED = $true'))
-  check('托管形态：Invoke-DshRelaunch 里直接 return $false（不 Start-Process）',
+  check('托管形态：Invoke-DshRelaunch 里直接 return（不 Start-Process）',
     /if \(\$script:DSH_HOSTED\) \{ Log \('本实例由桌面端外壳托管，跳过拉起/u.test(on) && on.split('Start-Process').length === off.split('Start-Process').length,
     `Start-Process 出现 ${on.split('Start-Process').length - 1} 次（与旧实现相同——那是 Resolve 失败分支的兜底，托管分支先 return）`)
   check('托管形态：只多 2 行（标记 + 守卫）', on.split('\r\n').length === off.split('\r\n').length + 2)

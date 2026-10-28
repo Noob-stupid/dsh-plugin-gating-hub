@@ -6,9 +6,10 @@
 import { readFileSync, writeFileSync, mkdirSync, rmSync, existsSync, realpathSync } from 'node:fs'
 import { join, dirname } from 'node:path'
 import { homedir } from 'node:os'
-import { fileURLToPath } from 'node:url'
+import { fileURLToPath, pathToFileURL } from 'node:url'
 import { execFileSync } from 'node:child_process'
 import { createRequire } from 'node:module'
+import { relaunchInvoke, relaunchProbeHelpers, relaunchVerdictBlock, relaunchVerdictHelperSource } from '../lib/server/domain/framework-relaunch.js'
 
 const ROOT = dirname(fileURLToPath(import.meta.url))
 // 统一归一化行尾再抽函数：本机 core.autocrlf=true，工作区文件是 CRLF，
@@ -75,7 +76,9 @@ const launchSnippetSrc = SRC_RFU.slice(lsStart, SRC_RFU.indexOf('\n', lsStart)).
 
 /** 抽出真实的 relaunchPrelude 生成器（v0.3.37：拉起逻辑只此一份，必须测真的）。
  *  结束边界用「函数体最后一行的 `].join('\r\n')` + 其后第一个 }」定位——
- *  直接匹配 `\n}` 会被 CRLF 检出害死（仓库文件是 CRLF）。 */
+ *  直接匹配 `\n}` 会被 CRLF 检出害死（仓库文件是 CRLF）。
+ *  2026-10-28：拉起助手（拿句柄 + 等一小段 + 给结论）抽到 domain/framework-relaunch.js，
+ *  relaunchPrelude 只负责拼装 —— 这两个生成器作为依赖喂进沙箱（下面 makePrelude）。 */
 const rpStart = SRC_FW.indexOf('function relaunchPrelude(')
 const rpTail = rpStart === -1 ? -1 : SRC_FW.indexOf("].join('\\r\\n')", rpStart)
 const rpEnd = rpTail === -1 ? -1 : SRC_FW.indexOf('}', rpTail)
@@ -111,6 +114,8 @@ const scope = {
   qHelperPath: 'C:\\Users\\user\\.dsh\\plugin-console\\fw-analyze-boot.mjs',
   qCandidatesPath: 'C:\\Users\\user\\.dsh\\plugin-console\\fw-quarantine-candidates.json',
   qRecordPath: 'C:\\Users\\user\\.dsh\\plugin-console\\fw-quarantine.json',
+  // 2026-10-28：拉起失败后的回滚判定器转发脚本（升级脚本里以 rvHelperPath 引用）
+  rvHelperPath: 'C:\\Users\\user\\.dsh\\plugin-console\\fw-relaunch-verdict.mjs',
   patchFilePath: 'C:\\Users\\user\\.dsh\\profiles\\web\\cordis.patch.yml',
   thirdPartyRows: ['dsh-routing-suite', 'dsh-github-login'],
   // 重启路由（v0.3.43）用到的局部变量
@@ -152,7 +157,9 @@ function build(expr) {
 const realPs = new Function(`${psImpl}; return ps;`)()
 // 2026-09-26：relaunchPrelude 现在会自己判定宿主形态（外壳托管时生成"拒绝拉起"的脚本），
 // 抠出来的源码片段必须把 domain/framework.js#detectHostShape 作为依赖喂进去（本沙箱是纯 node，判为独立实例）。
-const makePrelude = relaunchPreludeSrc === '' ? null : new Function('join', 'detectHostShape', `${relaunchPreludeSrc}; return relaunchPrelude;`)(join, () => ({ hosted: false, kind: 'standalone', reasons: [], notice: null }))
+// 2026-10-28：拉起助手（relaunchProbeHelpers / relaunchInvoke）在 domain/framework-relaunch.js，
+// 这里喂的是**真实实现**（静态 import，不是文本切片）—— 语法校验因此覆盖真实生成物。
+const makePrelude = relaunchPreludeSrc === '' ? null : new Function('join', 'detectHostShape', 'relaunchProbeHelpers', 'relaunchInvoke', `${relaunchPreludeSrc}; return relaunchPrelude;`)(join, () => ({ hosted: false, kind: 'standalone', reasons: [], notice: null }), relaunchProbeHelpers, relaunchInvoke)
 // with(scope) 里 has() 恒真：函数声明会被 scope 对象环境遮蔽，必须把真实实现挂到 scope 上
 if (makePrelude !== null) scope.relaunchPrelude = makePrelude
 // 2026-09-24：升级脚本数组里现在是 fwIntegrityCheck({...}) 的返回值，把真实实现挂进 scope；
@@ -171,6 +178,14 @@ if (makePrelude !== null) scope.relaunchPrelude = makePrelude
 // 重启脚本数组里是 `${prelude}`（已生成好的整段），这里给一份真货，否则会生成 <stub:prelude> 破坏语法
 if (makePrelude !== null) {
   scope.prelude = makePrelude({ nodePath: scope.nodePath, pluginDir: 'C:\\Users\\user\\.dsh\\profiles\\web\\node_modules\\@noob-stupid\\dsh-plugin-console', fwRoot: scope.fwRoot, target: scope.target, ps: realPs })
+}
+// 2026-10-28：升级脚本数组里有 `relaunchVerdictBlock({...})`（拉起失败 → 判定是否回滚的执行块）。
+// 同样必须挂**真实实现**进 scope，否则会被兜底桩成 `<stub:relaunchVerdictBlock>`（字符串）→
+// 生成物里混进非 PowerShell 文本、语法校验假红。这里顺带把"能生成"本身作为一条断言。
+{
+  scope.relaunchVerdictBlock = relaunchVerdictBlock
+  const sample = relaunchVerdictBlock({ ps: realPs, nodePath: scope.nodePath, helperPath: 'C:\\Users\\user\\.dsh\\plugin-console\\fw-relaunch-verdict.mjs', port: 3080 })
+  check('能从真实实现生成 relaunchVerdictBlock（拉起失败后的回滚判定块）', typeof sample === 'string' && sample.includes("SetState 'ready'"))
 }
 
 // 按**唯一**特征挑选块（升级脚本含 Install-Framework；一键回滚脚本含「一键回滚脚本启动」——
@@ -243,9 +258,31 @@ for (const [name, expr] of blocks) {
   // ── v0.3.37 事故回归：拉起服务那一步崩在 `Test-Path $null` 上（$null -ne '' 是 true，守卫失效）──
   check(`${name}：拉起逻辑只有一份实现`, (script.match(/function Resolve-DshBin/gu) ?? []).length === 1 && (script.match(/function Invoke-DshRelaunch/gu) ?? []).length === 1,
     `Resolve=${(script.match(/function Resolve-DshBin/gu) ?? []).length} Invoke=${(script.match(/function Invoke-DshRelaunch/gu) ?? []).length}`)
-  // 「拉起命令」只在助手函数里写一次（原先 5 处复制粘贴 → 同一个坑反复踩）
-  check(`${name}：拉起命令只有一处（不再内联）`, (script.match(/ web >> /gu) ?? []).length === 1 && /Invoke-DshRelaunch '/u.test(script),
-    `内联拉起命令 ${(script.match(/ web >> /gu) ?? []).length} 处；调用点 ${(script.match(/Invoke-DshRelaunch '/gu) ?? []).length} 个`)
+  // 「拉起命令」只在助手函数里写一次（原先 5 处复制粘贴 → 同一个坑反复踩）。
+  // 2026-10-28：命令形态从 `web >> fw-relaunch.log 2>&1` 改成 `web > <本轮>.out 2> <本轮>.err`
+  // （每轮独立输出文件 + 拿句柄），所以锚点从 ` web >> ` 放宽到 ` web > ` —— 判据语义不变，
+  // 仍然钉"**只有一处**，且必须在 Invoke-DshRelaunch 里"（下面单独断言"在内/在外"）。
+  const launchCmdHits = (script.match(/ web > /gu) ?? []).length
+  check(`${name}：拉起命令只有一处（不再内联）`, launchCmdHits === 1 && /Invoke-DshRelaunch '/u.test(script),
+    `内联拉起命令 ${launchCmdHits} 处；调用点 ${(script.match(/Invoke-DshRelaunch '/gu) ?? []).length} 个`)
+  // 新增（正面钉子）：那次事故的根因是"发出去就算成功"，这里把新契约钉死：
+  //   拿句柄（-PassThru）+ 每轮输出重定向到独立文件 + 轮询正面证据（端口/存活）+ 失败留退出码。
+  {
+    const invokeStart = script.indexOf('function Invoke-DshRelaunch')
+    const invokeEnd = script.indexOf('\ntrap {', invokeStart)
+    const invokeBody = invokeStart === -1 ? '' : script.slice(invokeStart, invokeEnd === -1 ? script.length : invokeEnd)
+    check(`${name}：拉起要能自证（拿句柄 + 输出重定向 + 轮询 + 退出码）`,
+      invokeBody.includes('-PassThru')
+      && invokeBody.includes('.out') && invokeBody.includes('.err')
+      && invokeBody.includes('Test-RelaunchPort') && invokeBody.includes('HasExited')
+      && invokeBody.includes('ExitCode') && invokeBody.includes('child-exited-early')
+      && invokeBody.includes('Get-TailText'),
+      `${invokeBody.length} 字符`)
+    // 命令只能在助手函数体里（在内/在外 = 是否还有别处偷偷内联）
+    const inHelper = (invokeBody.match(/ web > /gu) ?? []).length
+    check(`${name}：拉起命令只在 Invoke-DshRelaunch 里（助手内 ${inHelper} 处 / 全脚本 ${launchCmdHits} 处）`,
+      inHelper === launchCmdHits)
+  }
   check(`${name}：崩溃写法已清除（不再有未归一化的 $binNow）`, !script.includes('$binNow'))
   // 只看拉起助手内部：对变量的 Test-Path 必须用在归一化之后的变量上
   // （助手块紧跟 trap 之前定义，用它作为结束边界最稳）
@@ -279,8 +316,15 @@ for (const [name, expr] of blocks) {
 }
 
 // ── 真机行为验证：把脚本里的拉起实现抽出来真跑（不是只看语法）────────────────
-// 三种场景：① 正常 → 解析到真实 bin.js；② 解析探针坏掉（复现 2026-09-11 崩溃现场）→ 回退链必须兜住；
-// ③ 连框架根都是假的 → 只报告失败、**绝不抛错**（旧代码在这里 Test-Path $null 直接干掉整个脚本）。
+// 四种场景：① 正常（进程存活）→ 解析到真实 bin.js + **自证成功（返回值是空串）**；
+//   ② 解析探针坏掉（复现 2026-09-11 崩溃现场）→ 回退链必须兜住，且依然发起；
+//   ③ 子进程秒退（RELAUNCH_EXIT=1 + stderr 有内容）→ 必须带回 child-exited-early + 退出码 + stderr 尾部；
+//   ④ 连框架根都是假的 → 只报告失败（返回非空原因）、**绝不抛错**。
+// 2026-10-28 契约变更说明（断言据此调整，不是放宽）：Invoke-DshRelaunch 的返回值从
+// **布尔**（True/False）改成**失败原因字符串**（空串 = 有正面证据的成功）。旧断言
+// `relaunch === 'True'/'False'` 把旧契约写死了；新断言钉的是同一件事（有没有真的发起、失败时有没有
+// 留下可读原因），并且更严：要求失败原因里带退出码与 stderr 尾部（那次事故正是这里丢了证据）。
+// 这个沙箱**不会真的起 dsh**（Start-Process 被桩函数顶掉，只记录命令行 + 造出本轮 .out/.err）。
 const shell = findPowerShell()
 const realProfile = process.env.DSH_PROFILE_DIR ?? join(homedir(), '.dsh', 'profiles', 'web')
 let realFwRoot = null
@@ -299,33 +343,118 @@ try {
 if (shell === null || makePrelude === null || realFwRoot === null || !existsSync(realPluginDir)) {
   console.log('SKIP 拉起实现真机行为验证（需要 PowerShell + 本机框架安装 + 插件目录；CI 环境正常跳过）')
 } else {
-  const workLog = join(OUT, 'relaunch-selftest.log')
-  rmSync(workLog, { force: true })
+  const caseDir = join(OUT, 'relaunch-cases')
+  rmSync(caseDir, { recursive: true, force: true })
+  mkdirSync(caseDir, { recursive: true })
   const runCase = (label, opts) => {
-    const prelude = makePrelude({ nodePath: opts.nodePath, pluginDir: realPluginDir, fwRoot: opts.fwRoot, target: realTarget, ps: realPs })
-    const ps1 = join(OUT, `relaunch-case-${label}.ps1`)
-    // $state 必须给：拉起前导块带心跳（$hb = $state + '.hb'），缺了会在当前目录写出一个 .hb
-    writeFileSync(ps1, `\uFEFF$log = '${workLog}'\r\n$state = '${join(OUT, 'relaunch-state.txt')}'\r\nfunction Log($m) { try { Add-Content -Path $log -Value $m -Encoding UTF8 } catch {} }\r\n${prelude}\r\n` +
-      `function Start-Process { param([string]$FilePath, $ArgumentList, [string]$WindowStyle) $script:cmd = $FilePath + ' :: ' + ($ArgumentList -join ' ') }\r\n` +
-      `$r = Resolve-DshBin\r\nWrite-Output ('RESOLVE=' + $r)\r\nWrite-Output ('EXISTS=' + $(if ($r -eq '') { 'False' } else { Test-Path -LiteralPath $r }))\r\n` +
-      `$ok = Invoke-DshRelaunch 'selftest'\r\nWrite-Output ('RELAUNCH=' + $ok)\r\nWrite-Output ('CMD=' + $script:cmd)\r\n`, 'utf8')
-    const out = execFileSync(shell, ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', ps1], { encoding: 'utf8', timeout: 90000 })
+    const dir = join(caseDir, label)
+    mkdirSync(dir, { recursive: true })
+    const workLog = join(dir, 'fw-relaunch.log') // 前导块从 $log 的目录推 fw-relaunch.log
+    const upLog = join(dir, 'fw-upgrade.log')
+    const prelude = makePrelude({ nodePath: opts.nodePath, pluginDir: realPluginDir, fwRoot: opts.fwRoot, target: realTarget, ps: realPs, port: 0 })
+    const ps1 = join(dir, `case-${label}.ps1`)
+    // $state 必须给：拉起前导块带心跳（$hb = $state + '.hb'），缺了会在当前目录写出一个 .hb。
+    // $script:DSH_RELAUNCH_WAIT_SEC = 1：把"等 30 秒自证"压到 1 秒，测试不必真等（逻辑不变）。
+    // Start-Process 桩：支持 -PassThru，按 $env:RELAUNCH_EXIT / $env:RELAUNCH_STDERR 造出
+    // 「存活」或「秒退 + stderr 有内容」两种结局，并把本轮 .out/.err 真的写到命令行里那两个路径。
+    writeFileSync(ps1, `\uFEFF$log = '${upLog}'\r\n$state = '${join(dir, 'relaunch-state.txt')}'\r\n$script:DSH_RELAUNCH_WAIT_SEC = 1\r\n`
+      + `function Log($m) { try { Add-Content -Path $log -Value $m -Encoding UTF8 } catch {} }\r\n${prelude}\r\n`
+      + `function Start-Process {\r\n`
+      + `  param([string]$FilePath, $ArgumentList, [string]$WindowStyle, [switch]$PassThru)\r\n`
+      + `  $script:cmd = $FilePath + ' :: ' + ($ArgumentList -join ' ')\r\n`
+      + `  $line = [string]($ArgumentList[-1])\r\n`
+      + `  $mo = [regex]::Match($line, '> "([^"]+)"'); if ($mo.Success) { Set-Content -LiteralPath $mo.Groups[1].Value -Value 'stdout-line' -Encoding UTF8 }\r\n`
+      + `  $me = [regex]::Match($line, '2> "([^"]+)"'); if ($me.Success -and -not [string]::IsNullOrWhiteSpace($env:RELAUNCH_STDERR)) { Set-Content -LiteralPath $me.Groups[1].Value -Value $env:RELAUNCH_STDERR -Encoding UTF8 }\r\n`
+      + `  if (-not [string]::IsNullOrWhiteSpace($env:RELAUNCH_EXIT)) { return [pscustomobject]@{ Id = 4242; HasExited = $true; ExitCode = [int]$env:RELAUNCH_EXIT } }\r\n`
+      + `  return [pscustomobject]@{ Id = 4242; HasExited = $false; ExitCode = 0 }\r\n`
+      + `}\r\n`
+      + `$r = Resolve-DshBin\r\nWrite-Output ('RESOLVE=' + $r)\r\nWrite-Output ('EXISTS=' + $(if ($r -eq '') { 'False' } else { Test-Path -LiteralPath $r }))\r\n`
+      + `$res = Invoke-DshRelaunch 'selftest'\r\nWrite-Output ('RELAUNCH=' + $res)\r\nWrite-Output ('CMD=' + $script:cmd)\r\n`, 'utf8')
+    const env = { ...process.env, ...(opts.env ?? {}) }
+    const out = execFileSync(shell, ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', ps1], { encoding: 'utf8', timeout: 90000, env })
     rmSync(ps1, { force: true })
     const get = (k) => (out.match(new RegExp(`^${k}=(.*)$`, 'mu')) ?? [])[1] ?? ''
-    return { resolve: get('RESOLVE').trim(), exists: get('EXISTS').trim(), relaunch: get('RELAUNCH').trim(), cmd: get('CMD').trim() }
+    // 两个日志文件各自读：all-bad 用例根本不会创建 fw-relaunch.log（在写它之前就返回了），
+    // 放同一个 try 里会让「日志里有没有可读原因」这条断言假红。
+    const readIfExists = (p) => { try { return readFileSync(p, 'utf8') } catch { return '' } }
+    const log = readIfExists(upLog) + readIfExists(workLog)
+    return { resolve: get('RESOLVE').trim(), exists: get('EXISTS').trim(), relaunch: get('RELAUNCH').trim(), cmd: get('CMD').trim(), log }
   }
   const okCase = runCase('ok', { nodePath: process.execPath, fwRoot: realFwRoot })
   check('拉起：正常情况解析到真实 bin.js', okCase.exists === 'True' && /bin\.js$/u.test(okCase.resolve), okCase.resolve.slice(-70))
-  check('拉起：正常情况真的发起了服务进程', okCase.relaunch === 'True' && okCase.cmd.includes('cmd.exe') && okCase.cmd.includes('web'), okCase.cmd.slice(0, 110))
+  // 空串 = 有正面证据的成功（进程存活/端口监听）；旧的 'True' 是布尔契约
+  check('拉起：正常情况真的发起了服务进程（存活 → 返回空串）',
+    okCase.relaunch === '' && okCase.cmd.includes('cmd.exe') && okCase.cmd.includes('web'),
+    `relaunch=[${okCase.relaunch}] cmd=${okCase.cmd.slice(0, 110)}`)
+  check('拉起：正常情况留下「已发起 + 存活」的证据（不再是只有一行时间戳）',
+    okCase.log.includes('已发起拉起') && okCase.log.includes('进程已存活'), okCase.log.split('\n').slice(-2).join(' | ').slice(0, 160))
   // 崩溃现场复现：node 解析探针不可用（等价于当天那一瞬间 resolve 失败）
   const brokenProbe = runCase('probe-broken', { nodePath: join(OUT, 'no-such-node.exe'), fwRoot: realFwRoot })
   check('拉起：解析探针坏掉时回退链兜住（当天就是这里崩的）', brokenProbe.exists === 'True' && /bin\.js$/u.test(brokenProbe.resolve), brokenProbe.resolve.slice(-70))
-  check('拉起：回退后依然发起了服务进程', brokenProbe.relaunch === 'True', brokenProbe.cmd.slice(0, 110))
+  check('拉起：回退后依然发起了服务进程', brokenProbe.relaunch === '', `relaunch=[${brokenProbe.relaunch}] ${brokenProbe.cmd.slice(0, 110)}`)
+  // 2026-10-28 事故回归：子进程秒退时，必须带回 秒退标记 + 退出码 + stderr 尾部
+  const crashCase = runCase('crash', { nodePath: process.execPath, fwRoot: realFwRoot, env: { RELAUNCH_EXIT: '9', RELAUNCH_STDERR: 'Error: boom-from-stderr' } })
+  check('拉起：秒退时返回 child-exited-early + 退出码', /^child-exited-early\(exit=9,/u.test(crashCase.relaunch), `relaunch=[${crashCase.relaunch}]`)
+  check('拉起：秒退时 stderr 尾部被带进返回值与日志', crashCase.relaunch.includes('boom-from-stderr') && crashCase.log.includes('boom-from-stderr'), crashCase.relaunch.slice(0, 160))
   // 全坏：必须只报告、不抛错（旧代码会在这里 Test-Path $null 崩掉整个脚本）
   const allBad = runCase('all-bad', { nodePath: join(OUT, 'no-such-node.exe'), fwRoot: join(OUT, 'no-such-fwroot') })
   check('拉起：全找不到时返回空串而不抛错', allBad.exists === 'False' && allBad.resolve === '', `resolve=[${allBad.resolve}]`)
-  check('拉起：全找不到时函数返回 False 且留下可读日志', allBad.relaunch === 'False' && readFileSync(workLog, 'utf8').includes('三种方式都找不到'))
-  rmSync(workLog, { force: true })
+  // 旧断言是 `relaunch === 'False'`（布尔契约）；新契约下"失败"= 非空原因字符串
+  check('拉起：全找不到时返回非空失败原因（不再是布尔）且留下可读日志',
+    allBad.relaunch !== '' && allBad.relaunch.includes('bin.js') && allBad.log.includes('三种方式都找不到'),
+    `relaunch=[${allBad.relaunch}]`)
+
+  // ── 2026-10-28 事故回归（真机级）：拉起失败 → 判定器 → 分支，整条链路在 PowerShell 里真跑 ──────
+  // 这一段不碰真实框架：`Log`/`SetState`/`Resolve-DshBin`/`Invoke-Rollback`/`Start-Sleep` 全部桩掉，
+  // 但**判定器转发脚本是真的**（node 真跑）、**执行块是真的**（relaunchVerdictBlock 生成的），
+  // 所以它验证的是"ps1 会不会按纯函数的结论走"，正是这次事故里丢掉的那一环。
+  {
+    const vDir = join(caseDir, 'verdict')
+    mkdirSync(vDir, { recursive: true })
+    const helperPath = join(vDir, 'fw-relaunch-verdict.mjs')
+    writeFileSync(helperPath, relaunchVerdictHelperSource({ libUrl: pathToFileURL(join(ROOT, '..', 'lib', 'server', 'domain', 'framework-relaunch.js')).href }), 'utf8')
+    const block = relaunchVerdictBlock({ ps: realPs, nodePath: process.execPath, helperPath, port: 3080 })
+    const runVerdict = (label, flags, reason) => {
+      const dir = join(vDir, label)
+      mkdirSync(dir, { recursive: true })
+      const logPath = join(dir, 'fw-upgrade.log')
+      const statePath = join(dir, 'fw-upgrade-state.txt')
+      const reasonPath = join(dir, 'reason.txt')
+      writeFileSync(reasonPath, reason, 'utf8')
+      const ps1 = join(dir, 'verdict.ps1')
+      writeFileSync(ps1, `\uFEFF$log = '${logPath}'\r\n$state = '${statePath}'\r\n`
+        + `function Log($m) { try { Add-Content -Path $log -Value $m -Encoding UTF8 } catch {} }\r\n`
+        + `function SetState($s, $m) { try { Set-Content -Path $state -Value ($s + '|' + $m) -Encoding UTF8 } catch {} }\r\n`
+        + `function Start-Sleep { param($Seconds, [switch]$Milliseconds) }\r\n` // 桩：回滚后的重试循环不必真等 100 秒
+        + `function Beat { }\r\n` // 真脚本里由 relaunchPrelude 定义（心跳）；这里桩掉免得刷噪声
+        + `function Resolve-DshBin { return 'D:\\fake\\@deepseek-ai\\dsh\\lib\\bin.js' }\r\n`
+        + `function Invoke-DshRelaunch { param($tag) return '' }\r\n`
+        + `function Invoke-Rollback { Write-Output 'ROLLED-BACK' }\r\n`
+        + `$script:rolledBack = $false; $script:keptReady = $false; $script:structureOk = ${flags.structure}; $script:topLevelOk = ${flags.top}; $relaunchPort = 0\r\n`
+        + `$script:relaunchReason = [System.IO.File]::ReadAllText('${reasonPath}')\r\n`
+        + `$reasonFile = '${reasonPath}'\r\n${block}\r\nWrite-Output ('KEPT=' + $script:keptReady)\r\n`, 'utf8')
+      const out = execFileSync(shell, ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', ps1], { encoding: 'utf8', timeout: 90000 })
+      rmSync(ps1, { force: true })
+      // PS 5.1 的 Set-Content -Encoding UTF8 会写 BOM —— 与 /framework-upgrade-status 的读法一致地剥掉
+      // （那里若忘了剥，status 会变成 '\uFEFFready'，卡片永远不认；见路由注释）
+      const read = (p) => { try { const t = readFileSync(p, 'utf8'); return t.charCodeAt(0) === 0xFEFF ? t.slice(1) : t } catch { return '' } }
+      return { out, log: read(logPath), state: read(statePath) }
+    }
+    const keepCase = runVerdict('keep', { structure: '$true', top: '$true' }, 'child-exited-early(exit=1,1s)')
+    check('判定链路（真跑 PS）：框架已就位 + 拉起失败 ⇒ 不回滚（没有 Invoke-Rollback）',
+      keepCase.out.includes('ROLLED-BACK') === false && keepCase.out.includes('KEPT=True'), keepCase.out.trim().split('\n').slice(-3).join(' | ').slice(0, 200))
+    check('判定链路（真跑 PS）：状态写成 ready|框架已就位 + 手动命令（web --no-open）',
+      keepCase.state.startsWith('ready|框架已就位') && keepCase.state.includes('web --no-open'), keepCase.state.trim().slice(0, 220))
+    check('判定链路（真跑 PS）：日志里留下判定结论与手动启动命令',
+      keepCase.log.includes('回滚判定：keep') && keepCase.log.includes('手动启动命令：node "'), keepCase.log.split('\n').slice(-2).join(' | ').slice(0, 200))
+    const damaged = runVerdict('damaged', { structure: '$true', top: '$true' }, "child-exited-early(exit=1,0s)：Error: Cannot find package '@deepseek-ai/cordis'")
+    check('判定链路（真跑 PS）：模块缺失 ⇒ 回滚（Invoke-Rollback 真的被调用）',
+      damaged.out.includes('ROLLED-BACK') && damaged.out.includes('KEPT=False'), damaged.out.trim().split('\n').slice(-3).join(' | ').slice(0, 200))
+    check('判定链路（真跑 PS）：回滚分支不写 ready 状态', damaged.state.trim() === '', `state=[${damaged.state.trim()}]`)
+    const unverified = runVerdict('unverified', { structure: '$false', top: '$true' }, 'child-exited-early(exit=1,1s)')
+    check('判定链路（真跑 PS）：结构校验没过 ⇒ 保守回滚', unverified.out.includes('ROLLED-BACK'), unverified.out.trim().slice(0, 200))
+  }
+  rmSync(caseDir, { recursive: true, force: true })
 }
 
 // ── 重启路径（2026-10-10 改错）："端口无监听就 spawn 拉起"的守护路径必须**不存在** ──────

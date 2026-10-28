@@ -519,6 +519,17 @@ jobs:
       - name: Render sweep (nothing throws while clicking around)
         run: node tests/test-render-sweep.mjs
 
+      # 自动拉起失败 ⇒ 该不该回滚（2026-10-28 真机：升级到 0.2.1-rc.4 后拉起没起来、
+      #   失败原因一个字都没留下、旧链条直接全树回滚 ⇒ 一次**成功**的升级被扔掉）。
+      #   · 结构校验 + 顶层版本校验都过 + 拉起失败且无模块错误 ⇒ **不回滚**，状态写 ready + 手动命令
+      #     （`node "<真实 bin 路径>" web --no-open` —— 用户真机就是这么救回来的）
+      #   · 失败输出里有 Cannot find package / ERR_MODULE_NOT_FOUND / 缺 bin.js / 缺 package.json ⇒ 回滚
+      #   · 结构校验没过 + 拉起失败 ⇒ 回滚（证据不足时保守）
+      #   · 幂等/边界：空原因、超长原因截断、`|`/换行抹平（状态文件是单行 status|message）
+      #   · 接线：判定器转发脚本真能跑出 JSON；ps1 执行块真把两个事实位喂给它（判据不在 ps1 里）
+      - name: Framework relaunch verdict (no rollback when only the relaunch failed)
+        run: node tests/test-framework-relaunch-verdict.mjs
+
       # 带版本的更新必须真的落到那个版本（0.5.87 改错）：真机 2026-10-18「更新报成功但版本没落住」。
       #   · 正控：点名版本 ⇒ 磁盘 = 清单 = lock 三处都是目标版本（runInstallJob 全链路，桩通道，全离线）
       #   · 负控①：正常 registry 安装/更新的整条流水线**绝不产出 link:/file:**（清单/lock/plugin-src 三处扫）
