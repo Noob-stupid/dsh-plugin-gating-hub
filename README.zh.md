@@ -12,7 +12,7 @@
 宿主带不动的插件版本直接拒绝，不会装上。
 
 [![](https://img.shields.io/badge/powered_by-dsh-4D6BFE?style=flat-square&logo=deepseek&logoColor=white)](https://github.com/deepseek-ai/deepseek-harness)
-[![Awesome DSH Plugin](https://awesome-dsh-plugin.com/badge.svg)](https://awesome-dsh-plugin.com)
+[![Awesome DSH Plugin](https://awesome-dsh-plugin.com/badge.svg)](https://awesome-dsh-plugin.com) [![awesome-ai-plugins](https://img.shields.io/badge/awesome--ai--plugins-listed-4D6BFE?style=flat-square)](https://github.com/hashgraph-online/awesome-ai-plugins)
 [![GitHub stars](https://img.shields.io/github/stars/Noob-stupid/dsh-plugin-gating-hub?style=flat-square&logo=github)](https://github.com/Noob-stupid/dsh-plugin-gating-hub/stargazers)
 [![License](https://img.shields.io/github/license/Noob-stupid/dsh-plugin-gating-hub?style=flat-square)](LICENSE)
 [![Last commit](https://img.shields.io/github/last-commit/Noob-stupid/dsh-plugin-gating-hub?style=flat-square)](https://github.com/Noob-stupid/dsh-plugin-gating-hub/commits/main)
