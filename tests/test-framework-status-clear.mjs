@@ -154,6 +154,8 @@ const fwSrc = readFileSync(ROUTES_FW, 'utf8')
 
 // ── 动态加载（此时 import 已齐备）─────────────────────────────────────────────
 const { SHELL_HOSTED_NOTICE, detectHostShape, relaunchPrelude } = await import('../lib/server/domain/framework.js')
+// 拉起器的真实源码（2026-10-28 起服务由它 spawn，ps1 只负责起它）
+const { relaunchLauncherSource } = await import('../lib/server/domain/framework-relaunch.js')
 const { routeFrameworkStatusClear, routeFrameworkRollback } = await import('../lib/server/routes/framework.js')
 const { routeFrameworkUpgrade } = await import('../lib/server/routes/framework-upgrade.js')
 
@@ -354,8 +356,16 @@ writeFileSync(upcoming, JSON.stringify({ from: '0.1.5-rc.2', to: '0.1.7-rc.1', f
 {
   const ps = (s) => JSON.stringify(String(s))
   const solo = relaunchPrelude({ nodePath: 'C:\\node\\node.exe', pluginDir: REPO, fwRoot: 'C:\\fw', target: '0.1.7-rc.1', ps, hosted: false })
-  check('不倒退：独立实例（hosted=false）仍产出 Start-Process … cmd.exe /c node <bin.js> web（升级/回滚能力保留）',
-    solo.includes('Start-Process') && solo.includes("cmd.exe") && solo.includes('web') && !solo.includes('DSH_HOSTED'))
+  // 2026-10-28（第二轮，断言主题随改法更新 —— 不是放宽）：真机证明 `cmd /c call node … web > out 2> err`
+  // 在 schtasks 里输出为零，所以拉起改由 **node 拉起器** `fw-launch.mjs` 负责（fd 重定向 + detached），
+  // ps1 只 `Start-Process <node> "<拉起器>" "<node>" "<bin>" …-PassThru`。
+  // 因此"cmd.exe / web 关键字"这两个**实现细节**不再断言；改成断言同一件事的**能力**：
+  //   ① 独立实例里真的有 Start-Process + -PassThru（能起服务、能拿句柄）；
+  //   ② 参数里带真实 bin.js 路径（拉起器拿它去 spawn `<bin> web`）；
+  //   ③ 拉起器源代码里确实写着 `web`（否则服务根本不会启动）。
+  check('不倒退：独立实例（hosted=false）仍产出 Start-Process + -PassThru + 拉起器 + 真实 bin.js（升级/回滚能力保留）',
+    solo.includes('Start-Process') && solo.includes('-PassThru') && solo.includes('fw-launch.mjs')
+    && solo.includes('bin.js') && relaunchLauncherSource().includes('"web"') && !solo.includes('DSH_HOSTED'), `${solo.split('\r\n').length} 行`)
   const hosted = relaunchPrelude({ nodePath: 'C:\\node\\node.exe', pluginDir: REPO, fwRoot: 'C:\\fw', target: '0.1.7-rc.1', ps, hosted: true })
   check('托管：同一份生成器的脚本里带上 `$script:DSH_HOSTED = $true`（第二道防线）',
     hosted.includes('$script:DSH_HOSTED = $true'))

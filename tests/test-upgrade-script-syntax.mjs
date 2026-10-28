@@ -9,7 +9,7 @@ import { homedir } from 'node:os'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { execFileSync } from 'node:child_process'
 import { createRequire } from 'node:module'
-import { relaunchInvoke, relaunchProbeHelpers, relaunchVerdictBlock, relaunchVerdictHelperSource } from '../lib/server/domain/framework-relaunch.js'
+import { relaunchInvoke, relaunchLauncherSource, relaunchProbeHelpers, relaunchVerdictBlock, relaunchVerdictHelperSource } from '../lib/server/domain/framework-relaunch.js'
 
 const ROOT = dirname(fileURLToPath(import.meta.url))
 // 统一归一化行尾再抽函数：本机 core.autocrlf=true，工作区文件是 CRLF，
@@ -259,27 +259,32 @@ for (const [name, expr] of blocks) {
   check(`${name}：拉起逻辑只有一份实现`, (script.match(/function Resolve-DshBin/gu) ?? []).length === 1 && (script.match(/function Invoke-DshRelaunch/gu) ?? []).length === 1,
     `Resolve=${(script.match(/function Resolve-DshBin/gu) ?? []).length} Invoke=${(script.match(/function Invoke-DshRelaunch/gu) ?? []).length}`)
   // 「拉起命令」只在助手函数里写一次（原先 5 处复制粘贴 → 同一个坑反复踩）。
-  // 2026-10-28：命令形态从 `web >> fw-relaunch.log 2>&1` 改成 `web > <本轮>.out 2> <本轮>.err`
-  // （每轮独立输出文件 + 拿句柄），所以锚点从 ` web >> ` 放宽到 ` web > ` —— 判据语义不变，
-  // 仍然钉"**只有一处**，且必须在 Invoke-DshRelaunch 里"（下面单独断言"在内/在外"）。
-  const launchCmdHits = (script.match(/ web > /gu) ?? []).length
+  // 2026-10-28 第二轮：ps1 里**不再出现任何启动命令**（连 `web` 都不出现）——
+  // 启动改由 node 拉起器 `fw-launch.mjs` 负责（fd 重定向 + detached），ps1 只 `Start-Process node 拉起器`。
+  // 所以锚点换成**拉起器专用**的那一行（`-ArgumentList @(('"' + $launcher …`）：既有
+  // Install-Framework 里也有 Start-Process -FilePath（pnpm 通道），用通用锚点会误数。
+  const launchCmdHits = (script.match(/-ArgumentList @\(\('"' \+ \$launcher/gu) ?? []).length
   check(`${name}：拉起命令只有一处（不再内联）`, launchCmdHits === 1 && /Invoke-DshRelaunch '/u.test(script),
-    `内联拉起命令 ${launchCmdHits} 处；调用点 ${(script.match(/Invoke-DshRelaunch '/gu) ?? []).length} 个`)
-  // 新增（正面钉子）：那次事故的根因是"发出去就算成功"，这里把新契约钉死：
-  //   拿句柄（-PassThru）+ 每轮输出重定向到独立文件 + 轮询正面证据（端口/存活）+ 失败留退出码。
+    `拉起器启动行 ${launchCmdHits} 处；调用点 ${(script.match(/Invoke-DshRelaunch '/gu) ?? []).length} 个`)
+  check(`${name}：ps1 里不再有 cmd 重定向 / 直接跑 dsh 的命令（缺陷 B 的根因）`,
+    !/ web >| web >>/u.test(script) && script.includes('fw-launch.mjs'), '启动只经 node 拉起器')
+  // 正面钉子：那次事故的根因是"发出去就算成功"或"存活就算成功"，这里把新契约钉死：
+  //   拿句柄（-PassThru）+ 每轮独立 .out/.err/.status.json + 成功只认端口 + 三种结局分类 + 失败留退出码。
   {
     const invokeStart = script.indexOf('function Invoke-DshRelaunch')
     const invokeEnd = script.indexOf('\ntrap {', invokeStart)
     const invokeBody = invokeStart === -1 ? '' : script.slice(invokeStart, invokeEnd === -1 ? script.length : invokeEnd)
-    check(`${name}：拉起要能自证（拿句柄 + 输出重定向 + 轮询 + 退出码）`,
-      invokeBody.includes('-PassThru')
-      && invokeBody.includes('.out') && invokeBody.includes('.err')
+    check(`${name}：拉起要能自证（拿句柄 + 输出文件 + 端口判成功 + 三种结局 + 退出码）`,
+      invokeBody.includes('-PassThru') && invokeBody.includes('fw-launch.mjs')
+      && invokeBody.includes('.out') && invokeBody.includes('.err') && invokeBody.includes('.status.json')
       && invokeBody.includes('Test-RelaunchPort') && invokeBody.includes('HasExited')
       && invokeBody.includes('ExitCode') && invokeBody.includes('child-exited-early')
-      && invokeBody.includes('Get-TailText'),
+      && invokeBody.includes('still-starting-timeout') && invokeBody.includes('Get-TailText'),
       `${invokeBody.length} 字符`)
+    check(`${name}：成功只认端口监听（进程存活不再算成功）`,
+      /if \(Test-RelaunchPort\) \{ Log \('拉起成功/u.test(invokeBody) && !invokeBody.includes('进程已存活'), '旧的"存活=成功"分支必须消失')
     // 命令只能在助手函数体里（在内/在外 = 是否还有别处偷偷内联）
-    const inHelper = (invokeBody.match(/ web > /gu) ?? []).length
+    const inHelper = (invokeBody.match(/-ArgumentList @\(\('"' \+ \$launcher/gu) ?? []).length
     check(`${name}：拉起命令只在 Invoke-DshRelaunch 里（助手内 ${inHelper} 处 / 全脚本 ${launchCmdHits} 处）`,
       inHelper === launchCmdHits)
   }
@@ -290,9 +295,16 @@ for (const [name, expr] of blocks) {
   const hEnd = script.indexOf('trap {', hStart)
   const helperText = hStart === -1 ? '' : script.slice(hStart, hEnd === -1 ? script.length : hEnd)
   const helperVars = [...helperText.matchAll(/Test-Path\s+(?:-LiteralPath\s+)?\$(\w+)/gu)].map((m) => m[1])
+  // 2026-10-28：允许清单新增 `launcher` —— 它不是"解析候选"（$cand/$c/$bin 那三档），
+  // 而是 `Join-Path (Split-Path -LiteralPath $launchLog) 'fw-launch.mjs'` 的产物：
+  // $launchLog 由前导块保证非空（有 TEMP 兜底），Join-Path 返回的必然是字符串、永不为 $null，
+  // 所以不属于「$null -ne '' 守卫失效」那一类。下面另加一条断言把这个前提钉住（不是放宽）。
   check(`${name}：拉起助手里对变量的 Test-Path 只用在归一化结果上`,
-    helperVars.length > 0 && helperVars.every((v) => ['cand', 'c', 'bin'].includes(v)) && helperText.includes("if ($cand -isnot [string]) { $cand = '' }"),
+    helperVars.length > 0 && helperVars.every((v) => ['cand', 'c', 'bin', 'launcher'].includes(v)) && helperText.includes("if ($cand -isnot [string]) { $cand = '' }"),
     `变量: ${[...new Set(helperVars)].join(',') || '（无）'}`)
+  check(`${name}：$launcher 的来源可查（Join-Path 于非空的 $launchLog，必为字符串）`,
+    /\$launcher = Join-Path \(Split-Path -LiteralPath \$launchLog\) 'fw-launch\.mjs'/u.test(helperText),
+    helperText.split('\n').find((l) => l.includes('$launcher = Join-Path'))?.trim().slice(0, 120) ?? '（未找到）')
   check(`${name}：解析有回退链（目标版本 .pnpm → 顶层链接 → 最新 .pnpm）`,
     script.includes("-Filter '@deepseek-ai+dsh@") && (script.match(/@deepseek-ai\\dsh\\lib\\bin\.js/gu) ?? []).length >= 2,
     `bin.js 路径 ${(script.match(/@deepseek-ai\\dsh\\lib\\bin\.js/gu) ?? []).length} 处`)
@@ -353,18 +365,29 @@ if (shell === null || makePrelude === null || realFwRoot === null || !existsSync
     const upLog = join(dir, 'fw-upgrade.log')
     const prelude = makePrelude({ nodePath: opts.nodePath, pluginDir: realPluginDir, fwRoot: opts.fwRoot, target: realTarget, ps: realPs, port: 0 })
     const ps1 = join(dir, `case-${label}.ps1`)
+    // 拉起器：ps1 会先看 <fw-relaunch.log 同目录>/fw-launch.mjs 在不在（真实由升级/回滚脚本落盘）
+    if (opts.launcher !== false) writeFileSync(join(dir, 'fw-launch.mjs'), relaunchLauncherSource(), 'utf8')
     // $state 必须给：拉起前导块带心跳（$hb = $state + '.hb'），缺了会在当前目录写出一个 .hb。
-    // $script:DSH_RELAUNCH_WAIT_SEC = 1：把"等 30 秒自证"压到 1 秒，测试不必真等（逻辑不变）。
-    // Start-Process 桩：支持 -PassThru，按 $env:RELAUNCH_EXIT / $env:RELAUNCH_STDERR 造出
-    // 「存活」或「秒退 + stderr 有内容」两种结局，并把本轮 .out/.err 真的写到命令行里那两个路径。
+    // $script:DSH_RELAUNCH_WAIT_SEC = 1：把"等端口"压到 1 秒，测试不必真等 120 秒（逻辑不变）。
+    // Start-Process 桩（不起真进程）：支持 -PassThru，按 $env:RELAUNCH_EXIT 决定「已退出」还是「还活着」，
+    // 并按**新参数形状**造出本轮的 .out/.err/.status.json：拉起器的 argv 是
+    //   "<launcher>" "<node>" "<bin>" "<out>" "<err>" "<status>"
+    // 端口判据由 $env:RELAUNCH_PORT_UP=1 模拟（桩掉 Test-RelaunchPort 会遮蔽真实实现，这里改桩端口函数）。
     writeFileSync(ps1, `\uFEFF$log = '${upLog}'\r\n$state = '${join(dir, 'relaunch-state.txt')}'\r\n$script:DSH_RELAUNCH_WAIT_SEC = 1\r\n`
       + `function Log($m) { try { Add-Content -Path $log -Value $m -Encoding UTF8 } catch {} }\r\n${prelude}\r\n`
+      + `if ("$env:RELAUNCH_PORT_UP" -eq '1') { function Test-RelaunchPort { return $true } }\r\n`
       + `function Start-Process {\r\n`
       + `  param([string]$FilePath, $ArgumentList, [string]$WindowStyle, [switch]$PassThru)\r\n`
       + `  $script:cmd = $FilePath + ' :: ' + ($ArgumentList -join ' ')\r\n`
       + `  $line = [string]($ArgumentList[-1])\r\n`
-      + `  $mo = [regex]::Match($line, '> "([^"]+)"'); if ($mo.Success) { Set-Content -LiteralPath $mo.Groups[1].Value -Value 'stdout-line' -Encoding UTF8 }\r\n`
-      + `  $me = [regex]::Match($line, '2> "([^"]+)"'); if ($me.Success -and -not [string]::IsNullOrWhiteSpace($env:RELAUNCH_STDERR)) { Set-Content -LiteralPath $me.Groups[1].Value -Value $env:RELAUNCH_STDERR -Encoding UTF8 }\r\n`
+      + `  $parts = @($line.Split('"') | Where-Object { $_ -ne '' -and $_.Trim() -ne '' -and $_ -notmatch '^\\s+$' })\r\n`
+      + `  if ($parts.Count -ge 6) {\r\n`
+      + `    Set-Content -LiteralPath $parts[3] -Value 'stdout-line' -Encoding UTF8\r\n`
+      + `    if (-not [string]::IsNullOrWhiteSpace($env:RELAUNCH_STDERR)) { Set-Content -LiteralPath $parts[4] -Value $env:RELAUNCH_STDERR -Encoding UTF8 }\r\n`
+      + `    $st = ''\r\n`
+      + `    if (-not [string]::IsNullOrWhiteSpace($env:RELAUNCH_EXIT)) { $st = '{"event":"exited","pid":4242,"code":' + $env:RELAUNCH_EXIT + '}' } else { $st = '{"event":"spawned","pid":4242}' }\r\n`
+      + `    Set-Content -LiteralPath $parts[5] -Value $st -Encoding UTF8\r\n`
+      + `  }\r\n`
       + `  if (-not [string]::IsNullOrWhiteSpace($env:RELAUNCH_EXIT)) { return [pscustomobject]@{ Id = 4242; HasExited = $true; ExitCode = [int]$env:RELAUNCH_EXIT } }\r\n`
       + `  return [pscustomobject]@{ Id = 4242; HasExited = $false; ExitCode = 0 }\r\n`
       + `}\r\n`
@@ -378,31 +401,81 @@ if (shell === null || makePrelude === null || realFwRoot === null || !existsSync
     // 放同一个 try 里会让「日志里有没有可读原因」这条断言假红。
     const readIfExists = (p) => { try { return readFileSync(p, 'utf8') } catch { return '' } }
     const log = readIfExists(upLog) + readIfExists(workLog)
-    return { resolve: get('RESOLVE').trim(), exists: get('EXISTS').trim(), relaunch: get('RELAUNCH').trim(), cmd: get('CMD').trim(), log }
+    return { dir, resolve: get('RESOLVE').trim(), exists: get('EXISTS').trim(), relaunch: get('RELAUNCH').trim(), cmd: get('CMD').trim(), log }
   }
   const okCase = runCase('ok', { nodePath: process.execPath, fwRoot: realFwRoot })
   check('拉起：正常情况解析到真实 bin.js', okCase.exists === 'True' && /bin\.js$/u.test(okCase.resolve), okCase.resolve.slice(-70))
-  // 空串 = 有正面证据的成功（进程存活/端口监听）；旧的 'True' 是布尔契约
-  check('拉起：正常情况真的发起了服务进程（存活 → 返回空串）',
-    okCase.relaunch === '' && okCase.cmd.includes('cmd.exe') && okCase.cmd.includes('web'),
-    `relaunch=[${okCase.relaunch}] cmd=${okCase.cmd.slice(0, 110)}`)
-  check('拉起：正常情况留下「已发起 + 存活」的证据（不再是只有一行时间戳）',
-    okCase.log.includes('已发起拉起') && okCase.log.includes('进程已存活'), okCase.log.split('\n').slice(-2).join(' | ').slice(0, 160))
+  // 结局 ①：进程活着但端口没通 ⇒ **不算成功**，到上限记 still-starting-timeout（缺陷 A）
+  check('拉起：进程存活但端口未监听 ⇒ still-starting-timeout（不再报"成功"）',
+    okCase.relaunch.startsWith('still-starting-timeout(') && okCase.cmd.includes('fw-launch.mjs'),
+    `relaunch=[${okCase.relaunch}] cmd=${okCase.cmd.slice(0, 120)}`)
+  check('拉起：still-starting-timeout 的日志说清"还活着、端口没通"',
+    okCase.log.includes('拉起未完成') && okCase.log.includes('still-starting-timeout'), okCase.log.split('\n').slice(-2).join(' | ').slice(0, 160))
+  // 结局 ②：端口监听 ⇒ 立刻返回空串（真成功）
+  const upCase = runCase('port-up', { nodePath: process.execPath, fwRoot: realFwRoot, env: { RELAUNCH_PORT_UP: '1' } })
+  check('拉起：端口开始监听 ⇒ 返回空串（唯一成功判据）',
+    upCase.relaunch === '' && upCase.log.includes('服务已监听端口'), `relaunch=[${upCase.relaunch}]`)
   // 崩溃现场复现：node 解析探针不可用（等价于当天那一瞬间 resolve 失败）
   const brokenProbe = runCase('probe-broken', { nodePath: join(OUT, 'no-such-node.exe'), fwRoot: realFwRoot })
   check('拉起：解析探针坏掉时回退链兜住（当天就是这里崩的）', brokenProbe.exists === 'True' && /bin\.js$/u.test(brokenProbe.resolve), brokenProbe.resolve.slice(-70))
-  check('拉起：回退后依然发起了服务进程', brokenProbe.relaunch === '', `relaunch=[${brokenProbe.relaunch}] ${brokenProbe.cmd.slice(0, 110)}`)
-  // 2026-10-28 事故回归：子进程秒退时，必须带回 秒退标记 + 退出码 + stderr 尾部
+  check('拉起：回退后依然发起了拉起器', brokenProbe.cmd.includes('fw-launch.mjs'), brokenProbe.cmd.slice(0, 110))
+  // 结局 ③：进程退出 ⇒ child-exited-early + 退出码 + stderr 尾部 + 拉起器状态
   const crashCase = runCase('crash', { nodePath: process.execPath, fwRoot: realFwRoot, env: { RELAUNCH_EXIT: '9', RELAUNCH_STDERR: 'Error: boom-from-stderr' } })
   check('拉起：秒退时返回 child-exited-early + 退出码', /^child-exited-early\(exit=9,/u.test(crashCase.relaunch), `relaunch=[${crashCase.relaunch}]`)
   check('拉起：秒退时 stderr 尾部被带进返回值与日志', crashCase.relaunch.includes('boom-from-stderr') && crashCase.log.includes('boom-from-stderr'), crashCase.relaunch.slice(0, 160))
-  // 全坏：必须只报告、不抛错（旧代码会在这里 Test-Path $null 崩掉整个脚本）
+  check('拉起：秒退时也把拉起器状态文件写进日志（pid/退出码）',
+    crashCase.log.includes('拉起器状态') && crashCase.log.includes('"event":"exited"'), crashCase.log.split('\n').slice(-3).join(' | ').slice(0, 200))
+  // 拉起器缺失：只报告、不抛错（真机上它是升级/回滚脚本刚落盘的生成物）
+  const noLauncher = runCase('launcher-missing', { nodePath: process.execPath, fwRoot: realFwRoot, launcher: false })
+  check('拉起：拉起器缺失时返回 launcher-missing 且不抛错',
+    /^launcher-missing：/u.test(noLauncher.relaunch) && noLauncher.log.includes('拉起器缺失'), noLauncher.relaunch.slice(0, 120))
+  // 全坏：bin.js 三种解析方式都失败 → 只报告、不抛错（旧代码会在这里 Test-Path $null 崩掉整个脚本）
   const allBad = runCase('all-bad', { nodePath: join(OUT, 'no-such-node.exe'), fwRoot: join(OUT, 'no-such-fwroot') })
   check('拉起：全找不到时返回空串而不抛错', allBad.exists === 'False' && allBad.resolve === '', `resolve=[${allBad.resolve}]`)
-  // 旧断言是 `relaunch === 'False'`（布尔契约）；新契约下"失败"= 非空原因字符串
   check('拉起：全找不到时返回非空失败原因（不再是布尔）且留下可读日志',
     allBad.relaunch !== '' && allBad.relaunch.includes('bin.js') && allBad.log.includes('三种方式都找不到'),
     `relaunch=[${allBad.relaunch}]`)
+
+  // ── 2026-10-28 缺陷 ② 回归（真机级）：判成功后**立刻收尾**，此后不再有就绪检查/回滚 ──────────
+  // 真机原文：
+  //   18:22:08 拉起成功（升级后）：进程已存活 30 秒   ← 已经判成功
+  //   18:23:55 服务拉起失败 → 隔离 → 隔离分析无输出   ← 107 秒后**又去检查一次**
+  //   18:23:56 回滚判定器不可用 → 保守回滚
+  // 直接来源（点名）：升级脚本"重启 DSH 服务生效"那段 20 圈端口轮询里的那一行——
+  //   `if (-not $ok -and -not $started) { if (Invoke-DshRelaunch '升级后') { $started = $true } }`
+  // 它只把"拉起来了"记成 **别再拉起**（$started），没记成 **服务已好**（$ok）⇒ 循环接着空转约 95 秒，
+  // 之后隔离/判定链路把已经起来的服务判死并回滚。现在那一行变成
+  //   `$started = Note-Relaunch (Invoke-DshRelaunch '升级后'); if ($script:relaunchListening) { $ok = $true; break }`
+  // 本段把**真实生成的那一行**从生成脚本里抠出来，放进真实循环里用 PowerShell 真跑。
+  {
+    // 重新生成一次升级脚本：上面的 for 循环里 `script` 是块内局部变量
+    const upgradeScript = build((blocks.find(([n]) => n === '升级脚本') ?? ['', ''])[1])
+    const settleLine = (upgradeScript.match(/^\s*if \(-not \$ok -and -not \$started\) \{ \$started = Note-Relaunch \(Invoke-DshRelaunch '升级后'\).*$/mu) ?? [])[0] ?? ''
+    check('缺陷②：能抠出真实的拉起调用点那一行（否则本段断言无意义）', settleLine.includes('$script:relaunchListening') && settleLine.includes('break'), settleLine.slice(0, 170))
+    const sDir = join(caseDir, 'settle-loop')
+    mkdirSync(sDir, { recursive: true })
+    const sPs1 = join(sDir, 'settle-loop.ps1')
+    writeFileSync(sPs1, `\uFEFF$log = '${join(sDir, 'fw-upgrade.log')}'\r\n`
+      + `function Log($m) { try { Add-Content -Path $log -Value $m -Encoding UTF8 } catch {} }\r\n`
+      + `${relaunchInvoke({ ps: realPs, nodePath: process.execPath }).join('\r\n')}\r\n`
+      + `function Test-RelaunchPort { return $false }\r\n` // 外层端口检查永远不通（= 真机那 95 秒的观测）
+      + `function Invoke-DshRelaunch { param($tag) return '' }\r\n` // 但拉起器内部已确认"端口已监听"
+      + `function Start-Sleep { param($Seconds, [switch]$Milliseconds) }\r\n`
+      + `function Beat { }\r\n`
+      + `function Invoke-Rollback { Write-Output 'ROLLED-BACK' }\r\n`
+      + `$script:relaunchReason = ''; $script:relaunchListening = $false; $ok = $false; $started = $false; $script:rolledBack = $false; $script:rounds = 0\r\n`
+      + `for ($i = 0; $i -lt 20; $i++) {\r\n  $script:rounds = $i + 1\r\n${settleLine}\r\n  Start-Sleep -Seconds 5\r\n}\r\n`
+      + `Write-Output ('OK=' + $ok)\r\nWrite-Output ('ROUNDS=' + $script:rounds)\r\n`
+      + `if ($ok -and -not $script:rolledBack) { Write-Output 'DONE-BRANCH' }\r\n`
+      + `if (-not $ok -and -not $script:rolledBack) { Write-Output 'VERDICT-BRANCH' }\r\n`, 'utf8')
+    const sOut = execFileSync(shell, ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', sPs1], { encoding: 'utf8', timeout: 90000 })
+    rmSync(sPs1, { force: true })
+    check('缺陷②：成功当圈 break（第 1 圈就结束，不再空转 20 圈）',
+      /^OK=True$/mu.test(sOut) && /^ROUNDS=1$/mu.test(sOut), sOut.trim().split('\n').join(' | '))
+    check('缺陷②：成功之后只走完成分支，判定/回滚分支根本进不去',
+      /^DONE-BRANCH$/mu.test(sOut) && !sOut.includes('VERDICT-BRANCH') && !sOut.includes('ROLLED-BACK'),
+      sOut.trim().split('\n').join(' | '))
+  }
 
   // ── 2026-10-28 事故回归（真机级）：拉起失败 → 判定器 → 分支，整条链路在 PowerShell 里真跑 ──────
   // 这一段不碰真实框架：`Log`/`SetState`/`Resolve-DshBin`/`Invoke-Rollback`/`Start-Sleep` 全部桩掉，
@@ -452,7 +525,11 @@ if (shell === null || makePrelude === null || realFwRoot === null || !existsSync
       damaged.out.includes('ROLLED-BACK') && damaged.out.includes('KEPT=False'), damaged.out.trim().split('\n').slice(-3).join(' | ').slice(0, 200))
     check('判定链路（真跑 PS）：回滚分支不写 ready 状态', damaged.state.trim() === '', `state=[${damaged.state.trim()}]`)
     const unverified = runVerdict('unverified', { structure: '$false', top: '$true' }, 'child-exited-early(exit=1,1s)')
-    check('判定链路（真跑 PS）：结构校验没过 ⇒ 保守回滚', unverified.out.includes('ROLLED-BACK'), unverified.out.trim().slice(0, 200))
+    // 2026-10-28 语义变更（用户定案）：自动回滚只留给"框架树确认损坏"，
+    // 结构校验没过但**没有损坏证据**时也必须保留 + 交人工（旧断言期望回滚，已随之修正）。
+    check('判定链路（真跑 PS）：结构校验没过 + 无损坏证据 ⇒ 不回滚，且状态如实提示未确认',
+      unverified.out.includes('ROLLED-BACK') === false && unverified.out.includes('KEPT=True')
+      && unverified.state.includes('未能确认'), `${unverified.out.trim().slice(0, 120)} | state=${unverified.state.trim().slice(0, 120)} | log=${unverified.log.split('\n').filter((l) => l.trim() !== '').slice(-4).join(' ⏎ ').slice(0, 300)}`)
   }
   rmSync(caseDir, { recursive: true, force: true })
 }
