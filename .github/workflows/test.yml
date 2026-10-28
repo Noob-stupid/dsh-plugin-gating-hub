@@ -503,6 +503,12 @@ jobs:
       - name: Group update behaviour (one at a time, with the right version)
         run: node tests/test-group-update.mjs
 
+      # 分组重叠 / 候选分页的行为（用户 2026-10-27）：
+      #   · 一个插件归进两个分组 ⇒ 两个分组区块里都要出现它的卡片
+      #   · 分组候选默认 8 个，点「加载更多」才给更多
+      - name: Group overlap and candidate paging
+        run: node tests/test-groups-notes-paging.mjs
+
       # 白屏防呆：把面板里能点的控件挨个点一遍，任何一次渲染抛错就红。
       #   2026-10-27 那次 ReferenceError（用了没声明）就是这类：旧套件只走到「面板打开」，仍然全绿。
       - name: Render sweep (nothing throws while clicking around)
