@@ -511,6 +511,22 @@ jobs:
       - name: Safe boot UI behaviour (rendered + clicked)
         run: node tests/test-safe-boot-ui.mjs
 
+      # 适配门**记录**的两处真缺口（0.5.98，用户 2026-10-28 实测）：
+      #   现场：compat-pending.json 里 20 条 adopted + 3 条 pending 但补丁行早已不存在（moduleName 也 null）
+      #   + 1 条真 pending，面板却把 `pending` 数组长度当"待适配" ⇒ 用户看到"有 N 行待适配"，实际零。
+      #   · ① 计数口径：唯一判据 `status=pending 且该行仍在补丁里`（行是否存在只取 readPatchState 的既有产物）
+      #        ⇒ 24 条记录 = actionableCount 1 / staleCount 3；既有字段（pending 数组、gating.pendingCount）语义不变
+      #   · ② 删记录（POST /compat-gate {action:forget|forget-stale}）：备份 → 原子写 → 读回核实 → 失败回滚；
+      #        只删记录，补丁与插件目录逐字节不变；删不存在的 rowId ⇒ 明确错误且文件不改写；
+      #        坏文件 ⇒ 读降级、写拒绝覆盖；批量清理只清 stale（真 pending 与 adopted 一条不动）
+      #   · ③ 界面：计数用 actionableCount（拿不到时按同一判据回退）、失效行如实标注「该行已不存在」、
+      #        moduleName 为 null 显示「—」（不编造）、单条/批量删除都是两段式（第一下零请求）、
+      #        零失效时不显示「清理」按钮 —— 用假 React 真渲染 + 真点（没有任何浏览器）
+      - name: Adapt-gate records (true pending count + record deletion)
+        run: |
+          node tests/test-compat-pending-records.mjs
+          node tests/test-compat-pending-ui.mjs
+
       # 「一键更新本组」的行为（用户 2026-10-27 要求确认）：
       #   · 每个成员各查一次目标版本，逐个串行（不是并发一起打出去）
       #   · 只给查到新版的成员发起更新；查不到的**不装**
