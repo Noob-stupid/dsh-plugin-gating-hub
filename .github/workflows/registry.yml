@@ -5,8 +5,11 @@ name: registry
 
 on:
   schedule:
-    # 每 6 小时一次；GitHub cron 使用 UTC
-    - cron: '0 */6 * * *'
+    # 每天两次（UTC 03:07 / 15:07）；GitHub cron 使用 UTC。
+    # 原先是每 6 小时一次，一天四轮全量重抓 topic 搜索 —— 2026-10-29 那轮撞上 GitHub 的
+    # `secondary rate limit`（搜索类 API 有独立且更严的限额），整个工作流判红。
+    # 索引本身是缓存的静态文件，并不需要那么频繁；降频是最省事、最不改变行为的做法。
+    - cron: '7 3,15 * * *'
   workflow_dispatch:
 
 permissions:
