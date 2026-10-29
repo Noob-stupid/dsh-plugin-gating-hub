@@ -514,6 +514,10 @@ jobs:
       - name: Framework stale-rename repair
         run: node tests/test-framework-stale-repair.mjs
 
+      # issue #26：带盘符的序列项曾被误报「未闭合引号」⇒ safeBoot 写盘闸门全程空转
+      - name: Patch YAML check (issue 26 regression)
+        run: node tests/test-patch-yaml-issue26.mjs
+
       # 白屏防呆：把面板里能点的控件挨个点一遍，任何一次渲染抛错就红。
       #   2026-10-27 那次 ReferenceError（用了没声明）就是这类：旧套件只走到「面板打开」，仍然全绿。
       - name: Render sweep (nothing throws while clicking around)
