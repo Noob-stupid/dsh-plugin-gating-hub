@@ -495,6 +495,22 @@ jobs:
       - name: Annotations UI behaviour (rendered + clicked)
         run: node tests/test-annotations-ui.mjs
 
+      # 界面行为（安全启动 / safe-boot）：用户 2026-10-18 原话「现在这能力藏得太深，只有命令行能用」——
+      # 把 POST /plugin-console/safe-boot 的四个白名单动作（list / restore-last-good / disable-suspects /
+      # mark-good）接进**门控面板**里的一个分区（不新增工具栏按钮）。同样用假 React 真渲染 + 真点：
+      #   · 位置：门控模态里、门控正文之后；`safeBootPanel()` 全仓只有一个调用点
+      #   · 默认收起 ⇒ **零请求**；打开门控面板也不请求；点开那一下才 POST {action:'list'}，且只发一次
+      #   · 清单：ID / 时间 / sha256 前几位 / last-good 标记；缺字段如实显示「—」
+      #   · restore-last-good / disable-suspects **两段式**：第一下零请求 + 上膛文案点出目标快照 ID 与
+      #     会被覆盖的补丁文件；「取消」零请求并退膛；上膛中换动作 ⇒ 只发新动作的载荷
+      #   · mark-good 一键，成功后**再拉一次 list**（顺序 list → mark-good → list）
+      #   · 「为什么没写快照」两类原因文案必须不同：patch-not-yaml-valid（结构校验没过）vs
+      #     not-yet（还没到该写的时机）；服务端说 written:true 时一个字的抱怨都不许出现
+      #   · 失败四连（{ok:false,error} / HTTP 500 / 网络抛错 / 写动作 409）都必须有错误原文，不许静默
+      #   · 零快照 / 零点名行 ⇒ 不显示"点了必失败"的按钮，并给出文字说明
+      - name: Safe boot UI behaviour (rendered + clicked)
+        run: node tests/test-safe-boot-ui.mjs
+
       # 「一键更新本组」的行为（用户 2026-10-27 要求确认）：
       #   · 每个成员各查一次目标版本，逐个串行（不是并发一起打出去）
       #   · 只给查到新版的成员发起更新；查不到的**不装**
