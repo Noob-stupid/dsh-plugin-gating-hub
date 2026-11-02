@@ -527,6 +527,19 @@ jobs:
           node tests/test-compat-pending-records.mjs
           node tests/test-compat-pending-ui.mjs
 
+      # 门控的「按需检查」（0.5.100，用户 2026-11-02「我们一般情况下都不预检吧」）：
+      #   预检只在升级前跑 ⇒ 平时门控是空的，而 0 条会被误读成"全部兼容"。
+      #   · 服务端：POST /compat-gate {action:'scan-current'} 对当前补丁里的行跑一次适配判定
+      #     （判据复用 checkPluginFrameworkCompat，不另写一套）；只把 fail 写成记录（source=manual-scan），
+      #     pass/unknown 只进统计；**绝不禁用任何行**（补丁逐字节不变、disables 不变）；
+      #     坏文件 ⇒ 409 不覆盖；无变化 ⇒ 零写盘；零行可查 ⇒ 如实说明且不建文件
+      #   · 界面：有可检查的行才出现按钮、点它真的发 scan-current 并刷新；零行可查改成说明；
+      #     门控为空时给「本次没有裁决记录…」；lastScan 显示上次检查摘要；失败把原文摆出来
+      - name: Adapt-gate on-demand scan (records only, never disables)
+        run: |
+          node tests/test-compat-gate-scan.mjs
+          node tests/test-gate-scan-ui.mjs
+
       # 「一键更新本组」的行为（用户 2026-10-27 要求确认）：
       #   · 每个成员各查一次目标版本，逐个串行（不是并发一起打出去）
       #   · 只给查到新版的成员发起更新；查不到的**不装**
