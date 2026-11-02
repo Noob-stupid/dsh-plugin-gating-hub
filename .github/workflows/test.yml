@@ -540,6 +540,18 @@ jobs:
           node tests/test-compat-gate-scan.mjs
           node tests/test-gate-scan-ui.mjs
 
+      # 门控看见「运行期加载失败的行」（0.5.101，用户 2026-11-02）：
+      #   现场：`fiberPhase === 'failed'` 的行（experimental-inspector 因 @deepseek-ai/cordis 解析失败
+      #   而挂载失败）门控**完全看不到** —— 这条失败不经过预扫/隔离链。
+      #   · /state 的 gating **只增** loadFailed / loadFailedCount（既有字段一个不少、语义不变）
+      #   · ★ 这个视图**只读**：compat-pending.json 一字节不变（运行期故障不污染适配裁决记录）
+      #   · 面板新增「加载失败的行」分区 + 两段式「停用」（第一下零请求，确认后走既有 /toggle）
+      #   · 零失败行 ⇒ 分区不出现（不摆空壳）
+      - name: Gating sees runtime load failures (view only, records untouched)
+        run: |
+          node tests/test-gate-load-failed-state.mjs
+          node tests/test-gate-load-failed-ui.mjs
+
       # 「一键更新本组」的行为（用户 2026-10-27 要求确认）：
       #   · 每个成员各查一次目标版本，逐个串行（不是并发一起打出去）
       #   · 只给查到新版的成员发起更新；查不到的**不装**
