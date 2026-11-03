@@ -79,7 +79,9 @@ function snapshotDir(dir) {
   return out
 }
 
-const siblingsOf = (pkgDir, suffix) => readdirSync(dirname(pkgDir)).filter((n) => n.startsWith(`${basename(pkgDir)}${suffix}`)).sort()
+const siblingsOf = (pkgDir, suffix) => {
+  try { return readdirSync(dirname(pkgDir)).filter((n) => n.startsWith(`${basename(pkgDir)}${suffix}`)).sort() } catch { return [] }
+}
 const backupsOf = (pkgDir) => siblingsOf(pkgDir, '.pre-update-')
 const brokensOf = (pkgDir) => siblingsOf(pkgDir, '.broken-')
 const installedVersionOf = (pkgDir) => {
@@ -398,6 +400,322 @@ const runChannels = async ({ profileDir, pkgDir, job, ch, selfUpdateDeps = null 
     res?.installedName === null && String(res?.lastError?.message ?? '').includes('自更新没有完成'),
     `${res?.installedName} / ${String(res?.lastError?.message ?? '').slice(0, 100)}`)
   check('⑪ 残缺目录被挪开保留（不删）', brokensOf(pkgDir).length === 1, JSON.stringify(brokensOf(pkgDir)))
+}
+
+// ══════════════════════════════════════════════════════════════════════════════════════════════
+// `/self-update` 通路（市场页那颗「⬇ 更新可用」pill → POST /plugin-console/self-update →
+// domain/selfupdate.js#selfUpdateToLatest：pnpm update → pnpm add → curl 手铺**三步**）
+// ══════════════════════════════════════════════════════════════════════════════════════════════
+// 为什么还要钉这条路：真机那两次更新坏掉的现场**无法确认**走的是哪条通路（插件卡片的「更新」= /install 作业，
+// 市场页那颗 pill = /self-update），所以两条都要护住，而且必须用**同一套**判据（domain/self-update-guard.js）。
+// 这一段钉的是"接线真的接上了、三步每一步都过校验、全部走完仍不过才自愈、返回结构只增字段"。
+const { selfUpdateToLatest } = await import(url('lib/server/domain/selfupdate.js'))
+
+/** pnpm-lock.yaml 的 importer 形态（真机 lock 就是这个形状；lockVersion() 认这种键行）。 */
+const lockYamlOf = (version) => [
+  "lockfileVersion: '9.0'",
+  '',
+  'importers:',
+  '',
+  '  .:',
+  '    dependencies:',
+  `      '${SELF}':`,
+  '        specifier: ^0.5.100',
+  `        version: ${version}`,
+  '',
+].join('\n')
+
+/** `/self-update` 的夹具 = 装好的自身副本 + profile 清单（依赖 spec）+ pnpm-lock.yaml。 */
+function makeSelfUpdateProfile(tag, { selfVersion = OLD, lockVersion = OLD, spec = '^0.5.100', withSelf = true } = {}) {
+  const { profileDir, pkgDir } = makeProfile(tag, { selfVersion, withSelf })
+  const deps = spec === null ? {} : { [SELF]: spec }
+  writeFileSync(join(profileDir, 'package.json'), `${JSON.stringify({ name: 'dsh-profile-desktop', private: true, dependencies: deps }, null, 2)}\n`, 'utf8')
+  writeFileSync(join(profileDir, 'pnpm-lock.yaml'), lockYamlOf(lockVersion), 'utf8')
+  return { profileDir, pkgDir }
+}
+
+const writeProfileLock = (profileDir, version) => writeFileSync(join(profileDir, 'pnpm-lock.yaml'), lockYamlOf(version), 'utf8')
+
+/** 把 node_modules 里那份换成目标版本（模拟"某一步真的装上了"）。 */
+function landSelfVersion(pkgDir, version) {
+  const dir = String(pkgDir ?? '')
+  if (dir === '') throw new Error('夹具：pkgDir 为空，拒绝写相对路径（会把文件写进工作目录）')
+  mkdirSync(join(dir, 'lib'), { recursive: true })
+  writeFileSync(join(dir, 'package.json'), `${JSON.stringify({ name: SELF, version, main: './lib/index.js' }, null, 2)}\n`, 'utf8')
+  writeFileSync(join(dir, 'lib', 'index.js'), 'export const ok = 2\n', 'utf8')
+}
+
+/** 目录替身：`<profileDir>/node_modules/<包名>`（夹具落点固定）；**空路径直接抛** ——
+ *  绝不能让 `join('', 'package.json')` 把文件写进当前工作目录（真踩过：把仓库自己的清单写坏了）。 */
+function pkgDirOf(profileDir) {
+  const dir = String(profileDir ?? '')
+  if (dir === '') throw new Error('夹具：profileDir 为空，拒绝写相对路径')
+  return join(dir, 'node_modules', ...SELF.split('/'))
+}
+
+/** 三步的桩（真机分别是 runPnpmWithFallback / pnpmInstall / curlManualInstall）；每个回调自己决定"这一步造成什么后果"。
+ *  profileDir 从**桩真实收到的参数**里取（pnpm/curl 拿到的就是 profile 目录；runPnpm 从 execOpts.cwd 取），
+ *  再推出 `pkgDir` —— 这样调用点不必额外传路径，也不可能写错位置。 */
+function makeSelfUpdateSteps({ onPnpmUpdate = () => {}, onPnpmAdd = () => {}, onManualCopy = () => {} } = {}) {
+  const calls = []
+  return {
+    calls,
+    deps: {
+      runPnpm: async (argv, opts = {}) => {
+        calls.push(`pnpm-update:${argv.join(' ')}`)
+        const profileRedirect = String(opts?.execOpts?.cwd ?? '')
+        return onPnpmUpdate({ argv, profileDir: profileRedirect, pkgDir: profileRedirect === '' ? '' : pkgDirOf(profileRedirect) })
+      },
+      pnpmAdd: async (dir, spec) => { calls.push(`pnpm-add:${spec}`); return onPnpmAdd({ dir, spec, profileDir: dir, pkgDir: pkgDirOf(dir) }) },
+      curlManualInstall: async (dir, name, registries, extra, version) => {
+        calls.push(`manual-copy:${name}@${version}`)
+        return onManualCopy({ dir, name, version, profileDir: dir, pkgDir: pkgDirOf(dir) })
+      },
+    },
+  }
+}
+
+const runSelfUpdate = async ({ profileDir, latest = TARGET, steps, selfUpdateDeps = {} }) => selfUpdateToLatest({
+  profileDir, latest, registries: ['https://registry.fake'], curlManualInstall: steps.deps.curlManualInstall,
+  runPnpm: steps.deps.runPnpm, pnpmAdd: steps.deps.pnpmAdd, profileName: 'desktop', selfUpdateDeps,
+})
+
+const stepRowOf = (selfUpdate, step) => (Array.isArray(selfUpdate?.steps) ? selfUpdate.steps.find((row) => row.step === step) : undefined)
+
+// ── ⑫ 正常三步：备份 → 每步各校验一次 → 通过 → 备份清理；返回结构逐项 ──────────────────────────
+{
+  const { profileDir, pkgDir } = makeSelfUpdateProfile('su-normal')
+  const before = snapshotDir(pkgDir)
+  let backupsDuringStep = []
+  let savedDuringStep = null
+  const steps = makeSelfUpdateSteps({
+    // ① pnpm update 这一步"没装成"（真机被中断就是这个干法），由 ② 真的落地版本
+    onPnpmUpdate: () => {
+      backupsDuringStep = backupsOf(pkgDir)
+      savedDuringStep = backupsDuringStep.length === 1 ? snapshotDir(join(dirname(pkgDir), backupsDuringStep[0])) : null
+    },
+    onPnpmAdd: ({ pkgDir: dir }) => landSelfVersion(dir, TARGET),
+    // ③ curl 顺手把 lock 也写到目标版本（真机 lockUpdated 就是这么成立的）
+    onManualCopy: ({ pkgDir: dir }) => { landSelfVersion(dir, TARGET); writeProfileLock(profileDir, TARGET) },
+  })
+  const res = await runSelfUpdate({ profileDir, steps })
+  check('⑫ 更新前真的先做了备份（/self-update 通路也接管）', backupsDuringStep.length === 1, JSON.stringify(backupsDuringStep))
+  check('⑫ 备份是**复制**出来的完整副本（内容 = 更新前那棵树）',
+    savedDuringStep !== null && JSON.stringify(savedDuringStep) === JSON.stringify(before), JSON.stringify(Object.keys(savedDuringStep ?? {})))
+  check('⑫ 三步都按既有条件跑到了（pnpm update → pnpm add → curl 手铺）',
+    steps.calls.length === 3 && steps.calls[0].startsWith('pnpm-update:') && steps.calls[1].startsWith('pnpm-add:') && steps.calls[2].startsWith('manual-copy:'),
+    JSON.stringify(steps.calls))
+  check('⑫ ★ 每一步结束后都各校验一次（steps 三条，且点名是哪一步 / 哪一步之后目录是好的）',
+    JSON.stringify((res.selfUpdate?.steps ?? []).map((row) => [row.step, row.verified])) === JSON.stringify([['pnpm-update', false], ['pnpm-add', true], ['manual-copy', true]]),
+    JSON.stringify(res.selfUpdate?.steps ?? null))
+  check('⑫ 校验通过：verified=true / backedUp=true / healed=false',
+    res.selfUpdate?.verified === true && res.selfUpdate?.backedUp === true && res.selfUpdate?.healed === false,
+    JSON.stringify({ verified: res.selfUpdate?.verified, backedUp: res.selfUpdate?.backedUp, healed: res.selfUpdate?.healed }))
+  check('⑫ 通过时 ok=true、没有失败文案、不给手动命令',
+    res.ok === true && res.reason === null && res.selfUpdate?.manualCommand === null,
+    JSON.stringify({ ok: res.ok, reason: res.reason }))
+  check('⑫ 本次备份被清理（不留垃圾）', backupsOf(pkgDir).length === 0, JSON.stringify(backupsOf(pkgDir)))
+  check('⑫ 守卫没有改动插件目录（内容 = 三步跑完的那个状态：目标版本 + 新入口）',
+    installedVersionOf(pkgDir) === TARGET && readFileSync(join(pkgDir, 'lib', 'index.js'), 'utf8') === 'export const ok = 2\n',
+    String(installedVersionOf(pkgDir)))
+  check('⑫ 既有字段的值语义不变（method / spec 跟随落地版本 / lock / lockNote / errors）',
+    res.method === 'pnpm-update+pnpm-add+manual-copy' && res.spec === TARGET && res.installedVersion === TARGET
+    && res.lockVersion === TARGET && res.lockUpdated === true && res.lockNote === null && Array.isArray(res.errors) && res.errors.length === 0,
+    JSON.stringify({ method: res.method, spec: res.spec, installed: res.installedVersion, lock: res.lockVersion, lockUpdated: res.lockUpdated }))
+}
+
+// ── ⑬ pnpm 那步把目录掏空（真机现场）⇒ 后两步也救不回来 ⇒ 收尾自愈，绝不报成功 ────────────────
+{
+  const { profileDir, pkgDir } = makeSelfUpdateProfile('su-gutted')
+  const steps = makeSelfUpdateSteps({
+    // 现场：pnpm 先删旧目录再解包，删到一半被打断 ⇒ 只剩 scripts/ 与 SECURITY.md
+    onPnpmUpdate: () => {
+      rmSync(join(pkgDir, 'package.json'), { force: true })
+      rmSync(join(pkgDir, 'lib'), { recursive: true, force: true })
+    },
+    onPnpmAdd: () => { throw new Error('桩：pnpm add 拒绝（EPERM: operation not permitted）') },
+    onManualCopy: () => { throw new Error('桩：curl 也拿不到 tarball（404）') },
+  })
+  const res = await runSelfUpdate({ profileDir, steps })
+  check('⑬ ★ 触发自愈：verified=false / healed=true / selfHeal.restored=true',
+    res.selfUpdate?.verified === false && res.selfUpdate?.healed === true && res.selfUpdate?.selfHeal?.restored === true,
+    JSON.stringify({ verified: res.selfUpdate?.verified, healed: res.selfUpdate?.healed }))
+  check('⑬ ★ 目录被恢复：package.json 回来了、版本回到更新前那一版',
+    existsSync(join(pkgDir, 'package.json')) && installedVersionOf(pkgDir) === OLD, String(installedVersionOf(pkgDir)))
+  check('⑬ 残缺目录被**改名挪开**（不删，可事后核对）',
+    brokensOf(pkgDir).length === 1 && !existsSync(join(dirname(pkgDir), brokensOf(pkgDir)[0], 'package.json')), JSON.stringify(brokensOf(pkgDir)))
+  check('⑬ ★ 绝不报成功：ok=false、reason 说清"没有 package.json"这类现场',
+    res.ok === false && String(res.reason ?? '').includes('自更新没有完成') && String(res.reason ?? '').includes('package.json'),
+    String(res.reason ?? '').slice(0, 160))
+  check('⑬ step 记录里哪一步坏的查得到（pnpm-update / pnpm-add / manual-copy 全 false）',
+    (res.selfUpdate?.steps ?? []).length === 3 && (res.selfUpdate?.steps ?? []).every((row) => row.verified === false),
+    JSON.stringify(res.selfUpdate?.steps ?? null))
+  check('⑬ 失败那次的备份**留着**（唯一的旧版，别一起清掉）',
+    backupsOf(pkgDir).length === 1 && res.selfUpdate?.backupPath === join(dirname(pkgDir), backupsOf(pkgDir)[0]), JSON.stringify(backupsOf(pkgDir)))
+  check('⑬ 报出去的 installedVersion 是**盘上真实那一版**（自愈后 = 更新前），不是 null',
+    res.installedVersion === OLD, String(res.installedVersion))
+  check('⑬ 失败文案在 errors 与 note 里都看得见（面板/接口任一路径都读不成"成功"）',
+    (res.errors ?? []).some((e) => String(e).includes('自更新没有完成')) && String(res.note ?? '').includes('自更新没有完成'),
+    JSON.stringify(res.errors)?.slice(0, 120))
+}
+
+// ── ⑭ curl 手铺只铺一半 ⇒ 校验不过 ⇒ 自愈（step 记录指出坏在 manual-copy）─────────────────────
+{
+  const { profileDir, pkgDir } = makeSelfUpdateProfile('su-curl-half')
+  const steps = makeSelfUpdateSteps({
+    // ① 真的把版本装上了（这一步之后目录可用且版本对 ⇒ 该 step ok=true）
+    onPnpmUpdate: () => landSelfVersion(pkgDir, TARGET),
+    // ② 不会跑：readInstalledVersion === latest ⇒ 既有条件跳过（既有行为一字未改，这里也钉住）
+    onPnpmAdd: () => { throw new Error('桩：pnpm add 不该被走到（版本已是 latest）') },
+    // ③ lock 还是旧的 ⇒ 走手铺；手铺"只铺了一半"：清单丢了 version、入口文件也没了
+    onManualCopy: () => {
+      writeFileSync(join(pkgDir, 'package.json'), `${JSON.stringify({ name: SELF, main: './lib/index.js' })}\n`, 'utf8')
+      rmSync(join(pkgDir, 'lib'), { recursive: true, force: true })
+    },
+  })
+  const res = await runSelfUpdate({ profileDir, steps })
+  check('⑭ ★ step 记录指出坏在 manual-copy 那一步（前一步是好的）',
+    stepRowOf(res.selfUpdate, 'pnpm-update')?.verified === true && stepRowOf(res.selfUpdate, 'manual-copy')?.verified === false
+    && String(stepRowOf(res.selfUpdate, 'manual-copy')?.reason ?? '').includes('version'),
+    JSON.stringify(res.selfUpdate?.steps ?? null))
+  check('⑭ 既有步骤条件不变：版本已是 latest 时 pnpm add 那一步照旧被跳过',
+    !steps.calls.some((c) => c.startsWith('pnpm-add:')), JSON.stringify(steps.calls))
+  check('⑭ ★ 校验不过 ⇒ 自愈：healed=true、版本回到更新前',
+    res.selfUpdate?.healed === true && installedVersionOf(pkgDir) === OLD,
+    JSON.stringify({ healed: res.selfUpdate?.healed, version: installedVersionOf(pkgDir) }))
+  check('⑭ 不报成功（ok=false + 非空 reason）', res.ok === false && typeof res.reason === 'string' && res.reason !== '')
+  check('⑭ 残缺目录被改名保留（可核对半棵树长什么样）', brokensOf(pkgDir).length === 1, JSON.stringify(brokensOf(pkgDir)))
+}
+
+// ── ⑮ 三步全失败 ⇒ 如实报 + manualCommand 是真能跑的绝对路径命令 ────────────────────────────────
+{
+  // ⑮a 有备份 ⇒ 命令是"把备份整棵复制回来"（robocopy/cp），且那个备份真的还在盘上
+  const { profileDir, pkgDir } = makeSelfUpdateProfile('su-all-fail')
+  const steps = makeSelfUpdateSteps({
+    onPnpmUpdate: () => { throw new Error('桩：pnpm update 失败（corepack 不可用）') },
+    onPnpmAdd: () => { throw new Error('桩：pnpm add 失败（EPERM）') },
+    onManualCopy: () => { throw new Error('桩：curl 失败（网络不可达）') },
+  })
+  const res = await runSelfUpdate({ profileDir, steps })
+  const selfUpdate = res.selfUpdate ?? {}
+  const command = String(selfUpdate.manualCommand ?? '')
+  const quoted = [...command.matchAll(/"([^"]+)"/gu)].map((m) => m[1]).filter((p) => !/^https?:/u.test(p))
+  check('⑮a ★ 三步全失败 ⇒ 如实报失败（ok=false + reason 点名目标版本）',
+    res.ok === false && String(res.reason ?? '').includes('自更新没有完成') && String(res.reason ?? '').includes(TARGET),
+    String(res.reason ?? '').slice(0, 180))
+  check('⑮a 通道错误一条不少地留着（既有 errors 语义不变）',
+    (res.errors ?? []).filter((e) => /失败/u.test(String(e))).length >= 3, JSON.stringify(res.errors)?.slice(0, 160))
+  check('⑮a ★ manualCommand 是"备份 → 插件落点"的恢复命令，路径全绝对，且备份真的还在盘上（粘贴即用）',
+    /^(robocopy|cp)\s/u.test(command) && quoted.length >= 2 && quoted.every((p) => /^[A-Za-z]:[\\/]/u.test(p) || p.startsWith('/'))
+    && quoted.includes(pkgDir) && typeof selfUpdate.backupPath === 'string' && quoted.includes(selfUpdate.backupPath)
+    && existsSync(selfUpdate.backupPath) === true,
+    command.slice(0, 200))
+  check('⑮a 自愈成功但如实说"没有生效"（healed=true 不等于更新成功）',
+    selfUpdate.healed === true && String(res.reason ?? '').includes('没有生效'), String(res.reason ?? '').slice(-80))
+
+  // ⑮b 没有备份（注入备份失败）⇒ 命令换成"从 registry 取一份解回原位"，同样全绝对路径
+  const fragile = makeSelfUpdateProfile('su-all-fail-nobackup')
+  const fragileSteps = makeSelfUpdateSteps({
+    onPnpmUpdate: () => { throw new Error('桩：pnpm update 失败') },
+    onPnpmAdd: () => { const error = new Error('EACCES: 桩：pnpm add 被拒'); error.code = 'EACCES'; throw error },
+    onManualCopy: () => { throw new Error('桩：curl 失败') },
+  })
+  const fragileRes = await runSelfUpdate({
+    profileDir: fragile.profileDir, steps: fragileSteps,
+    selfUpdateDeps: { copy: () => { const error = new Error('EACCES: 桩：备份目录被占用'); error.code = 'EACCES'; throw error } },
+  })
+  const fragileCommand = String(fragileRes.selfUpdate?.manualCommand ?? '')
+  const fragileQuoted = [...fragileCommand.matchAll(/"([^"]+)"/gu)].map((m) => m[1]).filter((p) => !/^https?:/u.test(p))
+  check('⑮b ★ 没有备份 ⇒ 如实报"无法自动恢复"，命令换成 curl+tar 取一份回原位（全绝对路径）',
+    fragileRes.ok === false && fragileRes.selfUpdate?.backedUp === false && fragileRes.selfUpdate?.selfHeal?.restored === false
+    && /^(curl\.exe|curl)\s/u.test(fragileCommand) && fragileCommand.includes('registry.npmmirror.com')
+    && fragileQuoted.length >= 3 && fragileQuoted.every((p) => /^[A-Za-z]:[\\/]/u.test(p) || p.startsWith('/')),
+    fragileCommand.slice(0, 160))
+  check('⑮b 占用类失败被认出来（不是普通异常），且仍不报成功',
+    String(fragileRes.selfUpdate?.backupNote ?? '').includes('被占用') && fragileRes.ok === false,
+    String(fragileRes.selfUpdate?.backupNote ?? '').slice(0, 120))
+}
+
+// ── ⑯ /self-update 通路的"不接管"：首次安装 / 别的包名 / 源码检出 ⇒ 零备份、selfUpdate 恒 null ──
+{
+  // ⑯a 本插件，但 profile 里根本没有它（首次安装）⇒ begin 直接 null
+  const first = makeSelfUpdateProfile('su-first-install', { withSelf: false })
+  const firstSteps = makeSelfUpdateSteps({
+    onPnpmUpdate: () => { throw new Error('桩：pnpm update 失败') },
+    onPnpmAdd: ({ pkgDir: dir }) => landSelfVersion(dir, TARGET),
+    onManualCopy: ({ pkgDir: dir }) => { landSelfVersion(dir, TARGET); writeProfileLock(first.profileDir, TARGET) },
+  })
+  const firstRes = await runSelfUpdate({ profileDir: first.profileDir, steps: firstSteps })
+  check('⑯a ★ 首次安装不接管：零备份、selfUpdate 恒 null、照旧按原语义报成功',
+    backupsOf(first.pkgDir).length === 0 && firstRes.selfUpdate === null && firstRes.ok === true && firstRes.reason === null
+    && firstRes.installedVersion === TARGET,
+    JSON.stringify({ backups: backupsOf(first.pkgDir).length, selfUpdate: firstRes.selfUpdate, ok: firstRes.ok, installed: firstRes.installedVersion }))
+
+  // ⑯b 别的包名（注入 selfName）⇒ 不接管；同一 profile 里就装着控制台自己也不为所动
+  const other = makeSelfUpdateProfile('su-other-name')
+  const otherSteps = makeSelfUpdateSteps({
+    onPnpmUpdate: () => landSelfVersion(other.pkgDir, TARGET),
+    onManualCopy: () => writeProfileLock(other.profileDir, TARGET),
+  })
+  const otherRes = await runSelfUpdate({ profileDir: other.profileDir, steps: otherSteps, selfUpdateDeps: { selfName: 'probe-pkg' } })
+  check('⑯b ★ 别的包名 ⇒ 不接管（零备份 + selfUpdate=null），判据不按前缀匹配',
+    backupsOf(other.pkgDir).length === 0 && otherRes.selfUpdate === null && otherRes.ok === true
+    && guard.isSelfUpdate(`${SELF}-extra`) === false,
+    JSON.stringify({ backups: backupsOf(other.pkgDir).length, selfUpdate: otherRes.selfUpdate }))
+
+  // ⑯c 源码检出（父目录不是 node_modules）⇒ 守卫绝不动手（真机踩过：把整棵源码树当安装副本备份）
+  const checkout = join(BASE, 'su-source-checkout', 'dsh-plugin-console')
+  mkdirSync(checkout, { recursive: true })
+  writeFileSync(join(checkout, 'package.json'), `${JSON.stringify({ name: SELF, version: OLD, main: 'index.js' })}\n`, 'utf8')
+  check('⑯c 源码检出 ⇒ beginSelfUpdateGuard 返回 null，且旁边没有任何 pre-update 副本',
+    guard.beginSelfUpdateGuard({ packageName: SELF, packageDir: checkout }) === null && siblingsOf(checkout, '.pre-update-').length === 0,
+    JSON.stringify(siblingsOf(checkout, '.pre-update-')))
+  check('⑯c noteGuardStep 在"没接管"时是空操作（不会自己造 session / 造记录）',
+    guard.noteGuardStep(null, 'pnpm-update') === null && guard.noteGuardStep(undefined, 'pnpm-add') === null)
+}
+
+// ── ⑰ 正控：既有 /self-update 响应字段逐项不变（静态解析路由 + 域层返回值两侧都查）──────────────
+{
+  const routeSrc = readFileSync(join(HERE, '..', 'lib', 'server', 'routes', 'plugins.js'), 'utf8')
+  const fnStart = routeSrc.indexOf('async function routeSelfUpdate')
+  // ⚠ 必须从"拿到 result 之后"开始找 sendJson：函数里**前面还有一次** sendJson(200, {ok:false,...}) 的早返回，
+  //   从函数头开始找会切到那一段（把 14 个字段误判成"缺"——这正是"两套断言"会犯的错，钉在这里）。
+  const callAt = routeSrc.indexOf('const result = await selfUpdateToLatest', fnStart)
+  const bodyStart = routeSrc.indexOf('sendJson(res, 200, {', callAt)
+  const bodyEnd = routeSrc.indexOf('\n      })', bodyStart)
+  const block = routeSrc.slice(bodyStart, bodyEnd).replace(/\/\/[^\n]*/gu, '').replace(/\/\*[\s\S]*?\*\//gu, '')
+  const keys = [
+    ...block.matchAll(/(?<![\w$.])([A-Za-z_$][\w$]*)\s*:/gu).map((m) => m[1]),
+    // `latest,` 这种**简写属性**没有冒号 —— 漏了它会把一个真在的字段误判成"缺"（另一份实现就踩过这颗雷）
+    ...block.matchAll(/^\s*([A-Za-z_$][\w$]*),\s*$/gmu).map((m) => m[1]),
+  ]
+  const LEGACY = ['ok', 'current', 'latest', 'updated', 'version', 'method', 'spec', 'installedVersion', 'lockVersion', 'lockUpdated', 'lockNote', 'command', 'note', 'errors']
+  const ADDED = ['selfUpdate', 'reason']
+  const missing = LEGACY.filter((k) => !keys.includes(k))
+  const unexpected = keys.filter((k) => !LEGACY.includes(k) && !ADDED.includes(k))
+  check('⑰ ★ 既有 /self-update 返回字段一个都没少（14 项逐项对照）',
+    missing.length === 0, missing.length === 0 ? `14 个旧字段全在：${LEGACY.join(', ')}` : `缺：${missing.join(', ')}`)
+  check('⑰ ★ 只增了 selfUpdate / reason 两个字段（没有别的意外字段）',
+    unexpected.length === 0, unexpected.length === 0 ? `新增：${ADDED.join(', ')}` : `意外字段：${unexpected.join(', ')}`)
+  check('⑰ 路由把域层的 selfUpdate/reason 原样转发（新字段不是摆设）',
+    block.includes('selfUpdate: result.selfUpdate') && block.includes('reason: result.reason'))
+  check('⑰ ok 只由 result.ok 决定（既有成功路径恒 true）', block.includes('ok: result.ok !== false'))
+
+  // 域层返回值的字段齐全性（undefined 会让路由下发时丢字段）
+  const { profileDir, pkgDir } = makeSelfUpdateProfile('su-field-parity')
+  const steps = makeSelfUpdateSteps({
+    onPnpmUpdate: () => landSelfVersion(pkgDir, TARGET),
+    onManualCopy: () => { landSelfVersion(pkgDir, TARGET); writeProfileLock(profileDir, TARGET) },
+  })
+  const res = await runSelfUpdate({ profileDir, steps })
+  const DOMAIN_FIELDS = ['method', 'spec', 'installedVersion', 'lockVersion', 'lockUpdated', 'lockNote', 'command', 'note', 'errors', 'ok', 'reason', 'selfUpdate']
+  const undef = DOMAIN_FIELDS.filter((k) => res[k] === undefined)
+  check('⑰ ★ 域层返回的既有字段逐项都有值（undefined 等于下发时丢字段）', undef.length === 0,
+    undef.length === 0 ? `${DOMAIN_FIELDS.join(', ')} 全有值` : `缺值：${undef.join(', ')}`)
+  check('⑰ 既有字段的值语义不变（method / spec 跟随落地版本 / lock / command / note）',
+    res.method === 'pnpm-update+manual-copy' && res.spec === TARGET && res.installedVersion === TARGET
+    && res.lockUpdated === true && String(res.command).includes(`add ${SELF}@`) && typeof res.note === 'string' && res.note !== '',
+    JSON.stringify({ method: res.method, spec: res.spec, installed: res.installedVersion, command: String(res.command).slice(0, 60) }))
 }
 
 const summary = `\n${fail === 0 ? 'ALL PASS' : `${fail} FAILED`}（PASS ${pass} / FAIL ${fail}）`
