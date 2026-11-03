@@ -261,6 +261,19 @@ jobs:
           #   多出来的字段**只有** parentMissing（既有字段清单对照，语义未改）
           node tests/test-patch-write-guard.mjs
 
+          # 0.5.99 加法（issue #27 同源）：框架树探测**别把「死 profile」当候选**。
+          # 现场：`fwRootFromDshHome()` 把 `profiles/` 下每个子目录都塞进候选（只跳过 node_modules），
+          #   于是废弃 profile 也进候选；而废弃 profile 里常留着旧框架的残影（bin.js 在、.pnpm 实体没了），
+          #   既有判据 `looksLikeFwRoot()` 分不出死活 ⇒ 谁先被 readdir 排到谁被选中（--repair 修错树）。
+          # 段内断言（全离线：私有临时目录 + 注入 readdir/排序器）：① 活 desktop + 死 web（readdir 里
+          #   web 在前）⇒ 选 desktop，且同段用"关掉排序器 = 旧顺序"证明**旧行为确实会选死 web**
+          #   （真回归，不是白测）② **只有 web 一棵能用** ⇒ 仍选 web（不误杀 —— 防"修复过度"的关键反例）
+          #   ③ 两棵都像框架树、desktop 是当前 profile ⇒ 选 desktop（不随目录名/readdir 顺序漂移）
+          #   ④ DSH_PROFILE_DIR / DSH_PROFILE 既有最高优先级不被破坏 ⑤ profiles/ 读不到 ⇒ 不抛错、
+          #   返回 null（与改动前一致）⑥ **旧顺序兜底**：排序器返回空/抛错/返回怪值时仍按旧顺序选到
+          #   （不许因新判据选不到）⑦ 排序器只排不增不减、同档稳定、非法输入不抛
+          node tests/test-fw-root-candidate.mjs
+
           # ── 0.5.32 批次（2026-09-29）：**别的更新通道改了框架也要守住门** ──────────────────────
           # 用户诉求原话：「走别的更新通道（官方桌面端更新器 / 手动 pnpm / npx 缓存变化）改了框架后，
           # 我们仍要自动守门」+「有确证证据时自动禁用会拖垮服务的行」。四套（全离线、私有 DSH_HOME）：
