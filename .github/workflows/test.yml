@@ -246,6 +246,21 @@ jobs:
           # ⑥ 本机有真实 profile 时真调真机框架树（CI 无 profile 则**响亮 SKIP**，不假装 PASS）
           node tests/test-patch-heal-safety.mjs
 
+          # 0.5.99 加法（issue #27 的派生缺口）：补丁**写前建父目录** + 读时区分两种「缺失」。
+          # 现场：patch.js 里 7 处 writeFile 全是裸写、mkdir 调用数 = 0，而补丁路径是从 loader 的
+          #   cordis:include 条目推导的 —— 推到还不存在的 profile 目录就 ENOENT（被 catch 就是
+          #   "面板说已启用、文件里一个字节没有"）；同时 readPatchState 把 ENOENT 一律吞成"空补丁"，
+          #   于是「路径推错了」与「文件真是空的」在返回值上完全一样（issue #27 藏三周的配套原因）。
+          # 段内断言（全离线 / 私有临时目录 / 不碰真实 profile）：① 正控：父目录不存在 ⇒ 写入成功 +
+          #   目录建出来 + 内容逐字节正确（加校验不许把正常写盘弄坏）② 负控：父目录真建不出来（祖先
+          #   是普通文件）⇒ 如实抛错、不谎报 changed:true、不留半成品 ③ 负控：注入 mkdir 抛 EPERM ⇒
+          #   written=false + writeError 带真因 + healedAt=0，且**证明默认写盘实现真的先建父目录**；
+          #   注入 writeText 时我们零插手（既有注入缝不回归）④⑤ 读：文件缺失但父目录在 ⇒ 空补丁 +
+          #   parentMissing=false；父目录也缺 ⇒ 仍返回空补丁**不抛错** + parentMissing=true /
+          #   missingReason（stat 报 EACCES 时不许谎报）⑥ 正常文件 ⇒ 内容与解析结果一字不差，
+          #   多出来的字段**只有** parentMissing（既有字段清单对照，语义未改）
+          node tests/test-patch-write-guard.mjs
+
           # ── 0.5.32 批次（2026-09-29）：**别的更新通道改了框架也要守住门** ──────────────────────
           # 用户诉求原话：「走别的更新通道（官方桌面端更新器 / 手动 pnpm / npx 缓存变化）改了框架后，
           # 我们仍要自动守门」+「有确证证据时自动禁用会拖垮服务的行」。四套（全离线、私有 DSH_HOME）：
