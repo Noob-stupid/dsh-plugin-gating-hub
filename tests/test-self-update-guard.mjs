@@ -17,9 +17,9 @@
 //   ⑦ 幂等：连跑两次，备份不会无限堆积（最多留 1 份）
 //   ⑧ 接线：作业层（runInstallJob）在自更新校验不过时**如实失败**，且不清场、不进 AI 兜底
 import { strict as assert } from 'node:assert'
-import { mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { existsSync } from 'node:fs'
-import { join, dirname, basename } from 'node:path'
+import { isAbsolute, join, dirname, basename } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { tmpdir } from 'node:os'
 
@@ -47,19 +47,29 @@ const check = (name, ok, info = '') => {
 
 rmSync(BASE, { recursive: true, force: true })
 
+// ── 夹具写盘的**唯一入口**：路径必须先是绝对路径，否则直接抛 ────────────────────────────────────
+// 为什么要有这道闸（真事故，2026-11-03）：`join('', 'lib', 'index.js')` 得到的是**相对路径**，会按 cwd
+// 落到仓库根，把插件入口覆盖成 `export const ok = 2` ⇒ `test-route-inventory` / `test-compat-pending-records`
+// 当场报 `mod.apply is not a function`。夹具的任何写盘都必须先证明"这是绝对路径里的那份夹具"。
+function writeFixture(absPath, content) {
+  const target = String(absPath ?? '')
+  if (target === '' || isAbsolute(target) !== true) throw new Error(`夹具拒绝写非绝对路径：${target}`)
+  if (target.startsWith(join(HERE, '..', 'lib')) && target.endsWith(join('lib', 'index.js'))) throw new Error(`夹具拒绝写插件入口：${target}`)
+  mkdirSync(dirname(target), { recursive: true })
+  writeFileSync(target, content, 'utf8')
+}
+
 // ── 夹具：一份"装好了的"控制台自身副本（profile 的 node_modules 里，与真机现场同一个落点）──────────
 function makeProfile(tag, { selfVersion = OLD, withSelf = true } = {}) {
   const profileDir = join(BASE, tag, 'profiles', 'desktop')
   mkdirSync(profileDir, { recursive: true })
-  writeFileSync(join(profileDir, 'cordis.patch.yml'), '# fixture\n', 'utf8')
+  writeFixture(join(profileDir, 'cordis.patch.yml'), '# fixture\n')
   const pkgDir = join(profileDir, 'node_modules', '@noob-stupid', 'dsh-plugin-console')
   if (withSelf) {
-    mkdirSync(join(pkgDir, 'lib'), { recursive: true })
-    mkdirSync(join(pkgDir, 'scripts'), { recursive: true })
-    writeFileSync(join(pkgDir, 'package.json'), `${JSON.stringify({ name: SELF, version: selfVersion, main: './lib/index.js' }, null, 2)}\n`, 'utf8')
-    writeFileSync(join(pkgDir, 'lib', 'index.js'), 'export const ok = 1\n', 'utf8')
-    writeFileSync(join(pkgDir, 'SECURITY.md'), '# sec\n', 'utf8')
-    writeFileSync(join(pkgDir, 'scripts', 'build.sh'), '#!/bin/sh\n', 'utf8')
+    writeFixture(join(pkgDir, 'package.json'), `${JSON.stringify({ name: SELF, version: selfVersion, main: './lib/index.js' }, null, 2)}\n`)
+    writeFixture(join(pkgDir, 'lib', 'index.js'), 'export const ok = 1\n')
+    writeFixture(join(pkgDir, 'SECURITY.md'), '# sec\n')
+    writeFixture(join(pkgDir, 'scripts', 'build.sh'), '#!/bin/sh\n')
   }
   return { profileDir, pkgDir }
 }
@@ -150,7 +160,7 @@ const runChannels = async ({ profileDir, pkgDir, job, ch, selfUpdateDeps = null 
   const ch = makeChannels(record, () => {
     rmSync(join(pkgDir, 'package.json'), { force: true })
     rmSync(join(pkgDir, 'lib'), { recursive: true, force: true })
-    writeFileSync(join(pkgDir, 'SECURITY.md'), '# sec\n', 'utf8')
+    writeFixture(join(pkgDir, 'SECURITY.md'), '# sec\n')
   })
   const job = { id: 'g2', repo: '', packageName: SELF, source: 'github', update: true, version: null }
   const res = await runChannels({ profileDir, pkgDir, job, ch })
@@ -178,7 +188,7 @@ const runChannels = async ({ profileDir, pkgDir, job, ch, selfUpdateDeps = null 
   const { profileDir, pkgDir } = makeProfile('version-miss')
   const record = []
   const ch = makeChannels(record, () => {
-    writeFileSync(join(pkgDir, 'package.json'), `${JSON.stringify({ name: SELF, version: '0.5.99', main: './lib/index.js' })}\n`, 'utf8')
+    writeFixture(join(pkgDir, 'package.json'), `${JSON.stringify({ name: SELF, version: '0.5.99', main: './lib/index.js' })}\n`)
   })
   const job = { id: 'g3', repo: '', packageName: SELF, source: 'github', update: true, version: TARGET }
   const res = await runChannels({ profileDir, pkgDir, job, ch })
@@ -266,7 +276,7 @@ const runChannels = async ({ profileDir, pkgDir, job, ch, selfUpdateDeps = null 
       copy: (src, dest) => {
         if (String(dest).includes('.pre-update-')) {
           mkdirSync(dest, { recursive: true })
-          writeFileSync(join(dest, 'package.json'), `${JSON.stringify({ name: SELF, version: '0.0.0-bad', main: './lib/index.js' })}\n`, 'utf8')
+          writeFixture(join(dest, 'package.json'), `${JSON.stringify({ name: SELF, version: '0.0.0-bad', main: './lib/index.js' })}\n`)
           return
         }
         copyTree(src, dest)
@@ -294,7 +304,7 @@ const runChannels = async ({ profileDir, pkgDir, job, ch, selfUpdateDeps = null 
     const record = []
     const ch = makeChannels(record, () => {
       if (breakIt) rmSync(join(pkgDir, 'package.json'), { force: true })
-      else writeFileSync(join(pkgDir, 'package.json'), `${JSON.stringify({ name: SELF, version: TARGET, main: './lib/index.js' })}\n`, 'utf8')
+      else writeFixture(join(pkgDir, 'package.json'), `${JSON.stringify({ name: SELF, version: TARGET, main: './lib/index.js' })}\n`)
     })
     const job = { id: `g7-${tag}`, repo: '', packageName: SELF, source: 'github', update: true, version: breakIt ? null : TARGET }
     await runChannels({ profileDir, pkgDir, job, ch, selfUpdateDeps })
@@ -339,8 +349,8 @@ const runChannels = async ({ profileDir, pkgDir, job, ch, selfUpdateDeps = null 
   const record = []
   const ch = makeChannels(record, () => {
     mkdirSync(join(pkgDir, 'lib'), { recursive: true })
-    writeFileSync(join(pkgDir, 'package.json'), `${JSON.stringify({ name: SELF, version: TARGET, main: './lib/index.js' })}\n`, 'utf8')
-    writeFileSync(join(pkgDir, 'lib', 'index.js'), 'export const ok = 1\n', 'utf8')
+    writeFixture(join(pkgDir, 'package.json'), `${JSON.stringify({ name: SELF, version: TARGET, main: './lib/index.js' })}\n`)
+    writeFixture(join(pkgDir, 'lib', 'index.js'), 'export const ok = 1\n')
   })
   const job = { id: 'g9', repo: '', packageName: SELF, source: 'github', update: true, version: TARGET }
   const res = await runChannels({ profileDir, pkgDir, job, ch })
@@ -358,7 +368,7 @@ const runChannels = async ({ profileDir, pkgDir, job, ch, selfUpdateDeps = null 
   const repoRoot = join(HERE, '..')
   const notInstalled = join(BASE, 'source-checkout', 'dsh-plugin-console')
   mkdirSync(notInstalled, { recursive: true })
-  writeFileSync(join(notInstalled, 'package.json'), `${JSON.stringify({ name: SELF, version: OLD })}\n`, 'utf8')
+  writeFixture(join(notInstalled, 'package.json'), `${JSON.stringify({ name: SELF, version: OLD })}\n`)
   check('⑩ ★ looksInstalled：仓库根/源码检出为 false，node_modules 里的两种布局为 true',
     guard.looksInstalled(repoRoot) === false && guard.looksInstalled(notInstalled) === false
     && guard.looksInstalled(join(BASE, 'x', 'node_modules', 'dsh-plugin-console')) === true
@@ -429,20 +439,20 @@ const lockYamlOf = (version) => [
 function makeSelfUpdateProfile(tag, { selfVersion = OLD, lockVersion = OLD, spec = '^0.5.100', withSelf = true } = {}) {
   const { profileDir, pkgDir } = makeProfile(tag, { selfVersion, withSelf })
   const deps = spec === null ? {} : { [SELF]: spec }
-  writeFileSync(join(profileDir, 'package.json'), `${JSON.stringify({ name: 'dsh-profile-desktop', private: true, dependencies: deps }, null, 2)}\n`, 'utf8')
-  writeFileSync(join(profileDir, 'pnpm-lock.yaml'), lockYamlOf(lockVersion), 'utf8')
+  writeFixture(join(profileDir, 'package.json'), `${JSON.stringify({ name: 'dsh-profile-desktop', private: true, dependencies: deps }, null, 2)}\n`)
+  writeFixture(join(profileDir, 'pnpm-lock.yaml'), lockYamlOf(lockVersion))
   return { profileDir, pkgDir }
 }
 
-const writeProfileLock = (profileDir, version) => writeFileSync(join(profileDir, 'pnpm-lock.yaml'), lockYamlOf(version), 'utf8')
+const writeProfileLock = (profileDir, version) => writeFixture(join(profileDir, 'pnpm-lock.yaml'), lockYamlOf(version))
 
 /** 把 node_modules 里那份换成目标版本（模拟"某一步真的装上了"）。 */
 function landSelfVersion(pkgDir, version) {
   const dir = String(pkgDir ?? '')
   if (dir === '') throw new Error('夹具：pkgDir 为空，拒绝写相对路径（会把文件写进工作目录）')
   mkdirSync(join(dir, 'lib'), { recursive: true })
-  writeFileSync(join(dir, 'package.json'), `${JSON.stringify({ name: SELF, version, main: './lib/index.js' }, null, 2)}\n`, 'utf8')
-  writeFileSync(join(dir, 'lib', 'index.js'), 'export const ok = 2\n', 'utf8')
+  writeFixture(join(dir, 'package.json'), `${JSON.stringify({ name: SELF, version, main: './lib/index.js' }, null, 2)}\n`)
+  writeFixture(join(dir, 'lib', 'index.js'), 'export const ok = 2\n')
 }
 
 /** 目录替身：`<profileDir>/node_modules/<包名>`（夹具落点固定）；**空路径直接抛** ——
@@ -569,7 +579,7 @@ const stepRowOf = (selfUpdate, step) => (Array.isArray(selfUpdate?.steps) ? self
     onPnpmAdd: () => { throw new Error('桩：pnpm add 不该被走到（版本已是 latest）') },
     // ③ lock 还是旧的 ⇒ 走手铺；手铺"只铺了一半"：清单丢了 version、入口文件也没了
     onManualCopy: () => {
-      writeFileSync(join(pkgDir, 'package.json'), `${JSON.stringify({ name: SELF, main: './lib/index.js' })}\n`, 'utf8')
+      writeFixture(join(pkgDir, 'package.json'), `${JSON.stringify({ name: SELF, main: './lib/index.js' })}\n`)
       rmSync(join(pkgDir, 'lib'), { recursive: true, force: true })
     },
   })
@@ -666,7 +676,7 @@ const stepRowOf = (selfUpdate, step) => (Array.isArray(selfUpdate?.steps) ? self
   // ⑯c 源码检出（父目录不是 node_modules）⇒ 守卫绝不动手（真机踩过：把整棵源码树当安装副本备份）
   const checkout = join(BASE, 'su-source-checkout', 'dsh-plugin-console')
   mkdirSync(checkout, { recursive: true })
-  writeFileSync(join(checkout, 'package.json'), `${JSON.stringify({ name: SELF, version: OLD, main: 'index.js' })}\n`, 'utf8')
+  writeFixture(join(checkout, 'package.json'), `${JSON.stringify({ name: SELF, version: OLD, main: 'index.js' })}\n`)
   check('⑯c 源码检出 ⇒ beginSelfUpdateGuard 返回 null，且旁边没有任何 pre-update 副本',
     guard.beginSelfUpdateGuard({ packageName: SELF, packageDir: checkout }) === null && siblingsOf(checkout, '.pre-update-').length === 0,
     JSON.stringify(siblingsOf(checkout, '.pre-update-')))
@@ -674,16 +684,15 @@ const stepRowOf = (selfUpdate, step) => (Array.isArray(selfUpdate?.steps) ? self
     guard.noteGuardStep(null, 'pnpm-update') === null && guard.noteGuardStep(undefined, 'pnpm-add') === null)
 }
 
-// ── ⑰ 正控：既有 /self-update 响应字段逐项不变（静态解析路由 + 域层返回值两侧都查）──────────────
+// ── ⑰ 正控：既有 /self-update 响应字段逐项不变（静态解析视图 + 域层返回值 + 路由接线三侧都查）──────
+// 视图（14 个旧字段 + 只许新增 selfUpdate/reason）已搬进 domain/self-update-guard.js#selfUpdateView ——
+// 搬移是为了给 routes/plugins.js 腾出 600 行棘轮的余量，字段表达式逐字未改；这里同时钉住"路由确实调它"。
 {
-  const routeSrc = readFileSync(join(HERE, '..', 'lib', 'server', 'routes', 'plugins.js'), 'utf8')
-  const fnStart = routeSrc.indexOf('async function routeSelfUpdate')
-  // ⚠ 必须从"拿到 result 之后"开始找 sendJson：函数里**前面还有一次** sendJson(200, {ok:false,...}) 的早返回，
-  //   从函数头开始找会切到那一段（把 14 个字段误判成"缺"——这正是"两套断言"会犯的错，钉在这里）。
-  const callAt = routeSrc.indexOf('const result = await selfUpdateToLatest', fnStart)
-  const bodyStart = routeSrc.indexOf('sendJson(res, 200, {', callAt)
-  const bodyEnd = routeSrc.indexOf('\n      })', bodyStart)
-  const block = routeSrc.slice(bodyStart, bodyEnd).replace(/\/\/[^\n]*/gu, '').replace(/\/\*[\s\S]*?\*\//gu, '')
+  const viewSrc = readFileSync(join(HERE, '..', 'lib', 'server', 'domain', 'self-update-guard.js'), 'utf8')
+  const fnStart = viewSrc.indexOf('function selfUpdateView(')
+  const bodyStart = viewSrc.indexOf('return {', fnStart)
+  const bodyEnd = viewSrc.indexOf('\n  }', bodyStart)
+  const block = viewSrc.slice(bodyStart, bodyEnd).replace(/\/\/[^\n]*/gu, '').replace(/\/\*[\s\S]*?\*\//gu, '')
   const keys = [
     ...block.matchAll(/(?<![\w$.])([A-Za-z_$][\w$]*)\s*:/gu).map((m) => m[1]),
     // `latest,` 这种**简写属性**没有冒号 —— 漏了它会把一个真在的字段误判成"缺"（另一份实现就踩过这颗雷）
@@ -697,9 +706,11 @@ const stepRowOf = (selfUpdate, step) => (Array.isArray(selfUpdate?.steps) ? self
     missing.length === 0, missing.length === 0 ? `14 个旧字段全在：${LEGACY.join(', ')}` : `缺：${missing.join(', ')}`)
   check('⑰ ★ 只增了 selfUpdate / reason 两个字段（没有别的意外字段）',
     unexpected.length === 0, unexpected.length === 0 ? `新增：${ADDED.join(', ')}` : `意外字段：${unexpected.join(', ')}`)
-  check('⑰ 路由把域层的 selfUpdate/reason 原样转发（新字段不是摆设）',
-    block.includes('selfUpdate: result.selfUpdate') && block.includes('reason: result.reason'))
-  check('⑰ ok 只由 result.ok 决定（既有成功路径恒 true）', block.includes('ok: result.ok !== false'))
+  check('⑰ ★ ok / updated 同一事实（旧代码 updated 恒 true ⇒ 失败时会 {ok:false,updated:true} 自相矛盾）',
+    block.includes('updated: ok') && !/updated:\s*true/u.test(block) && viewSrc.slice(fnStart, bodyEnd).includes('const ok = result?.ok !== false'),
+    (block.match(/updated:[^\n,]*/u) ?? [''])[0])
+  check('⑰ 路由真的调 selfUpdateView（视图搬走后接线没断，且不再内联一份字段表）',
+    readFileSync(join(HERE, '..', 'lib', 'server', 'routes', 'plugins.js'), 'utf8').includes('sendJson(res, 200, selfUpdateView({ result, current: selfVersion, latest }))'))
 
   // 域层返回值的字段齐全性（undefined 会让路由下发时丢字段）
   const { profileDir, pkgDir } = makeSelfUpdateProfile('su-field-parity')
@@ -716,6 +727,25 @@ const stepRowOf = (selfUpdate, step) => (Array.isArray(selfUpdate?.steps) ? self
     res.method === 'pnpm-update+manual-copy' && res.spec === TARGET && res.installedVersion === TARGET
     && res.lockUpdated === true && String(res.command).includes(`add ${SELF}@`) && typeof res.note === 'string' && res.note !== '',
     JSON.stringify({ method: res.method, spec: res.spec, installed: res.installedVersion, command: String(res.command).slice(0, 60) }))
+}
+
+// ── ⑱ 收尾自检：夹具绝不能污染仓库自身（真事故：pkgDir 为空时 join('') 变相对路径，写坏插件入口）──────
+// 现场（2026-11-03）：`landSelfVersion('', …)` 把 `package.json` / `lib/index.js` 写进了**仓库根**，
+// 于是 `test-route-inventory` / `test-compat-pending-records` 报 `mod.apply is not a function`。
+// 现在：夹具写盘统一走 writeFixture（非绝对路径直接抛），这条再兜一层 —— 跑完必须还是真清单、真入口。
+{
+  const repoPkg = JSON.parse(readFileSync(join(HERE, '..', 'package.json'), 'utf8'))
+  const repoEntry = join(HERE, '..', 'lib', 'index.js')
+  const entryMod = await import(url('lib/index.js'))
+  check('⑱ ★ 仓库 package.json 没被夹具污染（真清单：包名/exports/files/dsh.bundle 都在，版本仍 0.5.100 未 bump）',
+    repoPkg.name === SELF && repoPkg.version === '0.5.100' && repoPkg.exports?.['.'] === './lib/index.js'
+    && Array.isArray(repoPkg.files) && repoPkg.dsh?.bundle?.patch === './cordis.patch.yml' && typeof repoPkg.repository?.url === 'string',
+    `${repoPkg.name}@${repoPkg.version} files=${Array.isArray(repoPkg.files) ? repoPkg.files.length : 'none'}`)
+  check('⑱ ★ 仓库 lib/index.js 没被夹具污染（能 import、导出 apply、体积正常）',
+    typeof entryMod.apply === 'function' && statSync(repoEntry).size > 2000,
+    `apply=${typeof entryMod.apply} size=${statSync(repoEntry).size}`)
+  check('⑱ 夹具写盘入口对非绝对路径直接抛（负控：`join(\'\', …)` 这种相对路径写不出去）',
+    (() => { try { writeFixture('lib/index.js', 'export const ok = 2\n'); return false } catch { return true } })())
 }
 
 const summary = `\n${fail === 0 ? 'ALL PASS' : `${fail} FAILED`}（PASS ${pass} / FAIL ${fail}）`
