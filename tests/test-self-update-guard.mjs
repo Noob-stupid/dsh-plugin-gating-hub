@@ -17,8 +17,9 @@
 //   ⑦ 幂等：连跑两次，备份不会无限堆积（最多留 1 份）
 //   ⑧ 接线：作业层（runInstallJob）在自更新校验不过时**如实失败**，且不清场、不进 AI 兜底
 import { strict as assert } from 'node:assert'
-import { mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs'
+import { copyFileSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { existsSync } from 'node:fs'
+import { execFileSync } from 'node:child_process'
 import { isAbsolute, join, dirname, basename } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { tmpdir } from 'node:os'
@@ -465,7 +466,9 @@ function pkgDirOf(profileDir) {
 
 /** 三步的桩（真机分别是 runPnpmWithFallback / pnpmInstall / curlManualInstall）；每个回调自己决定"这一步造成什么后果"。
  *  profileDir 从**桩真实收到的参数**里取（pnpm/curl 拿到的就是 profile 目录；runPnpm 从 execOpts.cwd 取），
- *  再推出 `pkgDir` —— 这样调用点不必额外传路径，也不可能写错位置。 */
+ *  再推出 `pkgDir` —— 这样调用点不必额外传路径，也不可能写错位置。
+ *  ★ 2026-11-04 起 `runPnpm` / `pnpmAdd` 这两个桩是**负控探针**：自更新通路不再调用它们，
+ *    所以 `calls` 里永远不该出现 `pnpm-update:` / `pnpm-add:`（⑫ 里直接断言）。 */
 function makeSelfUpdateSteps({ onPnpmUpdate = () => {}, onPnpmAdd = () => {}, onManualCopy = () => {} } = {}) {
   const calls = []
   return {
@@ -485,38 +488,95 @@ function makeSelfUpdateSteps({ onPnpmUpdate = () => {}, onPnpmAdd = () => {}, on
   }
 }
 
-const runSelfUpdate = async ({ profileDir, latest = TARGET, steps, selfUpdateDeps = {} }) => selfUpdateToLatest({
+const runSelfUpdate = async ({ profileDir, latest = TARGET, steps, selfUpdateDeps = {}, copyDeps = {} }) => selfUpdateToLatest({
   profileDir, latest, registries: ['https://registry.fake'], curlManualInstall: steps.deps.curlManualInstall,
-  runPnpm: steps.deps.runPnpm, pnpmAdd: steps.deps.pnpmAdd, profileName: 'desktop', selfUpdateDeps,
+  runPnpm: steps.deps.runPnpm, pnpmAdd: steps.deps.pnpmAdd, profileName: 'desktop', selfUpdateDeps, copyDeps,
 })
+
+/** 系统里有没有 tar（覆盖解包靠它；没有就响亮 SKIP，不假装 PASS）。 */
+const guardHasTar = () => {
+  try { execFileSync('tar', ['--version'], { stdio: 'ignore' }); return true } catch { return false }
+}
+const GUARD_TAR_OK = guardHasTar()
+
+/** 造一个 npm 形态的 tarball（`package/` + 目标版本的清单与入口）。 */
+function makeGuardTarball(tag) {
+  const work = join(BASE, 'tgz-src', tag)
+  const pkgDir = join(work, 'package')
+  writeFixture(join(pkgDir, 'package.json'), `${JSON.stringify({ name: SELF, version: TARGET, main: './lib/index.js' }, null, 2)}\n`)
+  writeFixture(join(pkgDir, 'lib', 'index.js'), 'export const ok = 2\n')
+  writeFixture(join(pkgDir, 'NEWONLY.md'), '# 只有新版才有的文件\n')
+  const tgz = join(BASE, 'tgz', `${tag}.tgz`)
+  mkdirSync(dirname(tgz), { recursive: true })
+  execFileSync('tar', ['-czf', tgz, '-C', work, 'package'], { stdio: 'ignore' })
+  return { tgz }
+}
+
+/** 让"覆盖那一步"真的跑起来的最少桩：元数据 → 下载（拷 tarball）→ 解包（系统 tar）。
+ *  `landVersion` 不为空时把解出来的清单改成那个版本（模拟"只铺了一半/铺错版本"）。 */
+function makeGuardCopyDeps({ tarballPath, landVersion = null, onDownload = null } = {}) {
+  const events = []
+  return {
+    events,
+    deps: {
+      env: {},
+      tmpDir: () => { const dir = join(BASE, 'work'); mkdirSync(dir, { recursive: true }); return dir },
+      fetchJson: async () => {
+        events.push('meta')
+        return { 'dist-tags': { latest: TARGET }, versions: { [TARGET]: { dist: { tarball: 'https://registry.fake/pkg.tgz', integrity: 'sha512-GUARDNEW==' } } } }
+      },
+      download: async (u, dest) => {
+        events.push('download')
+        if (typeof onDownload === 'function') onDownload()
+        copyFileSync(tarballPath, dest)
+      },
+      extract: async (tgz, dir) => {
+        events.push('extract')
+        execFileSync('tar', ['-xzf', tgz, '-C', dir], { stdio: 'ignore' })
+        if (typeof landVersion === 'string' && landVersion !== '') {
+          writeFixture(join(dir, 'package', 'package.json'), `${JSON.stringify({ name: SELF, version: landVersion, main: './lib/index.js' }, null, 2)}\n`)
+        }
+      },
+    },
+  }
+}
 
 const stepRowOf = (selfUpdate, step) => (Array.isArray(selfUpdate?.steps) ? selfUpdate.steps.find((row) => row.step === step) : undefined)
 
-// ── ⑫ 正常三步：备份 → 每步各校验一次 → 通过 → 备份清理；返回结构逐项 ──────────────────────────
-{
+// ── ⑫ 正常一步（manual-overlay）：备份 → 校验一次 → 通过 → 备份清理；返回结构逐项 ──────────────
+// ★ 2026-11-04 改法：自更新不再走 pnpm，落地的就**只有** manual-overlay 这一步（覆盖解包）。
+//   pnpm 的两个桩继续注入，但只当负控探针 —— 一次都不许被调用。
+if (GUARD_TAR_OK) {
   const { profileDir, pkgDir } = makeSelfUpdateProfile('su-normal')
   const before = snapshotDir(pkgDir)
+  const tar = makeGuardTarball('su-normal')
   let backupsDuringStep = []
   let savedDuringStep = null
-  const steps = makeSelfUpdateSteps({
-    // ① pnpm update 这一步"没装成"（真机被中断就是这个干法），由 ② 真的落地版本
-    onPnpmUpdate: () => {
+  const copy = makeGuardCopyDeps({
+    tarballPath: tar.tgz,
+    onDownload: () => {
+      // 备份必须发生在**任何覆盖动作之前**：下载这一步时备份就该已经完整躺在盘上了
       backupsDuringStep = backupsOf(pkgDir)
       savedDuringStep = backupsDuringStep.length === 1 ? snapshotDir(join(dirname(pkgDir), backupsDuringStep[0])) : null
     },
-    onPnpmAdd: ({ pkgDir: dir }) => landSelfVersion(dir, TARGET),
-    // ③ curl 顺手把 lock 也写到目标版本（真机 lockUpdated 就是这么成立的）
-    onManualCopy: ({ pkgDir: dir }) => { landSelfVersion(dir, TARGET); writeProfileLock(profileDir, TARGET) },
   })
-  const res = await runSelfUpdate({ profileDir, steps })
-  check('⑫ 更新前真的先做了备份（/self-update 通路也接管）', backupsDuringStep.length === 1, JSON.stringify(backupsDuringStep))
+  const steps = makeSelfUpdateSteps({
+    // 负控探针：自更新通路若又跑起 pnpm，这两条会被调用（⑫ 的断言会立刻红）
+    onPnpmUpdate: () => { throw new Error('桩：自更新不该再调用 pnpm update') },
+    onPnpmAdd: () => { throw new Error('桩：自更新不该再调用 pnpm add') },
+    // 兜底通道不该被走到：覆盖那一步会成功落地
+    onManualCopy: () => { throw new Error('桩：覆盖成功时不该走到 curl 通道') },
+  })
+  const res = await runSelfUpdate({ profileDir, steps, copyDeps: copy.deps })
+  check('⑫ ★ 更新前真的先做了备份（/self-update 通路也接管），且备份早于任何覆盖动作',
+    backupsDuringStep.length === 1, JSON.stringify(backupsDuringStep))
   check('⑫ 备份是**复制**出来的完整副本（内容 = 更新前那棵树）',
     savedDuringStep !== null && JSON.stringify(savedDuringStep) === JSON.stringify(before), JSON.stringify(Object.keys(savedDuringStep ?? {})))
-  check('⑫ 三步都按既有条件跑到了（pnpm update → pnpm add → curl 手铺）',
-    steps.calls.length === 3 && steps.calls[0].startsWith('pnpm-update:') && steps.calls[1].startsWith('pnpm-add:') && steps.calls[2].startsWith('manual-copy:'),
+  check('⑫ ★ 自更新**一次 pnpm 都没启动**（runPnpm / pnpmAdd 桩零调用），也没轮到 curl 兜底',
+    steps.calls.length === 0 && steps.calls.some((c) => c.startsWith('pnpm-')) === false,
     JSON.stringify(steps.calls))
-  check('⑫ ★ 每一步结束后都各校验一次（steps 三条，且点名是哪一步 / 哪一步之后目录是好的）',
-    JSON.stringify((res.selfUpdate?.steps ?? []).map((row) => [row.step, row.verified])) === JSON.stringify([['pnpm-update', false], ['pnpm-add', true], ['manual-copy', true]]),
+  check('⑫ ★ 一步到位：step 记录只有 manual-overlay 且校验通过（哪一步落地看得见）',
+    JSON.stringify((res.selfUpdate?.steps ?? []).map((row) => [row.step, row.verified])) === JSON.stringify([['manual-overlay', true]]),
     JSON.stringify(res.selfUpdate?.steps ?? null))
   check('⑫ 校验通过：verified=true / backedUp=true / healed=false',
     res.selfUpdate?.verified === true && res.selfUpdate?.backedUp === true && res.selfUpdate?.healed === false,
@@ -525,26 +585,28 @@ const stepRowOf = (selfUpdate, step) => (Array.isArray(selfUpdate?.steps) ? self
     res.ok === true && res.reason === null && res.selfUpdate?.manualCommand === null,
     JSON.stringify({ ok: res.ok, reason: res.reason }))
   check('⑫ 本次备份被清理（不留垃圾）', backupsOf(pkgDir).length === 0, JSON.stringify(backupsOf(pkgDir)))
-  check('⑫ 守卫没有改动插件目录（内容 = 三步跑完的那个状态：目标版本 + 新入口）',
-    installedVersionOf(pkgDir) === TARGET && readFileSync(join(pkgDir, 'lib', 'index.js'), 'utf8') === 'export const ok = 2\n',
+  check('⑫ 守卫没有改动插件目录（内容 = 覆盖跑完的那个状态：目标版本 + 新入口 + 新版独有文件）',
+    installedVersionOf(pkgDir) === TARGET && readFileSync(join(pkgDir, 'lib', 'index.js'), 'utf8') === 'export const ok = 2\n'
+    && existsSync(join(pkgDir, 'NEWONLY.md')),
     String(installedVersionOf(pkgDir)))
   check('⑫ 既有字段的值语义不变（method / spec 跟随落地版本 / lock / lockNote / errors）',
-    res.method === 'pnpm-update+pnpm-add+manual-copy' && res.spec === TARGET && res.installedVersion === TARGET
+    res.method === 'manual-overlay' && res.spec === TARGET && res.installedVersion === TARGET
     && res.lockVersion === TARGET && res.lockUpdated === true && res.lockNote === null && Array.isArray(res.errors) && res.errors.length === 0,
     JSON.stringify({ method: res.method, spec: res.spec, installed: res.installedVersion, lock: res.lockVersion, lockUpdated: res.lockUpdated }))
 }
 
-// ── ⑬ pnpm 那步把目录掏空（真机现场）⇒ 后两步也救不回来 ⇒ 收尾自愈，绝不报成功 ────────────────
+// ── ⑬ 通道把目录掏空（真机现场）⇒ 救不回来 ⇒ 收尾自愈，绝不报成功 ────────────────────────────
+// ★ 2026-11-04 改法：不再由 pnpm 掏空（它已经不参与自更新），改成**既有 curl 兜底通道**
+//   "先删再铺、删到一半被打断"那个现场 —— 与真机损伤形态一致（package.json / lib 都没了）。
 {
   const { profileDir, pkgDir } = makeSelfUpdateProfile('su-gutted')
   const steps = makeSelfUpdateSteps({
-    // 现场：pnpm 先删旧目录再解包，删到一半被打断 ⇒ 只剩 scripts/ 与 SECURITY.md
-    onPnpmUpdate: () => {
-      rmSync(join(pkgDir, 'package.json'), { force: true })
-      rmSync(join(pkgDir, 'lib'), { recursive: true, force: true })
+    // 覆盖那一步拿不到 tarball（离线）⇒ 记 false；兜底的 curl 把目录删了一半就失败
+    onManualCopy: ({ pkgDir: dir }) => {
+      rmSync(join(dir, 'package.json'), { force: true })
+      rmSync(join(dir, 'lib'), { recursive: true, force: true })
+      throw new Error('桩：curl 也拿不到 tarball（404）')
     },
-    onPnpmAdd: () => { throw new Error('桩：pnpm add 拒绝（EPERM: operation not permitted）') },
-    onManualCopy: () => { throw new Error('桩：curl 也拿不到 tarball（404）') },
   })
   const res = await runSelfUpdate({ profileDir, steps })
   check('⑬ ★ 触发自愈：verified=false / healed=true / selfHeal.restored=true',
@@ -557,8 +619,9 @@ const stepRowOf = (selfUpdate, step) => (Array.isArray(selfUpdate?.steps) ? self
   check('⑬ ★ 绝不报成功：ok=false、reason 说清"没有 package.json"这类现场',
     res.ok === false && String(res.reason ?? '').includes('自更新没有完成') && String(res.reason ?? '').includes('package.json'),
     String(res.reason ?? '').slice(0, 160))
-  check('⑬ step 记录里哪一步坏的查得到（pnpm-update / pnpm-add / manual-copy 全 false）',
-    (res.selfUpdate?.steps ?? []).length === 3 && (res.selfUpdate?.steps ?? []).every((row) => row.verified === false),
+  check('⑬ step 记录里哪一步坏的查得到（manual-overlay / manual-copy 全 false，且都点名版本）',
+    (res.selfUpdate?.steps ?? []).length === 2 && (res.selfUpdate?.steps ?? []).every((row) => row.verified === false)
+    && (res.selfUpdate?.steps ?? []).map((row) => row.step).join(',') === 'manual-overlay,manual-copy',
     JSON.stringify(res.selfUpdate?.steps ?? null))
   check('⑬ 失败那次的备份**留着**（唯一的旧版，别一起清掉）',
     backupsOf(pkgDir).length === 1 && res.selfUpdate?.backupPath === join(dirname(pkgDir), backupsOf(pkgDir)[0]), JSON.stringify(backupsOf(pkgDir)))
@@ -567,34 +630,34 @@ const stepRowOf = (selfUpdate, step) => (Array.isArray(selfUpdate?.steps) ? self
   check('⑬ 失败文案在 errors 与 note 里都看得见（面板/接口任一路径都读不成"成功"）',
     (res.errors ?? []).some((e) => String(e).includes('自更新没有完成')) && String(res.note ?? '').includes('自更新没有完成'),
     JSON.stringify(res.errors)?.slice(0, 120))
+  check('⑬ 这条失败路径同样零 pnpm（掏空目录的只有兜底通道，包管理器一次没启动）',
+    steps.calls.filter((c) => c.startsWith('pnpm-')).length === 0, JSON.stringify(steps.calls))
 }
 
-// ── ⑭ curl 手铺只铺一半 ⇒ 校验不过 ⇒ 自愈（step 记录指出坏在 manual-copy）─────────────────────
+// ── ⑭ 覆盖那一步铺错了版本 ⇒ step 记录点名 manual-overlay 坏在哪；curl 兜底补上 ──────────────────
 {
-  const { profileDir, pkgDir } = makeSelfUpdateProfile('su-curl-half')
+  const { profileDir, pkgDir } = makeSelfUpdateProfile('su-oversized-half')
+  const tar = makeGuardTarball('su-half')
+  // 覆盖"只铺了一半"：解出来的清单还是旧版本 ⇒ 这一步必须记 false（但文件确实被覆盖过）
+  const copy = makeGuardCopyDeps({ tarballPath: tar.tgz, landVersion: OLD })
   const steps = makeSelfUpdateSteps({
-    // ① 真的把版本装上了（这一步之后目录可用且版本对 ⇒ 该 step ok=true）
-    onPnpmUpdate: () => landSelfVersion(pkgDir, TARGET),
-    // ② 不会跑：readInstalledVersion === latest ⇒ 既有条件跳过（既有行为一字未改，这里也钉住）
-    onPnpmAdd: () => { throw new Error('桩：pnpm add 不该被走到（版本已是 latest）') },
-    // ③ lock 还是旧的 ⇒ 走手铺；手铺"只铺了一半"：清单丢了 version、入口文件也没了
-    onManualCopy: () => {
-      writeFixture(join(pkgDir, 'package.json'), `${JSON.stringify({ name: SELF, main: './lib/index.js' })}\n`)
-      rmSync(join(pkgDir, 'lib'), { recursive: true, force: true })
-    },
+    // 既有 curl 兜底把它补对 + 把 lock 写到目标版本（真机 lockUpdated 就是这么成立的）
+    onManualCopy: ({ pkgDir: dir }) => { landSelfVersion(dir, TARGET); writeProfileLock(profileDir, TARGET) },
   })
-  const res = await runSelfUpdate({ profileDir, steps })
-  check('⑭ ★ step 记录指出坏在 manual-copy 那一步（前一步是好的）',
-    stepRowOf(res.selfUpdate, 'pnpm-update')?.verified === true && stepRowOf(res.selfUpdate, 'manual-copy')?.verified === false
-    && String(stepRowOf(res.selfUpdate, 'manual-copy')?.reason ?? '').includes('version'),
+  const res = await runSelfUpdate({ profileDir, steps, copyDeps: copy.deps })
+  check('⑭ ★ step 记录指出坏在 manual-overlay 那一步（点名"版本不对"），后一步是好的',
+    stepRowOf(res.selfUpdate, 'manual-overlay')?.verified === false
+    && String(stepRowOf(res.selfUpdate, 'manual-overlay')?.reason ?? '').includes('版本')
+    && stepRowOf(res.selfUpdate, 'manual-copy')?.verified === true,
     JSON.stringify(res.selfUpdate?.steps ?? null))
-  check('⑭ 既有步骤条件不变：版本已是 latest 时 pnpm add 那一步照旧被跳过',
-    !steps.calls.some((c) => c.startsWith('pnpm-add:')), JSON.stringify(steps.calls))
-  check('⑭ ★ 校验不过 ⇒ 自愈：healed=true、版本回到更新前',
-    res.selfUpdate?.healed === true && installedVersionOf(pkgDir) === OLD,
-    JSON.stringify({ healed: res.selfUpdate?.healed, version: installedVersionOf(pkgDir) }))
-  check('⑭ 不报成功（ok=false + 非空 reason）', res.ok === false && typeof res.reason === 'string' && res.reason !== '')
-  check('⑭ 残缺目录被改名保留（可核对半棵树长什么样）', brokensOf(pkgDir).length === 1, JSON.stringify(brokensOf(pkgDir)))
+  check('⑭ 既有步骤条件不变：覆盖没成才轮到 curl 兜底，且它成功了（method=manual-copy，只调一次）',
+    res.method === 'manual-copy' && steps.calls.filter((c) => c.startsWith('manual-copy:')).length === 1, JSON.stringify({ method: res.method, calls: steps.calls }))
+  check('⑭ 半铺之后兜底补上 ⇒ 如实报成功（ok=true / healed=false / 版本=目标）',
+    res.ok === true && res.selfUpdate?.healed === false && installedVersionOf(pkgDir) === TARGET,
+    JSON.stringify({ ok: res.ok, healed: res.selfUpdate?.healed, version: installedVersionOf(pkgDir) }))
+  check('⑭ 覆盖失败的原因也留着（copy.reason 点名版本，不静默）',
+    String(res.copy?.reason ?? '').includes('版本') && res.copy?.channel === 'curl', JSON.stringify(res.copy))
+  check('⑭ 全程零 pnpm', steps.calls.filter((c) => c.startsWith('pnpm-')).length === 0, JSON.stringify(steps.calls))
 }
 
 // ── ⑮ 三步全失败 ⇒ 如实报 + manualCommand 是真能跑的绝对路径命令 ────────────────────────────────
@@ -613,8 +676,10 @@ const stepRowOf = (selfUpdate, step) => (Array.isArray(selfUpdate?.steps) ? self
   check('⑮a ★ 三步全失败 ⇒ 如实报失败（ok=false + reason 点名目标版本）',
     res.ok === false && String(res.reason ?? '').includes('自更新没有完成') && String(res.reason ?? '').includes(TARGET),
     String(res.reason ?? '').slice(0, 180))
-  check('⑮a 通道错误一条不少地留着（既有 errors 语义不变）',
-    (res.errors ?? []).filter((e) => /失败/u.test(String(e))).length >= 3, JSON.stringify(res.errors)?.slice(0, 160))
+  check('⑮a 通道错误如实留着（覆盖失败 + 兜底失败都在 errors 里，不静默）',
+    (res.errors ?? []).filter((e) => /失败/u.test(String(e))).length >= 1
+    && (String(res.copy?.reason ?? '') !== '' || String(res.tarball?.reason ?? '') !== ''),
+    JSON.stringify(res.errors)?.slice(0, 160))
   check('⑮a ★ manualCommand 是"备份 → 插件落点"的恢复命令，路径全绝对，且备份真的还在盘上（粘贴即用）',
     /^(robocopy|cp)\s/u.test(command) && quoted.length >= 2 && quoted.every((p) => /^[A-Za-z]:[\\/]/u.test(p) || p.startsWith('/'))
     && quoted.includes(pkgDir) && typeof selfUpdate.backupPath === 'string' && quoted.includes(selfUpdate.backupPath)
@@ -726,7 +791,7 @@ const stepRowOf = (selfUpdate, step) => (Array.isArray(selfUpdate?.steps) ? self
   check('⑰ ★ 域层返回的既有字段逐项都有值（undefined 等于下发时丢字段）', undef.length === 0,
     undef.length === 0 ? `${DOMAIN_FIELDS.join(', ')} 全有值` : `缺值：${undef.join(', ')}`)
   check('⑰ 既有字段的值语义不变（method / spec 跟随落地版本 / lock / command / note）',
-    res.method === 'pnpm-update+manual-copy' && res.spec === TARGET && res.installedVersion === TARGET
+    res.method === 'manual-copy' && String(res.method).includes('pnpm') === false && res.spec === TARGET && res.installedVersion === TARGET
     && res.lockUpdated === true && String(res.command).includes(`add ${SELF}@`) && typeof res.note === 'string' && res.note !== '',
     JSON.stringify({ method: res.method, spec: res.spec, installed: res.installedVersion, command: String(res.command).slice(0, 60) }))
 }

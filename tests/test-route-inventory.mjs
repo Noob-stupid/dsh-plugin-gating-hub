@@ -722,8 +722,13 @@ for (const [method, path, body, wantStatus, wantKeys] of SCHEMAS) {
 
 // ── 自更新必须写进 lockfile（2026-09-20 用户实测缺陷）─────────────────────────────
 // 现象：一键更新只把文件铺进 node_modules、不写 pnpm-lock.yaml，之后任何 pnpm 操作都会把它还原成
-// lock 里钉住的旧版本（用户侧看到"升级成功、重启后还是旧版"）。下面把"包管理器优先 + 回读核实 +
-// 兜底必带警告"三条口径钉死。
+// lock 里钉住的旧版本（用户侧看到"升级成功、重启后还是旧版"）。
+// ★ 2026-11-04 改法（用户拍板「自更新彻底不走 pnpm」）：先 pnpm update / pnpm add 那两步已经删掉，
+//   现在的口径是「下载 tarball → 只覆盖解包 → 回读核实 → 补 lock」；本段钉死这四条：
+//   ① 自更新一次 pnpm 都不调用（注入的 runPnpm / pnpmAdd 桩是负控探针）
+//   ② 覆盖落地后回读核实通过（lock 与安装版本都是新版、method=manual-overlay）
+//   ③ 既有 curl 兜底通道落地后**也会**把 lock 补齐（不再只是"重启后会被还原"）
+//   ④ 两条腿都没成时如实报 lockUpdated=false + 可复制的 dsh 命令
 {
   const { isRegistryRange, lockVersion, selfUpdateToLatest } = await import('../lib/server/domain/selfupdate.js')
   const PKG = '@noob-stupid/dsh-plugin-console'
@@ -767,37 +772,57 @@ for (const [method, path, body, wantStatus, wantKeys] of SCHEMAS) {
     writeFileSync(join(fix, 'pnpm-lock.yaml'), lockText(v), 'utf8')
     writeFileSync(join(nmPkg, 'package.json'), JSON.stringify({ name: PKG, version: v }), 'utf8')
   }
+  // 覆盖那条腿的桩：元数据（带 integrity）+ 下载（真写一个非空文件）+ 解包（直接造 package/，不依赖系统 tar）
+  const overlayDeps = (version) => ({
+    env: {},
+    tmpDir: () => { const dir = join(ROOT, '.testdir', 'selfupdate-work'); mkdirSync(dir, { recursive: true }); return dir },
+    fetchJson: async () => ({ 'dist-tags': { latest: version }, versions: { [version]: { dist: { tarball: 'https://registry.example/pkg.tgz', integrity: 'sha512-new==' } } } }),
+    download: async (u, dest) => { writeFileSync(dest, 'tgz'); return undefined },
+    extract: async (tgz, dir) => {
+      const pkgDir = join(dir, 'package')
+      mkdirSync(join(pkgDir, 'lib'), { recursive: true })
+      writeFileSync(join(pkgDir, 'package.json'), JSON.stringify({ name: PKG, version, main: './lib/index.js' }), 'utf8')
+      writeFileSync(join(pkgDir, 'lib', 'index.js'), 'export const ok = 2\n', 'utf8')
+    },
+  })
+  // 负控探针：自更新若又跑起 pnpm，这两条会抛（用例立刻红）
+  const noPnpm = () => { throw new Error('自更新不该再调用 pnpm') }
   const okResult = await selfUpdateToLatest({
     profileDir: fix, latest: '0.3.55', registries: ['https://registry.example'],
-    curlManualInstall: async () => { throw new Error('不该走到手铺兜底') },
-    runPnpm: async (args, opts) => { check('pnpm update 被调用且 cwd 指向 profile', args[0] === 'update' && opts.execOpts.cwd === fix); bump('0.3.55') },
-    pnpmAdd: async () => { throw new Error('不该走到 pnpm add') },
+    curlManualInstall: async () => { throw new Error('覆盖成功时不该走到 curl 兜底') },
+    runPnpm: noPnpm, pnpmAdd: noPnpm,
+    copyDeps: overlayDeps('0.3.55'),
   })
-  check('★ 走 pnpm update 后回读核实通过（lock 与安装版本都是新版）',
-    okResult.method === 'pnpm-update' && okResult.lockUpdated === true && okResult.lockVersion === '0.3.55' && okResult.lockNote === null,
+  check('★ 覆盖解包落地后回读核实通过（lock 与安装版本都是新版、method=manual-overlay）',
+    okResult.method === 'manual-overlay' && okResult.lockUpdated === true && okResult.lockVersion === '0.3.55' && okResult.lockNote === null,
     JSON.stringify(okResult))
+  check('★ 自更新一次 pnpm 都没调用（负控探针没被触发；两个 pnpm 桩只会抛）',
+    okResult.ok === true && okResult.tarball?.ok === true && okResult.copy?.channel === 'overlay', JSON.stringify({ ok: okResult.ok, copy: okResult.copy?.channel }))
 
+  // 既有 curl 兜底通道：覆盖拿不到 tarball 时接管 —— 它同样不走 pnpm，而且落地后**也**会把 lock 补齐
   writeFileSync(join(fix, 'pnpm-lock.yaml'), lockText('0.3.47'), 'utf8')
   writeFileSync(join(nmPkg, 'package.json'), JSON.stringify({ name: PKG, version: '0.3.47' }), 'utf8')
-  const addResult = await selfUpdateToLatest({
+  const fallbackOk = await selfUpdateToLatest({
     profileDir: fix, latest: '0.3.55', registries: ['https://registry.example'],
-    curlManualInstall: async () => { throw new Error('不该走到手铺兜底') },
-    runPnpm: async () => {},
-    pnpmAdd: async (dir, spec) => { check('pnpm add 收到 <包>@<版本>', spec === `${PKG}@0.3.55`, spec); bump('0.3.55') },
+    curlManualInstall: async () => { bump('0.3.55'); return { version: '0.3.55' } },
+    runPnpm: noPnpm, pnpmAdd: noPnpm,
+    copyDeps: { env: {} }, // 没网：元数据拿不到 ⇒ 覆盖没得可用 ⇒ 走既有 curl 通道
   })
-  check('★ update 无效时改用 pnpm add，同样回读核实通过',
-    addResult.method === 'pnpm-update+pnpm-add' && addResult.lockUpdated === true, JSON.stringify(addResult))
+  check('★ 既有 curl 兜底通道落地后也把 lock 补齐（lockUpdated=true、method=manual-copy、不再只是"会被还原"）',
+    String(fallbackOk.method).includes('manual-copy') && fallbackOk.lockUpdated === true && fallbackOk.lockVersion === '0.3.55',
+    JSON.stringify({ method: fallbackOk.method, lockUpdated: fallbackOk.lockUpdated, lockVersion: fallbackOk.lockVersion, lockNote: fallbackOk.lockNote }))
 
+  // 两条腿都没成 ⇒ 如实报（lock 仍是旧版），并给出可复制的 dsh 命令
   writeFileSync(join(fix, 'pnpm-lock.yaml'), lockText('0.3.47'), 'utf8')
   writeFileSync(join(nmPkg, 'package.json'), JSON.stringify({ name: PKG, version: '0.3.47' }), 'utf8')
   const fallback = await selfUpdateToLatest({
     profileDir: fix, latest: '0.3.55', registries: ['https://registry.example'],
-    curlManualInstall: async () => { writeFileSync(join(nmPkg, 'package.json'), JSON.stringify({ name: PKG, version: '0.3.55' }), 'utf8'); return { version: '0.3.55' } },
-    runPnpm: async () => { throw new Error('模拟 pnpm update 失败') },
-    pnpmAdd: async () => { throw new Error('模拟 pnpm add 失败') },
+    curlManualInstall: async () => { throw new Error('模拟 curl 通道也失败') },
+    runPnpm: noPnpm, pnpmAdd: noPnpm,
+    copyDeps: { env: {} },
   })
-  check('★ 兜底手铺文件时如实报 lockUpdated=false + 说明会被 pnpm 还原',
-    fallback.method.includes('manual-copy') && fallback.lockUpdated === false
+  check('★ 覆盖与兜底都没成时如实报 lockUpdated=false + 说明会被 pnpm 还原',
+    fallback.lockUpdated === false && fallback.installedVersion === '0.3.47'
     && typeof fallback.lockNote === 'string' && fallback.lockNote.includes('未写入 pnpm-lock.yaml') && fallback.lockNote.includes('0.3.47'),
     String(fallback.lockNote))
   check('兜底响应给出可复制的 dsh 命令', fallback.command.includes('dsh plugin --profile') && fallback.command.includes(`${PKG}@0.3.55`), fallback.command)
