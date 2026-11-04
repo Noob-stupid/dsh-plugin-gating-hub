@@ -252,8 +252,12 @@ const jobOf = (id, name) => ({ id, repo: '', packageName: name, source: 'github'
     get: (key) => (key === 'installChannels' ? ch : null),
     loader: { entries: () => [{ id: 'include', options: { name: 'cordis:include', group: true, config: { path: pathToFileURL(join(profileDir, 'cordis.yml')).href } } }] },
   }
-  const holder = lock.withInstallLock({ profileDir, packageName: 'pkg-wired' }, async () => await new Promise((resolve) => setTimeout(resolve, 200)))
-  await new Promise((resolve) => setTimeout(resolve, 30))
+  // 持锁窗口从 200ms 放宽到 800ms（2026-11-04 加法，**判据一个字没改**）：
+  // 这一条原本是 `holder` 持锁 200ms、30ms 后起作业 —— 机器一忙（本仓模块图又变大了：自更新手铺兜底
+  // 多了一个 domain 模块要编译）就会在作业走到取锁之前把窗口耗完，于是作业"正常装上了"，⑧ 变成随机红。
+  // 这里只把"锁一定还被别人持着"这个**前置条件**钉牢，断言仍然是"拿不到锁就必须如实失败、且一次 pnpm 都不跑"。
+  const holder = lock.withInstallLock({ profileDir, packageName: 'pkg-wired' }, async () => await new Promise((resolve) => setTimeout(resolve, 800)))
+  await new Promise((resolve) => setTimeout(resolve, 50))
   const job = {
     id: 'wired', repo: '', source: 'github', packageName: 'pkg-wired', status: 'installing', stage: 'preparing',
     update: true, version: null, kind: 'plugin', candidateTotal: 1,

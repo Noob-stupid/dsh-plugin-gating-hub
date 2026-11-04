@@ -699,12 +699,14 @@ const stepRowOf = (selfUpdate, step) => (Array.isArray(selfUpdate?.steps) ? self
     ...block.matchAll(/^\s*([A-Za-z_$][\w$]*),\s*$/gmu).map((m) => m[1]),
   ]
   const LEGACY = ['ok', 'current', 'latest', 'updated', 'version', 'method', 'spec', 'installedVersion', 'lockVersion', 'lockUpdated', 'lockNote', 'command', 'note', 'errors']
-  const ADDED = ['selfUpdate', 'reason']
+  // 2026-11-04 加法（手铺兜底）：copy / tarball / lockPatch 三个**结构化现场**字段。只增不减 ——
+  // 这份清单必须逐项列出，任何"意外字段"仍然判红（见下一条断言）。
+  const ADDED = ['selfUpdate', 'reason', 'copy', 'tarball', 'lockPatch']
   const missing = LEGACY.filter((k) => !keys.includes(k))
   const unexpected = keys.filter((k) => !LEGACY.includes(k) && !ADDED.includes(k))
   check('⑰ ★ 既有 /self-update 返回字段一个都没少（14 项逐项对照）',
     missing.length === 0, missing.length === 0 ? `14 个旧字段全在：${LEGACY.join(', ')}` : `缺：${missing.join(', ')}`)
-  check('⑰ ★ 只增了 selfUpdate / reason 两个字段（没有别的意外字段）',
+  check('⑰ ★ 只增了 selfUpdate / reason / copy / tarball / lockPatch 五个字段（没有别的意外字段）',
     unexpected.length === 0, unexpected.length === 0 ? `新增：${ADDED.join(', ')}` : `意外字段：${unexpected.join(', ')}`)
   check('⑰ ★ ok / updated 同一事实（旧代码 updated 恒 true ⇒ 失败时会 {ok:false,updated:true} 自相矛盾）',
     block.includes('updated: ok') && !/updated:\s*true/u.test(block) && viewSrc.slice(fnStart, bodyEnd).includes('const ok = result?.ok !== false'),
