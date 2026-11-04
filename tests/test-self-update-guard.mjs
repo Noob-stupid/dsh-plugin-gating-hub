@@ -739,8 +739,8 @@ const stepRowOf = (selfUpdate, step) => (Array.isArray(selfUpdate?.steps) ? self
   const repoPkg = JSON.parse(readFileSync(join(HERE, '..', 'package.json'), 'utf8'))
   const repoEntry = join(HERE, '..', 'lib', 'index.js')
   const entryMod = await import(url('lib/index.js'))
-  check('⑱ ★ 仓库 package.json 没被夹具污染（真清单：包名/exports/files/dsh.bundle 都在，版本仍 0.5.100 未 bump）',
-    repoPkg.name === SELF && repoPkg.version === '0.5.100' && repoPkg.exports?.['.'] === './lib/index.js'
+  check('⑱ ★ 仓库 package.json 没被夹具污染（真清单：包名/exports/files/dsh.bundle 都在，版本仍是合法语义版本（未被夹具改成假版本））',
+    repoPkg.name === SELF && /^\d+\.\d+\.\d+/u.test(String(repoPkg.version)) && repoPkg.version !== '0.0.0-fixture' && repoPkg.exports?.['.'] === './lib/index.js'
     && Array.isArray(repoPkg.files) && repoPkg.dsh?.bundle?.patch === './cordis.patch.yml' && typeof repoPkg.repository?.url === 'string',
     `${repoPkg.name}@${repoPkg.version} files=${Array.isArray(repoPkg.files) ? repoPkg.files.length : 'none'}`)
   check('⑱ ★ 仓库 lib/index.js 没被夹具污染（能 import、导出 apply、体积正常）',
