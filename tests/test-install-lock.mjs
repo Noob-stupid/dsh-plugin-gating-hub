@@ -206,6 +206,28 @@ const jobOf = (id, name) => ({ id, repo: '', packageName: name, source: 'github'
   check('⑥ ★ 可重入：同一异步上下文里再拿同一把锁直接放行（不会自己锁死）', inner === 'inner:true', String(inner))
 }
 
+// ── ⑥b 排队上限只约束"排队"，**不**能掐断"已经轮到自己、正在装"的那一次 ────────────────
+// 真实形状：等 9 分钟才轮到，再装 8 分钟 —— 旧写法把计时器从**调用时**一直挂着，会在第 10 分钟
+// 把已经拿到锁、正在安装的作业从后面掐断（那才是最坏的结果：报失败，而 pnpm 还在跑）。
+{
+  lock.__resetInstallLocks()
+  const holder = lock.withInstallLock({ profileDir: BASE, packageName: 'pkg-timer' }, async () => {
+    await new Promise((resolve) => setTimeout(resolve, 80))
+  })
+  let done = false
+  let threw = null
+  const second = lock.withInstallLock({ profileDir: BASE, packageName: 'pkg-timer', waitMs: 120 }, async () => {
+    // 排队 ~80ms 后拿到锁，然后自己干 120ms ⇒ 从调用算约 200ms > waitMs(120)
+    await new Promise((resolve) => setTimeout(resolve, 120))
+    done = true
+    return 'ok'
+  }).catch((error) => { threw = error; return 'threw' })
+  await holder
+  const result = await second
+  check('⑥b ★ 排队上限不会掐断"已经拿到锁、正在装"的作业（定时器在拿到锁时就清掉）',
+    threw === null && result === 'ok' && done === true, `${result} / ${String(threw?.code ?? '')}`)
+}
+
 // ── ⑦ 边界：空包名/空目录直接放行；锁键归一 ──────────────────────────────────────────
 {
   lock.__resetInstallLocks()
