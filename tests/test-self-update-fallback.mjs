@@ -447,12 +447,24 @@ if (TAR_OK) {
   }
   walk(join(HERE, '..', 'lib', 'server'))
   const importersOf = (needle) => serverFiles.filter((p) => readFileSync(p, 'utf8').includes(needle)).map((p) => p.replace(join(HERE, '..'), '').replace(/\\/gu, '/'))
+  // ★ 2026-11-04 更新（只收紧、不放宽）：0.5.107 起多了一个**允许的**引用方 —— domain/install-self-overlay.js
+  //   （真机：详情页那颗「更新」走的是 `POST /install`，0.5.105 的"自更新不走 pnpm"根本没被触发）。
+  //   允许名单是**逐字枚举**的（不是"至少一个"）：多出任何第三个引用方这条断言立刻红；
+  //   并且下面还会钉住"通用安装通道（install-job.js / install-channels.js）自己不许直接 import 它"——
+  //   覆盖解包仍然只能经由"目标 === 本插件自己"那道闸被调用。
+  const ALLOWED_COPY_IMPORTERS = ['/lib/server/domain/install-self-overlay.js', '/lib/server/domain/selfupdate.js']
   const copyImporters = importersOf("selfupdate-copy.js'")
-  check('Ⓗ 静态接线：selfupdate-copy.js 只被 domain/selfupdate.js 引用（别的通道一个字节都不经过它）',
-    copyImporters.length === 1 && copyImporters[0] === '/lib/server/domain/selfupdate.js', JSON.stringify(copyImporters))
+  check('Ⓗ 静态接线：selfupdate-copy.js 只被 selfupdate.js 与 install-self-overlay.js 引用（别的通道一个字节都不经过它）',
+    JSON.stringify(copyImporters.slice().sort()) === JSON.stringify(ALLOWED_COPY_IMPORTERS.slice().sort()), JSON.stringify(copyImporters))
+  const genericInstallers = ['/lib/server/domain/install-job.js', '/lib/server/domain/install-channels.js']
+  check('Ⓗ ★ 通用安装通道自己**没有**直接 import 覆盖解包（必须经"目标 === 本插件自己"那道闸）',
+    copyImporters.every((p) => !genericInstallers.includes(p)), JSON.stringify(copyImporters))
   const callSites = serverFiles.filter((p) => readFileSync(p, 'utf8').includes('await overlaySelfUpdateTarball(')).map((p) => p.replace(join(HERE, '..'), '').replace(/\\/gu, '/'))
-  check('Ⓗ 静态接线：覆盖解包只在 selfupdate.js 里被调用（不是通用安装通道的一部分）',
-    callSites.length === 1 && callSites[0] === '/lib/server/domain/selfupdate.js', JSON.stringify(callSites))
+  check('Ⓗ 静态接线：覆盖解包只在 selfupdate.js / install-self-overlay.js 里被调用（不是通用安装通道的一部分）',
+    JSON.stringify(callSites.slice().sort()) === JSON.stringify(ALLOWED_COPY_IMPORTERS.slice().sort()), JSON.stringify(callSites))
+  const overlayGate = readFileSync(join(HERE, '..', 'lib', 'server', 'domain', 'install-self-overlay.js'), 'utf8')
+  check('Ⓗ ★ 覆盖解包那条路的入口先过 isSelfUpdate 判据（不是任何包都能走覆盖式）',
+    overlayGate.includes("if (isSelfUpdate(packageName, deps) !== true) return null"), 'install-self-overlay.js#runSelfOverlayInstall')
 
   // 运行时：/install 走别的包 ⇒ pnpm 腿照旧被调用（与改动前一致），profile 的 lock / 清单一个字节都不动
   const profileDir = join(BASE, 'other-pkg', 'profiles', 'desktop')
