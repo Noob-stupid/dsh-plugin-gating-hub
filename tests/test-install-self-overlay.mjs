@@ -439,8 +439,8 @@ if (TAR_OK) {
 // ══════════════════════════════════════════════════════════════════════════════════════════════
 {
   const pkg = JSON.parse(readFileSync(join(ROOT, 'package.json'), 'utf8'))
-  check('⑧ ★ 仓库 package.json 没被夹具污染（真包名 / 真版本 0.5.106）',
-    pkg.name === SELF && /^\d+\.\d+\.\d+$/u.test(pkg.version) && pkg.version === '0.5.106', `${pkg.name}@${pkg.version}`)
+  check('⑧ ★ 仓库 package.json 没被夹具污染（真包名 / 合法语义版本（未被夹具改成假版本））',
+    pkg.name === SELF && /^\d+\.\d+\.\d+$/u.test(pkg.version) && pkg.version !== '0.0.0-fixture', `${pkg.name}@${pkg.version}`)
   const indexPath = join(ROOT, 'lib', 'index.js')
   const indexStat = statSync(indexPath)
   check('⑧ ★ 仓库 lib/index.js 没被夹具污染（体积正常、不是几百字节的假入口）',
