@@ -606,6 +606,9 @@ jobs:
       - name: Self-update fallback (manual overlay + lock repair)
         run: node tests/test-self-update-fallback.mjs
 
+      - name: Install self overlay (no package manager for self)
+        run: node tests/test-install-self-overlay.mjs
+
       # 白屏防呆：把面板里能点的控件挨个点一遍，任何一次渲染抛错就红。
       #   2026-10-27 那次 ReferenceError（用了没声明）就是这类：旧套件只走到「面板打开」，仍然全绿。
       - name: Render sweep (nothing throws while clicking around)
