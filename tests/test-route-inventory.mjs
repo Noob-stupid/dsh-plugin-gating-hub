@@ -110,6 +110,9 @@ const ROUTES = [
   // 安全启动材料（2026-09-29 加法 D3，0.5.32）：白名单动作 list / restore-last-good /
   // disable-suspects / mark-good（自动禁用的回滚本钱由它兑现）
   '/safe-boot',
+  // ★ 加法（用户 2026-11-04 第 2 项）：功能包里的 [自更新] 开关（toggle / set-enabled / check / check-now）。
+  //   只对控制台自己生效；判据全在 domain/self-auto-update.js。
+  '/self-auto-update',
 ]
 // 分层后路由可能写在 lib/server/routes/**（表项）或 index.js（内联分支）—— 两种写法都要认
 const walkSrc = (dir) => readdirSync(dir, { withFileTypes: true }).flatMap((e) => {
@@ -131,7 +134,7 @@ const SCHEMAS = [
   //   用户看到的是"插件静默消失"）。契约变化 ⇒ 这里必须同步，正是本套存在的意义。
   // 0.5.84：新增 lockAutofix（清单↔lock 口径不一致的后台自动对账状态：在跑/已修/失败原因/冷却）。
   //   同样是契约变化 ⇒ 清单同步。注意它**不阻塞** /state（派发后立即返回，见 domain/lock-autofix.js）。
-  ['GET', '/plugin-console/state', undefined, 200, ['compat', 'compatGate', 'compatPending', 'components', 'entries', 'framework', 'gating', 'github', 'health', 'host', 'installJobs', 'lockAutofix', 'ok', 'patch', 'patchHeal', 'patchPath', 'pendingRestart', 'recentFailures', 'rollback', 'selfVersion', 'skippedBundles']],
+  ['GET', '/plugin-console/state', undefined, 200, ['compat', 'compatGate', 'compatPending', 'components', 'entries', 'framework', 'gating', 'github', 'health', 'host', 'installJobs', 'lockAutofix', 'ok', 'patch', 'patchHeal', 'patchPath', 'pendingRestart', 'recentFailures', 'rollback', 'selfAutoUpdate', 'selfVersion', 'skippedBundles']],
   ['GET', '/plugin-console/sources', undefined, 200, ['giteeStatus', 'ok', 'sources']],
   // link 开发式安装清单（0.5.54）：纯只读；items 每项含 target/ready/垫片/持久化
   ['GET', '/plugin-console/links', undefined, 200, ['count', 'error', 'items', 'ok', 'readyCount']],
@@ -180,6 +183,9 @@ const SCHEMAS = [
   // POST 写：**domain 层校验失败**（note 不是字符串）⇒ 400，但**仍回整份状态**（面板据此重绘，不必再拉一次）。
   // 注：不传 action 的那条走的是"缺参数"提前返回（只有 ok/error），不在这张表里钉。
   ['POST', '/plugin-console/annotations', { action: 'note', packageName: 'not-installed-pkg', note: 123 }, 400, ['action', 'backup', 'changed', 'deleted', 'error', 'file', 'group', 'groups', 'index', 'key', 'movedFrom', 'ok', 'plugins', 'removedFrom', 'stats']],
+  // ★ 加法（用户 2026-11-04 第 2 项）：[自更新] 的写入口。**不认识的 action ⇒ 400 + 可读原因**
+  //   （绝不 200 假装做过什么）；顺便钉住"入参校验先于任何副作用"这条契约。
+  ['POST', '/plugin-console/self-auto-update', { action: 'not-an-action' }, 400, ['error', 'ok']],
 ]
 for (const [method, path, body, wantStatus, wantKeys] of SCHEMAS) {
   const r = await call(method, path, body)
