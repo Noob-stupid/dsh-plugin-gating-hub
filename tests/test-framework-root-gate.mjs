@@ -202,7 +202,7 @@ const makeTree = (name, opts) => makeTreeAt(join(SANDBOX, name), opts)
 const PROBE_DIR = join(SANDBOX, 'probe')
 const PROBE_BIN = join(PROBE_DIR, 'bin.js')
 mkdirSync(PROBE_DIR, { recursive: true })
-writeFileSync(PROBE_BIN, `import { existsSync, mkdirSync, rmSync, statSync, writeFileSync } from 'node:fs'
+writeFileSync(PROBE_BIN, `import { existsSync, mkdirSync, rmdirSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
@@ -214,7 +214,12 @@ try {
   if (process.platform !== 'win32') Object.defineProperty(process, 'platform', { value: 'win32', configurable: true, writable: true })
   const profile = process.env.PROBE_PROFILE
   // 第二道保险先落地：同名目录 ⇒ 路由里的 writeFile(ps1) 必然失败 ⇒ 不会走到 execFile(schtasks)
+  // 2026-11-06（回归稳定性）：先清掉**同 PID 的旧残留**——上一轮跑挂时留下的同名目录会让 mkdir 失败，
+  // 整段探针退化成 SKIP；而 ⑤-B/⑤-C 两个对照用例依赖 ⑤-A 真跑出来的回滚点（同一 HOME 下的
+  // dsh-package-backup），于是一起假红。PID 是探针自己的，这里的残留只可能是我们自己造的。
   const ps1 = join(tmpdir(), 'fw-upgrade-' + process.pid + '.ps1')
+  try { rmSync(ps1, { recursive: true, force: true }) } catch {}
+  try { rmdirSync(ps1) } catch {} // Windows 上 rmSync 对**空目录**实测会留着（不报错也不删）⇒ 再补一刀，否则 PID 复用仍然假红
   let blocked = false
   try { mkdirSync(ps1); blocked = true } catch {}
   if (!blocked) { process.stdout.write(JSON.stringify({ skipped: 'ps1-blocker-unavailable', ps1 })); process.exit(0) }
@@ -253,6 +258,7 @@ try {
   try { out.ps1StillDir = statSync(ps1).isDirectory() } catch { out.ps1StillDir = false }
   try { out.ps1FileAppeared = existsSync(ps1) && !statSync(ps1).isDirectory() } catch { out.ps1FileAppeared = false }
   try { rmSync(ps1, { recursive: true, force: true }) } catch {}
+  try { rmdirSync(ps1) } catch {} // 同上：空目录 rmSync 删不掉 ⇒ 每次都留一个 %TEMP% 空壳，攒久了就撞 PID
 } catch (error) {
   out.error = String(error && error.stack ? error.stack : error)
 }

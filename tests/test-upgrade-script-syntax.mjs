@@ -10,6 +10,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url'
 import { execFileSync } from 'node:child_process'
 import { createRequire } from 'node:module'
 import { relaunchInvoke, relaunchLauncherSource, relaunchProbeHelpers, relaunchVerdictBlock, relaunchVerdictHelperSource } from '../lib/server/domain/framework-relaunch.js'
+import { frameworkInstallStepText, frameworkInstallSetupBlock, frameworkVersionVerifyBlock } from '../lib/server/domain/framework-install-command.js'
 
 const ROOT = dirname(fileURLToPath(import.meta.url))
 // 统一归一化行尾再抽函数：本机 core.autocrlf=true，工作区文件是 CRLF，
@@ -93,6 +94,10 @@ const scope = {
   target: '0.1.5-rc.1',
   current: '0.1.2-rc.1',
   fwRoot: 'C:\\tmp dir\\$weird\\node_modules',
+  // 0.5.110：安装块按布局生成（domain/framework-install-command.js）。默认按 pnpm 布局生成 ——
+  // 那一份必须与改动前逐字相同；hoisted 那一份在文件末尾单独再生成一次（见「扁平布局」段）。
+  fwGate: { ok: true, layout: 'pnpm', reason: null },
+  npmCli: 'C:\\nodejs\\node_modules\\npm\\bin\\npm-cli.js',
   dshDir: 'C:\\tmp dir\\$weird\\node_modules\\.pnpm\\@deepseek-ai+dsh@0.1.2-rc.1_x\\node_modules\\@deepseek-ai\\dsh',
   fwCheckpoint: { dest: 'C:\\Users\\user\\.dsh\\plugin-console\\framework-backups\\0.1.2-rc.1\\fw-tree\\1789022284780' },
   backupDir: 'C:\\Users\\user\\.dsh\\plugin-console\\framework-backups\\0.1.2-rc.1',
@@ -186,6 +191,20 @@ if (makePrelude !== null) {
   scope.relaunchVerdictBlock = relaunchVerdictBlock
   const sample = relaunchVerdictBlock({ ps: realPs, nodePath: scope.nodePath, helperPath: 'C:\\Users\\user\\.dsh\\plugin-console\\fw-relaunch-verdict.mjs', port: 3080 })
   check('能从真实实现生成 relaunchVerdictBlock（拉起失败后的回滚判定块）', typeof sample === 'string' && sample.includes("SetState 'ready'"))
+}
+// 0.5.110：安装块（cwd + 安装命令）与装后核对块按布局生成 —— 同样必须挂**真实实现**进 scope，
+// 否则会被兜底桩成 `<stub:…>`（字符串）→ 生成物里混进非 PowerShell 文本、语法校验假红/假绿。
+{
+  scope.frameworkInstallSetupBlock = frameworkInstallSetupBlock
+  scope.frameworkVersionVerifyBlock = frameworkVersionVerifyBlock
+  scope.frameworkInstallStepText = frameworkInstallStepText
+  const pnpmSetup = frameworkInstallSetupBlock({ layout: 'pnpm', fwRoot: scope.fwRoot, target: scope.target, nodePath: scope.nodePath, corepackJs: scope.corepackJs, npmCli: scope.npmCli, ps: realPs })
+  check('能从真实实现生成 frameworkInstallSetupBlock（pnpm 通道 = 原有的 Set-Location + pnpm 命令）',
+    typeof pnpmSetup === 'string' && pnpmSetup.includes('Set-Location -Path') && pnpmSetup.includes('pnpm install @deepseek-ai/dsh@0.1.5-rc.1')
+    && !pnpmSetup.includes('npm-cli.js'))
+  check('能从真实实现生成 frameworkVersionVerifyBlock（pnpm 通道的消息里不出现 npm 通道名）',
+    frameworkVersionVerifyBlock({ layout: 'pnpm', fwRoot: scope.fwRoot, target: scope.target, ps: realPs }).includes("Log ('pnpm 退出码 0")
+    && !frameworkVersionVerifyBlock({ layout: 'pnpm', fwRoot: scope.fwRoot, target: scope.target, ps: realPs }).includes("Log ('npm 退出码 0"))
 }
 
 // 按**唯一**特征挑选块（升级脚本含 Install-Framework；一键回滚脚本含「一键回滚脚本启动」——
@@ -325,6 +344,53 @@ for (const [name, expr] of blocks) {
     }
   }
   rmSync(file, { force: true })
+}
+
+// ── 0.5.110：扁平（hoisted）布局的安装通道也要能生成，而且**同样是合法 PowerShell** ──────────────
+// 真机遗留问题（2026-11-06）：门闸放宽后 layout 变成 hoisted，但安装命令仍是 corepack pnpm install、
+// cwd 指向没有 package.json 的那层 node_modules ⇒ ERR_PNPM_NO_PKG_MANIFEST / 混装，升不到 0.2.2-rc.1。
+// 现在安装块按布局生成；这里把 hoisted 那一份**真生成**一遍，交给 PowerShell 解析器（只解析不执行），
+// 并钉住「走 npm + --prefix 指到含 package.json 的那一层 + 装后核对消息点明 npm」。
+{
+  const upgradeExpr = (blocks.find(([n]) => n === '升级脚本') ?? ['', ''])[1]
+  scope.fwGate = { ok: true, layout: 'hoisted', reason: null }
+  let hoistedScript = ''
+  let genError = null
+  try { hoistedScript = build(upgradeExpr) } catch (error) { genError = error }
+  check('hoisted 布局：升级脚本能生成', genError === null && hoistedScript.length > 200, String(genError?.message ?? `${hoistedScript.length} 字符`))
+  const prefix = dirname(scope.fwRoot) // …\node_modules 的父目录 = 放 package.json 的那一层
+  // 只看「安装命令行」与「Set-Location 那一行」：脚本后面还有 profile 侧的官方配套包更新
+  // （那一步仍然用 corepack pnpm，跟框架安装布局无关，不能拿 corepack 有没有出现当判据）
+  const cmdLine = hoistedScript.split(/\r?\n/u).find((l) => l.trimStart().startsWith('$cmdLine = ')) ?? ''
+  const cwdLine = hoistedScript.split(/\r?\n/u).find((l) => l.trimStart().startsWith('Set-Location -Path')) ?? ''
+  check('hoisted 布局：安装命令走 npm（bin/npm-cli.js）且 --prefix 指向含 package.json 的那一层（不是 node_modules）',
+    cmdLine.includes(`install @deepseek-ai/dsh@${scope.target} --prefix "${prefix}"`)
+    && cmdLine.includes('npm-cli.js') && !cmdLine.includes('corepack'), cmdLine.slice(0, 180))
+  check('hoisted 布局：cwd 也挪到那一层（Set-Location 到父目录，不再指向那层 node_modules）',
+    cwdLine.includes('weird') && !cwdLine.includes('node_modules'), cwdLine.slice(0, 120))
+  check('hoisted 布局：脚本里先 Log「安装通道：npm … 安装前缀 …」（换通道不许静默）',
+    hoistedScript.includes('安装通道：npm') && hoistedScript.includes(prefix))
+  check('hoisted 布局：装后核对消息点明 npm 通道 + 目标版本（失败一眼看出是哪条通道）',
+    hoistedScript.includes("Log ('npm 退出码 0 但顶层可见版本未更新") && hoistedScript.includes(`$v -ne '${scope.target}'`))
+  check('hoisted 布局：没有把 JS 注释 // 写进 PowerShell（PS 会把 // 当命令执行）',
+    !hoistedScript.split(/\r?\n/u).some((l) => l.trim().startsWith('//')),
+    hoistedScript.split(/\r?\n/u).find((l) => l.trim().startsWith('//'))?.slice(0, 90) ?? '（无）')
+  const hoistedShell = findPowerShell()
+  if (hoistedShell === null) {
+    console.log('SKIP hoisted 布局：PowerShell 语法校验（本机无 powershell.exe / pwsh）')
+  } else {
+    const hFile = join(OUT, 'gen-upgrade-hoisted.ps1')
+    writeFileSync(hFile, `\uFEFF${hoistedScript}`, 'utf8')
+    try {
+      execFileSync(hoistedShell, ['-NoProfile', '-Command', `$t = Get-Content -Raw -Encoding UTF8 '${hFile}'; $null = [scriptblock]::Create($t); 'PARSE OK'`], { encoding: 'utf8', timeout: 60000 })
+      check('hoisted 布局：PowerShell 语法校验', true, hoistedShell)
+    } catch (error) {
+      const msg = String(error.stdout ?? '') + String(error.stderr ?? '') + String(error.message ?? '')
+      check('hoisted 布局：PowerShell 语法校验', false, msg.split('\n').filter((l) => l.trim() !== '').slice(-3).join(' | ').slice(0, 300))
+    }
+    rmSync(hFile, { force: true })
+  }
+  scope.fwGate = { ok: true, layout: 'pnpm', reason: null } // 复位：后面的真机行为验证段假定既有（pnpm）布局
 }
 
 // ── 真机行为验证：把脚本里的拉起实现抽出来真跑（不是只看语法）────────────────
