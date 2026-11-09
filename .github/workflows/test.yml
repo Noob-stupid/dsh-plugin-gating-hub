@@ -599,6 +599,13 @@ jobs:
       - name: Framework stale-rename repair
         run: node tests/test-framework-stale-repair.mjs
 
+      # 「框架安装根」判据放宽（2026-11-06 真机：门永远过不去 —— 没有任何目录同时有 .pnpm 与 @deepseek-ai/dsh）：
+      #   · `.pnpm` 从必要条件降级为布局标签（pnpm / hoisted），bin.js 才是硬判据
+      #   · 没放宽的边界逐条钉住：缺 bin.js ⇒ 拒（真机 profiles/web 形状）· 没候选 ⇒ 拒 · 文案如实分因
+      #   · 下游兼容：无 .pnpm 的树里 repairStaleRenameResidue / checkpointFrameworkTree 不抛错、跳过要记步骤
+      - name: Framework install-root gate (hoisted layout allowed)
+        run: node tests/test-framework-root-gate.mjs
+
       # issue #26：带盘符的序列项曾被误报「未闭合引号」⇒ safeBoot 写盘闸门全程空转
       - name: Patch YAML check (issue 26 regression)
         run: node tests/test-patch-yaml-issue26.mjs
