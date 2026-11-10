@@ -98,6 +98,9 @@ const scope = {
   // 那一份必须与改动前逐字相同；hoisted 那一份在文件末尾单独再生成一次（见「扁平布局」段）。
   fwGate: { ok: true, layout: 'pnpm', reason: null },
   npmCli: 'C:\\nodejs\\node_modules\\npm\\bin\\npm-cli.js',
+  // 2026-11-09：扁平布局的 npm CLI 由 resolveNpmCli 解析（node 自带 → PATH → corepack）后传给安装块。
+  // 这里按 ①（node 自带）给值，末尾「扁平布局」段的断言因此仍能看到 npm-cli.js、且看不到 corepack。
+  npm: { kind: 'node-bundled', command: 'C:\\nodejs\\node.exe C:\\nodejs\\node_modules\\npm\\bin\\npm-cli.js', note: 'node-bundled（C:\\nodejs\\node_modules\\npm\\bin\\npm-cli.js）' },
   dshDir: 'C:\\tmp dir\\$weird\\node_modules\\.pnpm\\@deepseek-ai+dsh@0.1.2-rc.1_x\\node_modules\\@deepseek-ai\\dsh',
   fwCheckpoint: { dest: 'C:\\Users\\user\\.dsh\\plugin-console\\framework-backups\\0.1.2-rc.1\\fw-tree\\1789022284780' },
   backupDir: 'C:\\Users\\user\\.dsh\\plugin-console\\framework-backups\\0.1.2-rc.1',

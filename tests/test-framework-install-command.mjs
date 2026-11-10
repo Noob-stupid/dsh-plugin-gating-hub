@@ -21,10 +21,28 @@
 //   ⑤ 静态接线 + 行数棘轮：路由只在非 pnpm 时推通道步骤、旧的内联 pnpm 命令已抽走、
 //      framework-upgrade.js 不超 700（本次 699 → 696，净减）、新模块 ≤600 且只 import node: 内置
 //
-// 变异（我已实跑，见提交说明）：把 hoisted 也走 pnpm ⇒ ②/④ 必须红；去掉版本核对 ⇒ ③ 必须红。
+// ── 2026-11-09 发版前实测补的两段（上一单 164aba5 的硬伤）──────────────────────────────────
+//   **DSH 桌面端运行时那套 node 里根本没有 npm**（…\dependencies\node\node_modules\ 只有 README.txt），
+//   而 164aba5 把扁平布局的 CLI 写死成 `dirname(process.execPath)/node_modules/npm/bin/npm-cli.js`
+//   ⇒ 扁平用户会「过了门闸、到安装那一步才因为找不到 npm 失败」= 最差的失败位置。
+//   本机实测可用来源：PATH 上的 npm.cmd（D:\nvm4w\nodejs\npm.cmd）、corepack.cmd（`corepack npm` 能跑）。
+//   ②b npm 来源解析（resolveNpmCli，exists/which 注入）：① node 自带（含 <root>/bin/ 父目录兜底）
+//      → ② PATH npm → ③ corepack npm → ④ none；②③ 命中时命令**不再拼 nodePath**，① 命中时逐字不变；
+//      安装日志与升级步骤都写明实际来源（换 npm 不许静默）。pnpm 分支传了 npm 也一个字符都不变。
+//   ②c preflight 门（frameworkUpgradeCliBlocker）：扁平布局解析不到 npm ⇒ **在 preflight 就拒**
+//      （文案点名三类来源）；pnpm 的判据/文案/顺序逐字不变。④ 段还有一条端到端用例：
+//      子进程探针里桩 resolveNpmCli=none ⇒ 200 + upgraded:false + 不出升级脚本。
+//   ②d/②e 真机取数：真实 process.execPath + 真实 PATH 解析必须非 none；**病根现场**再用
+//      DSH 桌面端运行时那套 node 解析一次（可用 DSH_RUNTIME_NODE 指向），必须是 ② 或 ③。
+//      探测不到就显式 SKIP 并写清理由，不假装 PASS。
+//
+// 变异（我已实跑，见提交说明）：
+//   · 把 hoisted 也走 pnpm ⇒ ②/④ 必须红；去掉版本核对 ⇒ ③ 必须红；
+//   · 回退链砍成只剩 ① ⇒ ②b(②③)/②e/升级步骤来源 必须红（8 条，含 ③ 与病根现场）；
+//   · 拆掉 preflight 的 npm 门 ⇒ ②c + ④ 端到端必须红（4 条）。
 import { execFileSync } from 'node:child_process'
-import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
-import { dirname, join, resolve } from 'node:path'
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { basename, delimiter, dirname, join, resolve } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 
 const ROOT = dirname(fileURLToPath(import.meta.url))
@@ -45,7 +63,7 @@ const check = (label, cond, extra) => {
 const {
   frameworkInstallChannel, frameworkInstallCommand, frameworkInstallHome, frameworkInstallPackageJson,
   frameworkInstallReadback, frameworkInstallSetupBlock, frameworkInstallStepText, frameworkInstallVerdict,
-  frameworkVersionVerifyBlock,
+  frameworkUpgradeCliBlocker, frameworkVersionVerifyBlock, resolveNpmCli,
 } = await import('../lib/server/domain/framework-install-command.js')
 
 // 与路由里同一个 ps()：JSON.stringify → 反斜杠还原 → `"` 双引号字面量（$ / 反引号转义）
@@ -65,6 +83,11 @@ const PNPM_ROOT = join('D:', '.dsh', 'profiles', 'web', 'node_modules')
 
 /** 改动前的 pnpm 命令（原样抄自 673f67d 附近的 templates/`lines` 数组，硬编码当回归基线）。 */
 const OLD_PNPM_CMD_LINE = `    $cmdLine = 'start "DSH-Upgrade" cmd /c "title DSH-Upgrade && ${NODE_PATH} ${COREPACK_JS} pnpm install @deepseek-ai/dsh@${TARGET} --force --config.dangerouslyAllowAllBuilds=true --registry ' + $reg + ' & echo DSH-DONE:%ERRORLEVEL% > ' + $marker + '"'`
+/** 两条通道共用的收尾（`--registry ' + $reg + ' & echo DSH-DONE:%ERRORLEVEL% > ' + $marker + '"`）：
+ *  从旧 pnpm 命令上量取（`--registry` 之后到行尾），避免在断言里手写那段带引号的尾巴。 */
+const MARKER_TAIL = OLD_PNPM_CMD_LINE.slice(OLD_PNPM_CMD_LINE.lastIndexOf('--registry'))
+/** 取一条命令的「marker 收尾」部分（与 MARKER_TAIL 同口径）。 */
+const markerTailOf = (cmd) => cmd.slice(cmd.lastIndexOf('--registry'))
 
 // ══ ① 布局 → 通道 / 前缀 ═══════════════════════════════════════════════════════════
 {
@@ -103,6 +126,192 @@ const OLD_PNPM_CMD_LINE = `    $cmdLine = 'start "DSH-Upgrade" cmd /c "title DSH
     [pnpmCmd, npmCmd].every((c) => c.endsWith(`' + $reg + ' & echo DSH-DONE:%ERRORLEVEL% > ' + $marker + '"'`)))
   check('② 命令行仍然是「独立窗口 + 标题 DSH-Upgrade」的 start 形态（黑框进度观感不变）',
     [pnpmCmd, npmCmd].every((c) => c.includes('start "DSH-Upgrade" cmd /c "title DSH-Upgrade && ')))
+}
+
+// ══ ②b npm 从哪来：node 自带 → PATH → corepack → none（2026-11-09 真机实测补的硬伤）══════════
+// 上一单（164aba5）把扁平布局的 CLI 写死成 `dirname(process.execPath)/node_modules/npm/bin/npm-cli.js`，
+// 而 **DSH 桌面端运行时那套 node 里根本没有 npm**（node_modules 里只有 README.txt）⇒
+// 扁平用户会「过了门闸、到安装那一步才因为找不到 npm 失败」= 最差的失败位置。
+// 本机实测可用来源：PATH 上的 npm.cmd（D:\nvm4w\nodejs\npm.cmd）、corepack.cmd（`corepack npm` 能跑）。
+// 期望：本机命中 ② 或 ③，**不是** ④。
+{
+  const WIN = process.platform === 'win32'
+  const NPM_ON_PATH = WIN ? 'npm.cmd' : 'npm'
+  const COREPACK_ON_PATH = WIN ? 'corepack.cmd' : 'corepack'
+  const existsIn = (list) => (p) => list.includes(p)
+  const whichFrom = (map) => (name) => (Object.prototype.hasOwnProperty.call(map, name) ? map[name] : null)
+
+  // ① node 自带（与改动前同一个入口 bin/npm-cli.js）
+  let whichCalled = 0
+  const bundled = resolveNpmCli({ nodePath: NODE_PATH, exists: existsIn([NPM_CLI]), which: (n) => { whichCalled += 1; return null } })
+  check('②b ① 命中 node 自带：kind=node-bundled，命令 = `<node> <npm-cli.js>`（与改动前逐字相同，且不查 PATH）',
+    bundled.kind === 'node-bundled' && bundled.command === `${NODE_PATH} ${NPM_CLI}` && whichCalled === 0,
+    `kind=${bundled.kind} cmd=${bundled.command} whichCalls=${whichCalled}`)
+
+  // ① 的第二候选：execPath 位于 <root>/bin/ 下 ⇒ 再试其父目录（运行时 node 就长这样）
+  const rtNode = join('D:', 'rt', 'node', 'bin', 'node.exe')
+  const rtCli = join('D:', 'rt', 'node', 'node_modules', 'npm', 'bin', 'npm-cli.js')
+  const bundledBin = resolveNpmCli({ nodePath: rtNode, exists: existsIn([rtCli]), which: () => null })
+  check('②b ① execPath 在 <root>/bin/ 下 ⇒ 退到父目录去找 node 自带 npm（<root>/node_modules/npm/…）',
+    bundledBin.kind === 'node-bundled' && bundledBin.command === `${rtNode} ${rtCli}` && !bundledBin.command.includes(join('bin', 'node_modules')),
+    `cmd=${bundledBin.command}`)
+
+  // ② PATH 上的 npm（真机就命中这一条）
+  const pathNpm = join('D:', 'nvm4w', 'nodejs', NPM_ON_PATH)
+  const fromPath = resolveNpmCli({ nodePath: NODE_PATH, exists: () => false, which: whichFrom({ [NPM_ON_PATH]: pathNpm }) })
+  check('②b ② 命中 PATH npm：kind=path，命令就是 npm 自己的入口（**不含 nodePath**）',
+    fromPath.kind === 'path' && fromPath.command === pathNpm && !fromPath.command.includes(NODE_PATH),
+    `kind=${fromPath.kind} cmd=${fromPath.command}`)
+
+  // ③ corepack npm
+  const corepackOnPath = join('D:', 'nvm4w', 'nodejs', COREPACK_ON_PATH)
+  const fromCorepack = resolveNpmCli({ nodePath: NODE_PATH, exists: () => false, which: whichFrom({ [COREPACK_ON_PATH]: corepackOnPath }) })
+  check('②b ③ 命中 corepack：kind=corepack，命令 = `<corepack> npm`（同样不含 nodePath）',
+    fromCorepack.kind === 'corepack' && fromCorepack.command === `${corepackOnPath} npm` && !fromCorepack.command.includes(NODE_PATH),
+    `kind=${fromCorepack.kind} cmd=${fromCorepack.command}`)
+
+  // ④ 一个都没有
+  const noNpm = resolveNpmCli({ nodePath: NODE_PATH, exists: () => false, which: () => null })
+  check('②b ④ 全都没有 ⇒ kind=none、command=null，note 如实列出三类来源（不许瞎指一个）',
+    noNpm.kind === 'none' && noNpm.command === null
+    && noNpm.note.includes('node 自带') && noNpm.note.includes('PATH') && noNpm.note.includes('corepack'),
+    `kind=${noNpm.kind} note=${noNpm.note}`)
+
+  // ── 命令模板：②③ 命中时**不再拼 nodePath**；① 命中时保持现状 ──
+  const cmdWith = (npm) => frameworkInstallCommand({ layout: 'hoisted', fwRoot: FLAT_ROOT, target: TARGET, nodePath: NODE_PATH, corepackJs: COREPACK_JS, npm })
+  const legacyCmd = frameworkInstallCommand({ layout: 'hoisted', fwRoot: FLAT_ROOT, target: TARGET, nodePath: NODE_PATH, corepackJs: COREPACK_JS, npmCli: NPM_CLI })
+  check('②b ① 命中时生成物与改动前**逐字相同**（CLI 串就是 `<node> <npm-cli.js>`）', cmdWith(bundled) === legacyCmd,
+    cmdWith(bundled) === legacyCmd ? undefined : `\n  实际：${cmdWith(bundled)}\n  期望：${legacyCmd}`)
+
+  const cmdPath = cmdWith(fromPath)
+  check('②b ② 命中时命令走 PATH 的 npm.cmd 且**不再拼 nodePath**（拼了就是那个不存在的路径）',
+    cmdPath.includes(`${pathNpm} install @deepseek-ai/dsh@${TARGET}`) && !cmdPath.includes(NODE_PATH) && !cmdPath.includes('npm-cli.js'),
+    cmdPath.slice(0, 170))
+  const cmdCorepack = cmdWith(fromCorepack)
+  check('②b ③ 命中时命令走 `corepack npm install`（同样不拼 nodePath、不含 corepack 的 js 实体）',
+    cmdCorepack.includes(`${corepackOnPath} npm install @deepseek-ai/dsh@${TARGET}`) && !cmdCorepack.includes(NODE_PATH),
+    cmdCorepack.slice(0, 170))
+  check('②b 换 npm 来源只换 CLI 串：前缀 / 精确版本 / 无审计无募捐 / marker 收尾全都不变',
+    [cmdPath, cmdCorepack].every((c) => c.includes(`--prefix "${dirname(FLAT_ROOT)}"`) && c.includes('--no-audit') && c.includes('--no-fund')
+      && c.includes('--save-exact') && markerTailOf(c) === MARKER_TAIL), MARKER_TAIL)
+
+  // ── pnpm 通道：传进来的 npm 解析结果必须被彻底忽略（一个字符都不许变）──
+  check('②b pnpm 命令：即使传了 npm 解析结果，仍与改动前**逐字相同**（npm 不许漏进 pnpm）',
+    frameworkInstallCommand({ layout: 'pnpm', fwRoot: PNPM_ROOT, target: TARGET, nodePath: NODE_PATH, corepackJs: COREPACK_JS, npm: fromPath }) === OLD_PNPM_CMD_LINE)
+  check('②b pnpm 整块：即使传了 npm 解析结果，仍与不传时逐字相同（Set-Location + 旧命令）',
+    frameworkInstallSetupBlock({ layout: 'pnpm', fwRoot: PNPM_ROOT, target: TARGET, nodePath: NODE_PATH, corepackJs: COREPACK_JS, npm: fromPath, ps })
+    === frameworkInstallSetupBlock({ layout: 'pnpm', fwRoot: PNPM_ROOT, target: TARGET, nodePath: NODE_PATH, corepackJs: COREPACK_JS, npmCli: NPM_CLI, ps }))
+
+  // ── 步骤/日志必须写明**实际使用的 npm 来源**（node-bundled / path / corepack）──
+  const blockPath = frameworkInstallSetupBlock({ layout: 'hoisted', fwRoot: FLAT_ROOT, target: TARGET, nodePath: NODE_PATH, corepackJs: COREPACK_JS, npm: fromPath, ps })
+  check('②b 安装日志写明 npm 来源（path）+ 具体路径（换 npm 不许静默）',
+    blockPath.includes('npm 来源：') && blockPath.includes('path（') && blockPath.includes(pathNpm), blockPath.split(/\r?\n/u)[1]?.slice(0, 190))
+  const blockCorepack = frameworkInstallSetupBlock({ layout: 'hoisted', fwRoot: FLAT_ROOT, target: TARGET, nodePath: NODE_PATH, corepackJs: COREPACK_JS, npm: fromCorepack, ps })
+  check('②b 安装日志写明 npm 来源（corepack）+ corepack 路径',
+    blockCorepack.includes('npm 来源：') && blockCorepack.includes('corepack（') && blockCorepack.includes(corepackOnPath))
+  check('②b 安装日志里的 CLI 串同样不拼 nodePath', !blockPath.includes(`${NODE_PATH} ${pathNpm}`))
+  const stepPath = frameworkInstallStepText({ layout: 'hoisted', fwRoot: FLAT_ROOT, target: TARGET, npm: fromPath, deps: { readVersion: () => CURRENT } })
+  check('②b 升级步骤里也写明 npm 来源（与安装日志同一个解析结果，不是两套说法）',
+    stepPath.includes('npm 来源：path（') && stepPath.includes(pathNpm) && stepPath.includes('框架安装通道：npm'), stepPath.slice(0, 200))
+
+  // ── ②d 真机取数：本机真实 nodePath + 真实 PATH 解析一次 ──
+  // 独立实现一遍 PATH 扫描（不用被测模块的 which）：这样「SKIP 的理由」也是独立证据。
+  const scanPath = (name) => {
+    const exts = WIN ? ['', '.cmd', '.exe', '.bat', '.com'] : ['']
+    for (const dir of String(process.env.PATH ?? '').split(delimiter).filter((d) => d !== '')) {
+      for (const ext of exts) {
+        if (ext !== '' && name.toLowerCase().endsWith(ext)) continue
+        const p = join(dir, name + ext)
+        if (existsSync(p)) return p
+      }
+    }
+    return null
+  }
+  const realNodeDir = dirname(process.execPath)
+  const bundledProbe = [join(realNodeDir, 'node_modules', 'npm', 'bin', 'npm-cli.js')]
+  if (basename(realNodeDir).toLowerCase() === 'bin') bundledProbe.push(join(dirname(realNodeDir), 'node_modules', 'npm', 'bin', 'npm-cli.js'))
+  const realExpected = bundledProbe.find((p) => existsSync(p)) !== undefined ? 'node-bundled'
+    : (scanPath(NPM_ON_PATH) !== null ? 'path' : (scanPath(COREPACK_ON_PATH) !== null ? 'corepack' : null))
+  const real = resolveNpmCli({ nodePath: process.execPath })
+  if (realExpected === null) {
+    // 显式 SKIP（并给出理由与证据），绝不假装 PASS：本机确实一个 npm 来源都没有
+    console.log(`SKIP ②d 真机取数：本机探测不到任何 npm 来源（node 自带 ${bundledProbe.join(' / ')}、PATH 上的 ${NPM_ON_PATH}、${COREPACK_ON_PATH} 都不存在）`
+      + ' ⇒ 解析结果如实为 none，无从断言「非 none」；这一条在装了 npm/corepack 的机器上才会真跑')
+    check('②d SKIP 的前提成立：本机确实解析成 none（不是代码偷偷报了个错）', real.kind === 'none', `kind=${real.kind} note=${real.note}`)
+  } else {
+    check(`②d 真机取数：真实 nodePath + 真实 PATH ⇒ kind=${realExpected}（**不是** none）`,
+      real.kind === realExpected && real.kind !== 'none', `kind=${real.kind} note=${real.note}`)
+    // 「解析到的实体真实存在」比「字符串长得对」更强：不许凭空拼一个不存在的路径（上一单的病根）
+    const resolvedEntity = real.kind === 'node-bundled'
+      ? real.command.slice(process.execPath.length + 1)
+      : (real.kind === 'corepack' ? real.command.slice(0, real.command.length - ' npm'.length) : real.command)
+    check('②d 真机取数：解析到的 npm / corepack 可执行文件**真实存在于磁盘**', existsSync(resolvedEntity), resolvedEntity)
+    check('②d 真机取数：只有 ① 才该带 nodePath；②③ 命中时命令里不出现 nodePath',
+      real.kind === 'node-bundled' ? real.command.startsWith(process.execPath) : !real.command.includes(process.execPath),
+      `kind=${real.kind} cmd=${real.command}`)
+    check('②d 真机取数：拿去生成命令时不会拼出那个不存在的 npm-cli.js',
+      !cmdWith(real).includes(join('bin', 'node_modules', 'npm', 'bin', 'npm-cli.js')), cmdWith(real).slice(0, 170))
+  }
+
+  // ── ②e 病根现场：**DSH 桌面端运行时那套 node**（正是「node_modules 里只有 README.txt」的那一套）──
+  // 用它当 execPath 解析，必须落到 ② 或 ③；落到 none（没修）或 node-bundled（还在拼死路径）都算没修好。
+  const DSH_RUNTIME_NODE = process.env.DSH_RUNTIME_NODE ?? join('D:', 'dsh-desktop', 'resources', 'runtime', 'primary-runtime', 'dependencies', 'node', 'bin', 'node.exe')
+  if (!existsSync(DSH_RUNTIME_NODE)) {
+    console.log(`SKIP ②e 病根现场取数：本机没有 DSH 桌面端运行时 node（${DSH_RUNTIME_NODE} 不存在；可用 DSH_RUNTIME_NODE 指向它）`
+      + ' —— 没有那个现场就复现不了病根，这一条不假装通过')
+  } else {
+    const rtDir = dirname(DSH_RUNTIME_NODE)
+    const rtNpmCandidates = [join(rtDir, 'node_modules', 'npm', 'bin', 'npm-cli.js'), join(dirname(rtDir), 'node_modules', 'npm', 'bin', 'npm-cli.js')]
+    const rtResolved = resolveNpmCli({ nodePath: DSH_RUNTIME_NODE })
+    check('②e 病根现场：运行时那套 node 里确实没有 npm-cli.js（上一单写死的正是这个不存在的路径）',
+      rtNpmCandidates.every((p) => !existsSync(p)), rtNpmCandidates.join(' / '))
+    check('②e 病根现场取数：用运行时 nodePath 解析 ⇒ 找到可用 npm（kind ≠ none；若只有 node 自带，那必须是**真存在**的那个）',
+      rtResolved.kind !== 'none' && (rtResolved.kind !== 'node-bundled' || rtNpmCandidates.some((p) => existsSync(p))),
+      `kind=${rtResolved.kind} note=${rtResolved.note}`)
+    check('②e 病根现场：生成的命令不再是「运行时 node + 不存在的 npm-cli.js」',
+      !cmdWith(rtResolved).includes(`${DSH_RUNTIME_NODE} ${rtNpmCandidates[0]}`) && !cmdWith(rtResolved).includes(join('bin', 'node_modules', 'npm', 'bin', 'npm-cli.js')),
+      cmdWith(rtResolved).slice(0, 170))
+  }
+}
+
+// ══ ②c preflight 门：找不到 npm ⇒ **在 preflight 就失败**（不许留到安装步骤才炸）══════════════
+{
+  const binOk = join('C:', 'nodejs', 'node_modules', '@deepseek-ai', 'dsh', 'lib', 'bin.js')
+  const nothing = () => false
+  const everything = () => true
+  const npmNone = { kind: 'none', command: null, note: 'none（已尝试 node 自带 / PATH / corepack）' }
+  const OLD_REFUSAL = (what) => `升级已取消：无法定位 ${what}（框架安装可能不完整），服务保持运行；请先修复框架再升级`
+
+  const refuse = frameworkUpgradeCliBlocker({ layout: 'hoisted', binPath: binOk, corepackJs: COREPACK_JS, npm: npmNone, exists: everything })
+  check('②c 扁平布局 + npm 解析为 none ⇒ preflight 拒绝，且文案如实写出三类来源 + 为什么需要 npm',
+    typeof refuse === 'string' && refuse.includes('本机找不到 npm（已尝试：node 自带 / PATH / corepack）')
+    && refuse.includes('扁平（hoisted）布局升级需要 npm') && refuse.startsWith('升级已取消'), refuse ?? '(null)')
+  check('②c 扁平布局：npm 命中就放行', frameworkUpgradeCliBlocker({ layout: 'hoisted', binPath: binOk, corepackJs: COREPACK_JS, npm: { kind: 'path', command: 'npm.cmd' }, exists: everything }) === null)
+  check('②c 扁平布局：corepack 缺失**不再是**扁平布局的拒绝理由（那不是它需要的东西）',
+    frameworkUpgradeCliBlocker({ layout: 'hoisted', binPath: binOk, corepackJs: join('C:', 'nope', 'corepack.js'), npm: { kind: 'path', command: 'npm.cmd' }, exists: (p) => p === binOk }) === null)
+  check('②c 扁平布局：dsh bin.js 缺失优先拒绝（框架没装全先修），文案沿用旧口径',
+    frameworkUpgradeCliBlocker({ layout: 'hoisted', binPath: join('C:', 'nope', 'bin.js'), corepackJs: COREPACK_JS, npm: npmNone, exists: nothing }) === OLD_REFUSAL('dsh bin.js'))
+
+  // pnpm 通道：判据与文案**逐字不变**（这是本单硬要求）
+  check('②c pnpm 布局：corepack 缺失的文案与改动前**逐字相同**（pnpm 通道零变化）',
+    frameworkUpgradeCliBlocker({ layout: 'pnpm', binPath: binOk, corepackJs: join('C:', 'nope', 'corepack.js'), npm: npmNone, exists: (p) => p === binOk }) === OLD_REFUSAL('corepack（pnpm 通道）'))
+  check('②c pnpm 布局：corepack 在、dsh bin.js 缺 ⇒ 旧文案 dsh bin.js（顺序也没变）',
+    frameworkUpgradeCliBlocker({ layout: 'pnpm', binPath: join('C:', 'nope', 'bin.js'), corepackJs: COREPACK_JS, npm: npmNone, exists: (p) => p === COREPACK_JS }) === OLD_REFUSAL('dsh bin.js'))
+  check('②c pnpm 布局：npm 解析为 none **不影响** pnpm（它压根不用 npm）',
+    frameworkUpgradeCliBlocker({ layout: 'pnpm', binPath: binOk, corepackJs: COREPACK_JS, npm: npmNone, exists: everything }) === null)
+  check('②c 布局未判定（null：框架根门在下面拦）⇒ 沿用旧判据，不误报 npm',
+    frameworkUpgradeCliBlocker({ layout: null, binPath: binOk, corepackJs: COREPACK_JS, npm: npmNone, exists: everything }) === null
+    && frameworkUpgradeCliBlocker({ layout: null, binPath: binOk, corepackJs: join('C:', 'nope', 'corepack.js'), npm: npmNone, exists: (p) => p === binOk }) === OLD_REFUSAL('corepack（pnpm 通道）'))
+
+  // 静态接线：门必须在**生成升级脚本之前**，且直接 return（否则又滑回「到安装步骤才炸」）
+  const upSrc = readFileSync(join(REPO, 'lib', 'server', 'routes', 'framework-upgrade.js'), 'utf8')
+  check('②c 路由在生成升级脚本之前调用 preflight 门，并立即 return（不许滑到安装步骤）',
+    /const cliBlocker = frameworkUpgradeCliBlocker\(\{/u.test(upSrc) && /if \(cliBlocker !== null\) \{/u.test(upSrc)
+    && upSrc.indexOf('frameworkUpgradeCliBlocker(') !== -1
+    && upSrc.indexOf('frameworkUpgradeCliBlocker(') < upSrc.indexOf('frameworkInstallSetupBlock('),
+    `blocker@${upSrc.indexOf('frameworkUpgradeCliBlocker(')} setup@${upSrc.indexOf('frameworkInstallSetupBlock(')}`)
+  check('②c 路由只在**扁平布局**时才解析 npm（pnpm 用户不被塞一份用不上的解析结果）',
+    /const npm = fwLayout === 'hoisted' \? \(rc\.deps\.resolveNpmCli \?\? resolveNpmCli\)\(\{ nodePath \}\) : null/u.test(upSrc))
 }
 
 // ══ ③ cwd/命令行整块 + 装后核对 ═════════════════════════════════════════════════════
@@ -230,6 +439,10 @@ try {
       preflightDisableIncompatible: async () => ({ disabled: [], skipped: [] }),
       webPort: () => 3080,
       listEntries: () => [],
+      // 2026-11-09：只在本套探针里桩「本机找不到 npm」——用来看 preflight 门是不是真的在**安装之前**把升级拦掉
+      resolveNpmCli: process.env.PROBE_NPM_NONE === '1'
+        ? () => ({ kind: 'none', command: null, note: 'none（已尝试 node 自带 / PATH / corepack）' })
+        : undefined,
     },
   })
   out.started = true
@@ -245,8 +458,8 @@ try {
 process.stdout.write(JSON.stringify(out))
 `, 'utf8')
 
-const runProbe = (profile) => {
-  const env = { ...process.env, DSH_HOME: HOME, PROBE_HOME: HOME, PROBE_PROFILE: profile, PROBE_ROUTE: join(REPO, 'lib', 'server', 'routes', 'framework-upgrade.js') }
+const runProbe = (profile, extraEnv = {}) => {
+  const env = { ...process.env, DSH_HOME: HOME, PROBE_HOME: HOME, PROBE_PROFILE: profile, PROBE_ROUTE: join(REPO, 'lib', 'server', 'routes', 'framework-upgrade.js'), ...extraEnv }
   delete env.ELECTRON_RUN_AS_NODE
   const stdout = execFileSync(process.execPath, [PROBE_BIN], { env, cwd: REPO, encoding: 'utf8' })
   try { return JSON.parse(stdout) } catch { return { parseError: String(stdout).slice(0, 400) } }
@@ -315,6 +528,24 @@ const diffText = (got, want) => {
     want.splice(1, 0, channelStep)
     check('④ hoisted ⇒ 除新增的通道步骤外，其余 steps 与改动前逐字相同', sameList(steps, want), sameList(steps, want) ? `${steps.length} 条` : diffText(steps, want))
     check('④ 没有启动升级脚本（ps1 始终是那个目录 ⇒ 没走到 execFile，本套绝不真升级）', flatRun.ps1StillDir === true)
+
+    // ── 端到端：扁平布局 + 本机解析不到 npm ⇒ **preflight 就拒**（不许走到安装步骤）──
+    // 桩只换 resolveNpmCli（真实 Path/PATH 探测在这个进程里一定命中，没法自然造出 none）。
+    const noneRun = runProbe(join(HOME, 'profiles', 'flat'), { PROBE_NPM_NONE: '1' })
+    if (noneRun.skipped !== undefined) {
+      check('④ npm 为 none 的探针能跑', false, `探针保险挡不住写盘（${noneRun.skipped}）`)
+    } else {
+      const noneSteps = normalizeSteps(noneRun.json?.steps)
+      check('④ 扁平布局 + 找不到 npm ⇒ 200 但 upgraded:false（拒绝，不是假装成功）',
+        noneRun.status === 200 && noneRun.json?.ok === true && noneRun.json?.upgraded === false,
+        `status=${noneRun.status} upgraded=${String(noneRun.json?.upgraded)}`)
+      check('④ 拒绝文案如实点名三类来源 + 为什么扁平布局需要 npm',
+        noneSteps.some((s) => s.includes('本机找不到 npm（已尝试：node 自带 / PATH / corepack）') && s.includes('扁平（hoisted）布局升级需要 npm')),
+        noneSteps.find((s) => s.includes('npm')) ?? `（无明显 npm 文案，共 ${noneSteps.length} 条）`)
+      check('④ 拒绝发生在**安装之前**：steps 里没有「框架安装通道」/「升级脚本已启动」，也没落升级脚本',
+        !noneSteps.some((s) => s.startsWith('框架安装通道：') || s.startsWith('框架升级脚本已启动')) && noneRun.ps1StillDir === true,
+        noneSteps.map((s) => s.slice(0, 40)).join(' | '))
+    }
   }
 
   const pnpmNm = makeProfile('pnpm', { store: true })
