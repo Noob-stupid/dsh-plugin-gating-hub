@@ -354,7 +354,11 @@ for (const [name, expr] of blocks) {
 // cwd 指向没有 package.json 的那层 node_modules ⇒ ERR_PNPM_NO_PKG_MANIFEST / 混装，升不到 0.2.2-rc.1。
 // 现在安装块按布局生成；这里把 hoisted 那一份**真生成**一遍，交给 PowerShell 解析器（只解析不执行），
 // 并钉住「走 npm + --prefix 指到含 package.json 的那一层 + 装后核对消息点明 npm」。
-{
+if (process.platform !== 'win32') {
+  // 这段夹具用 Windows 路径（`C:\tmp dir\weird\node_modules`）验证「hoisted 的安装前缀 = 含 package.json 的上一层」；
+  // 非 Windows 上 posix.dirname('C:\\…') 返回 '.' —— 产品代码用 node:path（平台感知）本身没问题，是夹具不成立 ⇒ 显式 SKIP。
+  console.log('SKIP hoisted 布局：夹具用 Windows 路径语义（posix.dirname 对 C:\\… 返回 "."），非 Windows 上不成立')
+} else {
   const upgradeExpr = (blocks.find(([n]) => n === '升级脚本') ?? ['', ''])[1]
   scope.fwGate = { ok: true, layout: 'hoisted', reason: null }
   let hoistedScript = ''
@@ -449,7 +453,10 @@ function moveInstallBlockToScriptScope(text, block) {
   const SCOPE_DIR = join(OUT, 'install-scope')
   rmSync(SCOPE_DIR, { recursive: true, force: true })
   mkdirSync(SCOPE_DIR, { recursive: true })
-  const realShell = findPowerShell()
+  // 行为级验证真跑 Start-Process cmd.exe，**Windows 专属**：Linux 的 pwsh 不支持 `-WindowStyle`
+  // （实测 `The parameter '-WindowStyle' is not supported for the cmdlet 'Start-Process' on this edition`），
+  // 且 cmd.exe / marker 重定向语义也只有 Windows 有 ⇒ 非 Windows 显式 SKIP（写明理由），不假绿也不假红。
+  const realShell = process.platform === 'win32' ? findPowerShell() : null
 
   /** 假框架树：装后核对读 package.json（version = target），结构校验跑 bin.js --version（也报 target）。 */
   const makeFakeTree = (dir) => {
@@ -532,11 +539,16 @@ function moveInstallBlockToScriptScope(text, block) {
     // ④ cwd（Set-Location）也在函数体内；hoisted 还要先 Log 通道/来源/前缀
     check(`${layout}：Set-Location 也在函数体内（不再在脚本作用域 cd）`, facts.setLocInBody, `Set-Location@${facts.locAt}`)
     const locLine = facts.locAt === -1 ? '' : text.slice(facts.locAt, text.indexOf('\r\n', facts.locAt))
-    check(`${layout}：Set-Location 的目标 = ${layout === 'pnpm' ? '安装根（那层 node_modules）' : '含 package.json 的上一层（不是那层 node_modules）'}`,
-      layout === 'pnpm'
+    // hoisted 的「目标 = 含 package.json 的上一层」依赖 Windows 路径语义（posix.dirname('C:\\…') 返回 '.'）⇒ 非 Windows 显式 SKIP
+    if (layout === 'hoisted' && process.platform !== 'win32') {
+      console.log('SKIP hoisted：Set-Location 目标断言（夹具用 Windows 路径语义，非 Windows 上不成立）')
+    } else {
+      check(`${layout}：Set-Location 的目标 = ${layout === 'pnpm' ? '安装根（那层 node_modules）' : '含 package.json 的上一层（不是那层 node_modules）'}`,
+        layout === 'pnpm'
         ? locLine.includes('weird') && locLine.includes('node_modules')
         : locLine.includes('weird') && !locLine.includes('node_modules'),
       locLine.slice(0, 110))
+    }
     if (layout === 'hoisted') {
       const logAt = text.indexOf("Log ('安装通道：npm", facts.fnAt)
       check('hoisted：函数体内先 Log「安装通道：npm …」（换通道不静默）再拼命令',
