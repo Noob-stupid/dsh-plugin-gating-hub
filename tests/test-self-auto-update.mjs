@@ -355,21 +355,50 @@ console.log('\n=== ⑧ UI：默认开启 / 字段缺失显示「—」/ 切换�
     && ui.selfUpdateOutcomeText({ ok: false, reason: '模拟下载失败：EPIPE' }, fakeT) === '失败：模拟下载失败：EPIPE',
     [ui.selfUpdateOutcomeText({ updated: true, to: '0.5.109' }, fakeT), ui.selfUpdateOutcomeText({ skipped: 'busy', ok: true, reason: 'x' }, fakeT), ui.selfUpdateOutcomeText({ ok: false, reason: 'y' }, fakeT)].join(' | '))
 
-  // ⑧-e 静态接线：按钮在功能包工具栏里、读 /state 的字段、点一下发 POST、失败念原文、写期间禁用
-  const mainBlock = clientSrc.split('\n').slice(
-    clientSrc.split('\n').findIndex((l) => l.includes('function PluginConsoleTab({')),
-    clientSrc.split('\n').findIndex((l) => l.includes('function PluginSafetyTab({')),
+  // ⑧-e 静态接线：**位置已按用户要求搬到「升级安全」面板的跳转行末尾**（2026-11-05 契约随需求迁移）。
+  //   原来是长在「功能包」工具栏（`styles.toolItem`）里的；用户原话：
+  //   「然后自更新和立即检测，可移除功能包，将位置放在这（红笔在『AI 部署』之后）」，
+  //   并已确认「从功能包移走，只在安全面板这排末尾出现」。
+  //   ★ 本组断言**一条都没删、没弱化**：位置断言从"在工具栏里"改成"在跳转行 `jump("ai")` 之后"，
+  //     并补了一条**负控**（工具栏里必须已经没有了 —— 防"复制一份"而不是"搬走"）。
+  const srcLines = clientSrc.split('\n')
+  const mainBlock = srcLines.slice(
+    srcLines.findIndex((l) => l.includes('function PluginConsoleTab({')),
+    srcLines.findIndex((l) => l.includes('function PluginSafetyTab({')),
   ).join('\n')
-  check('★ ⑧-e 按钮在**功能包工具栏**这一组里（styles.toolItem + aria-label 走新 i18n 键）',
-    /className: styles\.toolItem[\s\S]{0,300}?aria-label": t\("selfUpdateAria"\)/u.test(mainBlock))
-  check('⑧-e 开关状态取自 /state 的 selfAutoUpdate（不自己猜）', /state\.data\.selfAutoUpdate/u.test(mainBlock))
+  const safetyBlock = srcLines.slice(
+    srcLines.findIndex((l) => l.includes('function PluginSafetyTab({')),
+    srcLines.findIndex((l) => l.includes('function apply(ctx)')),
+  ).join('\n')
+  const posOf = (needle, hay) => hay.indexOf(needle)
+  check('★ ⑧-e 按钮在**安全面板跳转行**里、紧跟 `jump("ai", …)`（className 用同排的 styles.toggle，不引入新样式）',
+    /jump\("ai", t\("safetyJumpAi"\)\),[\s\S]{0,600}?className: styles\.toggle[\s\S]{0,300}?"aria-label": t\("selfUpdateAria"\)/u.test(safetyBlock)
+    && /jump\("ai", t\("safetyJumpAi"\)\),[\s\S]{0,1400}?className: styles\.toggle[\s\S]{0,300}?"aria-label": t\("selfUpdateCheckHint"\)/u.test(safetyBlock))
+  check('★ ⑧-e 负控：功能包工具栏（PluginConsoleTab）里**已经没有了**这两颗（是真搬走，不是复制一份）',
+    !/selfUpdateAria/u.test(mainBlock) && !/selfUpdateCheckHint/u.test(mainBlock) && !/self-auto-update/u.test(mainBlock)
+    && !/styles\.toolItem[\s\S]{0,300}?"aria-label": t\("selfUpdate/u.test(mainBlock))
+  check('⑧-e 开关状态取自 `GET /plugin-console/state` 的 selfAutoUpdate（不自己猜）',
+    /call\("\/plugin-console\/state"\)/u.test(safetyBlock) && /data\.selfAutoUpdate/u.test(safetyBlock))
   check('★ ⑧-e 点一下发 POST `{action:"toggle", enabled:<下一值>}`',
-    /call\("\/plugin-console\/self-auto-update", \{ action: "toggle", enabled: next \}\)/u.test(mainBlock))
-  check('⑧-e 另有「立即检查」走 `{action:"check"}`', /call\("\/plugin-console\/self-auto-update", \{ action: "check" \}\)/u.test(mainBlock))
-  check('★ ⑧-e 失败必须把服务端原文念出来（setMessage(… error.message …)，不许静默）',
-    (mainBlock.match(/error\.message/gu) ?? []).length >= 2 && /t\("safetySwitchFailed"\) \+ "：" \+ \(\(error/u.test(mainBlock))
+    /call\("\/plugin-console\/self-auto-update", \{ action: "toggle", enabled: next \}\)/u.test(safetyBlock))
+  check('⑧-e 另有「立即检查」走 `{action:"check"}`', /call\("\/plugin-console\/self-auto-update", \{ action: "check" \}\)/u.test(safetyBlock))
+  check('★ ⑧-e 失败必须把服务端原文念出来（error.message 串进 safetySwitchFailed 前缀），两个动作都走同一个漏斗、不许静默',
+    (safetyBlock.match(/error\.message/gu) ?? []).length >= 1
+    && /t\("safetySwitchFailed"\) \+ "："\s*\+ \(\(error/u.test(safetyBlock)
+    && (safetyBlock.match(/selfUpdateFailText\(error/g) ?? []).length === 2)
   check('★ ⑧-e 写请求期间禁用并显示进行中（disabled + data-busy + 省略号）',
-    /disabled: selfUpdateBusy/u.test(mainBlock) && /"data-busy": selfUpdateBusy \? "true" : "false"/u.test(mainBlock))
+    /disabled: selfUpdateBusy/u.test(safetyBlock) && /"data-busy": selfUpdateBusy \? "true" : "false"/u.test(safetyBlock)
+    && /selfUpdateBusy \? " …"/u.test(safetyBlock))
+  // 顺序断言只用**渲染出来的那两处 aria-label**（title 构造函数里也提到了同一把键，不能拿它当位置证据）
+  const jumpTail = (() => {
+    const at = posOf('jump("ai", t("safetyJumpAi"))', safetyBlock)
+    return at < 0 ? '' : safetyBlock.slice(at)
+  })()
+  const ariaOn = posOf('"aria-label": t("selfUpdateAria")', jumpTail)
+  const ariaCheck = posOf('"aria-label": t("selfUpdateCheckHint")', jumpTail)
+  check('★ ⑧-e 顺序：两颗按钮都在「AI 部署」之后，且「自更新」在「立即检查」之前（用户要的"放在这"）',
+    jumpTail !== '' && ariaOn > 0 && ariaCheck > ariaOn, `ariaOn=${ariaOn} ariaCheck=${ariaCheck}`)
+
   check('★ ⑧-f 绝不"自作主张写回"：挂载时不发任何 self-auto-update 请求（只有点击才发）',
     !/useEffect\(\(\) => \{[^}]*self-auto-update/su.test(clientSrc)
     && (clientSrc.match(/call\("\/plugin-console\/self-auto-update"/gu) ?? []).length === 2,
