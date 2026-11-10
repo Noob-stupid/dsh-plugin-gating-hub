@@ -281,7 +281,12 @@ const makeProfile = (name, { bin = true, store = false } = {}) => {
   return nm
 }
 
-{
+if (process.platform !== 'win32') {
+  // 该探针伪造 process.platform='win32' 并依赖 schtasks / .ps1 写盘语义；Linux 上这些前提不成立，
+  // 路由会在到达"框架根门闸"之前就早退（实测 200 且无 steps），断言无意义。
+  // 显式 SKIP（写明理由），既不假绿也不假红；纯函数与夹具段（①–④）在所有平台照跑。
+  skip('⑤ 路由层子进程探针（扁平树不再被拒 / bin.js 与无根两个对照）', '仅 Windows：探针伪造 win32 且依赖 schtasks/.ps1 语义')
+} else {
   // ⑤-A 扁平树（= 真机 npx 缓存的形状）⇒ 不再因为 .pnpm 被拒
   const nm = makeProfile('flat', { bin: true, store: false })
   const flatRun = runProbe(join(HOME, 'profiles', 'flat'))
