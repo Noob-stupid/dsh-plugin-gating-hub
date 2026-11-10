@@ -396,6 +396,189 @@ for (const [name, expr] of blocks) {
   scope.fwGate = { ok: true, layout: 'pnpm', reason: null } // 复位：后面的真机行为验证段假定既有（pnpm）布局
 }
 
+// ══ 安装块作用域（commit 164aba5 的回归）：`$cmdLine` 引用的 `$reg` / `$marker` 是函数内变量 ══════════
+// 真机故障链（诊断已确诊，pnpm 与 hoisted 两条通道全中）：
+//   164aba5 把「Set-Location + `$cmdLine = …`」抽成 frameworkInstallSetupBlock 后，**当数组元素发在脚本作用域**：
+//     L298  `${frameworkInstallSetupBlock(…)}`   ← 脚本作用域（函数外）
+//     L305  `function Install-Framework($reg) {`
+//     L319  `  $marker = $log + '.pnpm.marker'`   ← 只在函数体内赋值
+//   而生成物里 `$cmdLine` 是**三段单引号串拼接**，后半段正是 `' + $reg + ' & echo DSH-DONE:%ERRORLEVEL% > ' + $marker + '"'`：
+//     实测展开（$reg/$marker 无值）⇒ `… --registry  & echo DSH-DONE:%ERRORLEVEL% > `
+//     ⇒ `--registry` 传空、cmd 的重定向目标为空 ⇒ **marker 文件永远写不出来**
+//     ⇒ Install-Framework 轮询 15 分钟超时 ⇒ `$code=1` ⇒ 回滚（框架其实装好了）。
+//   对照 673f67d（改动前）：`$cmdLine` 就在函数体内、`$marker` 赋值之后 —— 所以这是 164aba5 引入的回归。
+// 本节钉死四件事（顺序 / 函数前零引用 / $marker 先于 $cmdLine / 真跑一次 marker 真的落盘），
+// 外加**反向对照**：把安装块挪回脚本作用域再判一次，三条结构断言必须**变红**（证明它们真能抓这类错误）。
+const FN_HEAD = 'function Install-Framework($reg) {'
+const FN_TAIL = 'function Invoke-Rollback {' // 函数体结束位置（生成顺序固定：安装函数 → 回滚函数）
+/** 从「组装好的真实 ps1」里量出作用域事实（纯文本观测，不改被测代码）。 */
+function scopeFacts(text) {
+  const fnAt = text.indexOf(FN_HEAD)
+  const fnEnd = fnAt === -1 ? -1 : text.indexOf(FN_TAIL, fnAt)
+  const head = fnAt === -1 ? text : text.slice(0, fnAt) // 函数**之前**的脚本区段
+  const body = fnAt === -1 || fnEnd === -1 ? '' : text.slice(fnAt, fnEnd)
+  const cmdAt = text.indexOf('$cmdLine = ')
+  // `$proc = Start-Process` 在 relaunchPrelude 的 Invoke-DshRelaunch 里也有一次 —— 必须从函数起点往后找
+  const procAt = fnAt === -1 ? -1 : text.indexOf('$proc = Start-Process', fnAt)
+  const markerAt = fnAt === -1 ? -1 : text.indexOf('$marker = $log', fnAt)
+  const locAt = fnAt === -1 ? -1 : text.indexOf('Set-Location -Path', fnAt)
+  const inBody = (at) => at !== -1 && fnEnd !== -1 && at > fnAt && at < fnEnd
+  return {
+    fnAt, fnEnd, cmdAt, procAt, markerAt, locAt, head, body,
+    // ① 顺序：函数定义 < `$cmdLine =` < `$proc = Start-Process`（且三者都在函数体内/之后）
+    orderOk: inBody(cmdAt) && inBody(procAt) && fnAt < cmdAt && cmdAt < procAt,
+    // ② 函数**之前**的脚本区段里不许出现 $cmdLine / $reg / $marker 的任何引用
+    headRefs: ['$cmdLine', '$reg', '$marker'].filter((v) => new RegExp(`\\${v}(?![\\w])`, 'u').test(head)),
+    // ③ `$marker` 定义在 `$cmdLine` 之前，且同一个函数体内
+    markerFirst: inBody(markerAt) && inBody(cmdAt) && markerAt < cmdAt,
+    // ④ cwd 那一步（Set-Location）也在函数体内（pnpm ⇒ fwRoot；hoisted ⇒ 含 package.json 的上一层）
+    setLocInBody: inBody(locAt),
+  }
+}
+/** 变异：把安装块从函数体内**挪回脚本作用域**（复现 164aba5 的形态），用来验证上面的断言真能抓错。 */
+function moveInstallBlockToScriptScope(text, block) {
+  const needle = block + '\r\n'
+  if (!text.includes(needle)) return null
+  const without = text.replace(needle, '')
+  const at = without.indexOf(FN_HEAD)
+  if (at === -1) return null
+  return without.slice(0, at) + needle + without.slice(at)
+}
+{
+  const upgradeExpr = (blocks.find(([n]) => n === '升级脚本') ?? ['', ''])[1]
+  const SCOPE_DIR = join(OUT, 'install-scope')
+  rmSync(SCOPE_DIR, { recursive: true, force: true })
+  mkdirSync(SCOPE_DIR, { recursive: true })
+  const realShell = findPowerShell()
+
+  /** 假框架树：装后核对读 package.json（version = target），结构校验跑 bin.js --version（也报 target）。 */
+  const makeFakeTree = (dir) => {
+    const nm = join(dir, 'node_modules')
+    mkdirSync(join(nm, '@deepseek-ai', 'dsh', 'lib'), { recursive: true })
+    writeFileSync(join(nm, '@deepseek-ai', 'dsh', 'package.json'), JSON.stringify({ name: '@deepseek-ai/dsh', version: scope.target }), 'utf8')
+    writeFileSync(join(nm, '@deepseek-ai', 'dsh', 'lib', 'bin.js'), `process.stdout.write(${JSON.stringify(scope.target)})\n`, 'utf8')
+    return nm
+  }
+  /** 用**真实** Install-Framework（从组装好的 ps1 里整段抠出来）跑一次；只把「安装通道命令」换成 `ver`。 */
+  const runInstallFramework = (layout) => {
+    const dir = join(SCOPE_DIR, layout)
+    mkdirSync(dir, { recursive: true })
+    const fwRoot = makeFakeTree(join(dir, 'fw'))
+    const prev = { fwRoot: scope.fwRoot, nodePath: scope.nodePath, fwGate: scope.fwGate }
+    scope.fwRoot = fwRoot
+    scope.nodePath = process.execPath // 结构校验会 `& <nodePath> <bin.js> --version`：必须是真的 node
+    scope.fwGate = { ok: true, layout, reason: null }
+    let text = ''
+    try { text = build(upgradeExpr) } finally {
+      scope.fwRoot = prev.fwRoot
+      scope.nodePath = prev.nodePath
+      scope.fwGate = prev.fwGate
+    }
+    const fnAt = text.indexOf(FN_HEAD)
+    const rbAt = text.indexOf(FN_TAIL, fnAt)
+    // 正常形态：安装块在函数体内 ⇒ 从函数头切到回滚函数头就够。
+    // 回归形态（安装块发在脚本作用域）：从 Set-Location 那一行往前切 —— 这样这段行为级验证在**变异体上也真跑**，
+    // 交出的不是"抠不出来"，而是"marker 根本没落盘、$code=1"这一手证据。
+    const bodyStart = text.slice(fnAt, rbAt).includes('$cmdLine = ')
+      ? fnAt
+      : text.lastIndexOf('\n', text.lastIndexOf('Set-Location -Path', fnAt)) + 1
+    let body = fnAt === -1 || rbAt === -1 ? '' : text.slice(bodyStart, rbAt).replace(/\s+$/u, '')
+    if (!body.endsWith('}')) throw new Error('抠不出完整的 Install-Framework（结尾不是 }）')
+    // 15 分钟硬上限压到 20 秒（真跑用不了 15 分钟；判断逻辑一字不动）
+    body = body.replace('$startAt.AddMinutes(15)', '$startAt.AddSeconds(20)')
+    // 只替换「安装通道命令」本身：`--registry ' + $reg + '` 与 `> ' + $marker + '"` 这一段**原样保留**，
+    // 因为被验证的正是它（$reg/$marker 在拼接时有没有值）。`ver` 是 cmd 内建、退出码 0、不写任何东西。
+    const at = body.indexOf('title DSH-Upgrade && ')
+    const tail = body.indexOf(' --registry ', at)
+    if (at === -1 || tail === -1) throw new Error('组装脚本里找不到安装命令的拼接段（无法替换成假命令）')
+    body = body.slice(0, at + 'title DSH-Upgrade && '.length) + 'ver' + body.slice(tail)
+    const ps1 = join(dir, 'run-install.ps1')
+    const log = join(dir, 'fw-upgrade.log')
+    const state = join(dir, 'fw-upgrade-state.txt')
+    writeFileSync(ps1, `\uFEFF$log = '${log}'\r\n$state = '${state}'\r\n$script:structureOk = $false\r\n`
+      + `function Log($m) { try { Add-Content -Path $log -Value $m -Encoding UTF8 } catch {} }\r\n`
+      + `function SetState($s, $m) { try { Set-Content -Path $state -Value ($s + '|' + $m) -Encoding UTF8 } catch {} }\r\n`
+      + `function Beat { }\r\n` // 真脚本里由 relaunchPrelude 定义（心跳）；这里桩掉免得刷噪声
+      + `function Start-Sleep { param($Seconds, [switch]$Milliseconds) [System.Threading.Thread]::Sleep(20) }\r\n` // 轮询节拍压到 20ms（不真等 5 秒）
+      + `${body}\r\n`
+      + `$code = Install-Framework 'https://registry.npmmirror.com'\r\nWrite-Output ('CODE=' + $code)\r\n`, 'utf8')
+    const env = { ...process.env, NODE_NO_WARNINGS: '1' }
+    delete env.ELECTRON_RUN_AS_NODE // 规则：跑子进程前清掉（否则会被判成外壳托管）
+    env.DSH_HOME = join(SCOPE_DIR, 'home') // 测试隔离：任何路径推导都不许指到真 home
+    const out = execFileSync(realShell, ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', ps1], { encoding: 'utf8', timeout: 120000, env })
+    const markerPath = `${log}.pnpm.marker`
+    const readIfExists = (p) => { try { return readFileSync(p, 'utf8') } catch { return '' } }
+    return {
+      code: (out.match(/^CODE=(.*)$/mu) ?? [])[1]?.trim() ?? '',
+      markerPath, marker: readIfExists(markerPath), markerExists: existsSync(markerPath), log: readIfExists(log),
+    }
+  }
+
+  for (const layout of ['pnpm', 'hoisted']) {
+    const prevGate = scope.fwGate
+    scope.fwGate = { ok: true, layout, reason: null }
+    let text = ''
+    try { text = build(upgradeExpr) } finally { scope.fwGate = prevGate }
+    const facts = scopeFacts(text)
+    // ① 顺序（核心）：函数定义 < `$cmdLine =` < `$proc = Start-Process`
+    check(`${layout}：顺序 = function Install-Framework < $cmdLine = < $proc = Start-Process（安装块在函数体内）`,
+      facts.orderOk, `函数@${facts.fnAt}(止@${facts.fnEnd}) cmdLine@${facts.cmdAt} proc@${facts.procAt}`)
+    // ② 作用域：函数之前的脚本区段里不许出现这三个变量的任何引用
+    check(`${layout}：函数之前的脚本区段零引用 $cmdLine / $reg / $marker（发在脚本作用域就是 164aba5 的回归）`,
+      facts.headRefs.length === 0, facts.headRefs.join(',') || `函数前 ${facts.head.length} 字符（干净）`)
+    // ③ `$marker` 先于 `$cmdLine`，同一个函数体内
+    check(`${layout}：$marker 在 $cmdLine 之前赋值（同一函数体内）—— marker 路径必须在拼接时有值`,
+      facts.markerFirst, `marker@${facts.markerAt} cmdLine@${facts.cmdAt}`)
+    // ④ cwd（Set-Location）也在函数体内；hoisted 还要先 Log 通道/来源/前缀
+    check(`${layout}：Set-Location 也在函数体内（不再在脚本作用域 cd）`, facts.setLocInBody, `Set-Location@${facts.locAt}`)
+    const locLine = facts.locAt === -1 ? '' : text.slice(facts.locAt, text.indexOf('\r\n', facts.locAt))
+    check(`${layout}：Set-Location 的目标 = ${layout === 'pnpm' ? '安装根（那层 node_modules）' : '含 package.json 的上一层（不是那层 node_modules）'}`,
+      layout === 'pnpm'
+        ? locLine.includes('weird') && locLine.includes('node_modules')
+        : locLine.includes('weird') && !locLine.includes('node_modules'),
+      locLine.slice(0, 110))
+    if (layout === 'hoisted') {
+      const logAt = text.indexOf("Log ('安装通道：npm", facts.fnAt)
+      check('hoisted：函数体内先 Log「安装通道：npm …」（换通道不静默）再拼命令',
+        logAt !== -1 && logAt < facts.cmdAt && logAt > facts.fnAt, `Log@${logAt} cmdLine@${facts.cmdAt}`)
+    }
+    // 反向对照（变异）：把安装块挪回脚本作用域 ⇒ ①②③ 必须**全部变红**
+    const block = frameworkInstallSetupBlock({ layout, fwRoot: scope.fwRoot, target: scope.target, nodePath: scope.nodePath, corepackJs: scope.corepackJs, npm: scope.npm, npmCli: scope.npmCli, ps: realPs })
+    const mutated = moveInstallBlockToScriptScope(text, block)
+    check(`${layout}：能做出「安装块挪回脚本作用域」的变异体（否则下面的反向对照无意义）`, mutated !== null)
+    if (mutated !== null) {
+      const bad = scopeFacts(mutated)
+      check(`${layout}：变异后 ① 顺序断言必须红`, bad.orderOk === false, `cmdLine@${bad.cmdAt} proc@${bad.procAt}`)
+      check(`${layout}：变异后 ② 函数前零引用必须红`, bad.headRefs.length > 0
+        && ['$cmdLine', '$reg', '$marker'].every((v) => bad.headRefs.includes(v)), bad.headRefs.join(',') || '（居然还是干净）')
+      check(`${layout}：变异后 ③ $marker 先于 $cmdLine 必须红`, bad.markerFirst === false)
+      check(`${layout}：变异后 ④ Set-Location 在函数体内必须红`, bad.setLocInBody === false)
+    }
+
+    // ── 行为级（最强证据）：真跑一次，marker 文件必须真的被写出来、$code 必须是 0 ──
+    if (realShell === null) {
+      console.log(`SKIP ${layout}：安装块行为级验证（本机无 powershell.exe / pwsh）`)
+    } else {
+      let run = null
+      let runError = null
+      try { run = runInstallFramework(layout) } catch (error) { runError = error }
+      if (run === null) {
+        check(`${layout}：真跑 Install-Framework（行为级）`, false, String(runError?.stdout ?? runError?.message ?? runError).slice(0, 300))
+      } else {
+        check(`${layout}：真跑 Install-Framework ⇒ marker 文件真的被写出（164aba5 的回归里它永远写不出来）`,
+          run.markerExists === true, run.markerPath)
+        check(`${layout}：marker 内容是 DSH-DONE:0（cmd 的收尾重定向目标 = $marker，不是空串）`,
+          /DSH-DONE:0/u.test(run.marker), JSON.stringify(run.marker))
+        check(`${layout}：Install-Framework 拿到 $code=0（不再走「15 分钟超时 ⇒ 1」的回滚分支）`,
+          run.code === '0', `CODE=${run.code}；日志=${run.log.trim().split(/\r?\n/u).slice(-2).join(' ⏎ ').slice(0, 200)}`)
+        check(`${layout}：装后核对与结构校验都通过了（不是靠假命令骗过 $code）`,
+          run.log.includes('结构校验通过'), run.log.trim().split(/\r?\n/u).slice(-1)[0]?.slice(0, 160))
+      }
+    }
+  }
+  rmSync(SCOPE_DIR, { recursive: true, force: true })
+}
+
 // ── 真机行为验证：把脚本里的拉起实现抽出来真跑（不是只看语法）────────────────
 // 四种场景：① 正常（进程存活）→ 解析到真实 bin.js + **自证成功（返回值是空串）**；
 //   ② 解析探针坏掉（复现 2026-09-11 崩溃现场）→ 回退链必须兜住，且依然发起；
