@@ -1,12 +1,14 @@
 name: downloads-badge
 
-# npm 的 `downloads/point/*` 端点对本包返回 0（range 端点同周有数），所以徽章不能直接调它。
-# 这里按 range 端点累加，写两份 JSON 供 shields 的 endpoint 徽章读取：
-#   badges/downloads.json        近 7 天
-#   badges/downloads-total.json  自首次发布起的累计
+# 历史：npm 的 `downloads/point/*` 端点曾对本包返回 0，所以这里按 range 端点累加，写两份 JSON 供
+# shields 的 endpoint 徽章读取（badges/downloads.json 近 7 天、badges/downloads-total.json 累计）。
+#
+# 2026-11-10 起：README 的两个下载徽章都改成 npm 官方口径（img.shields.io/npm/dw 与 /npm/dt），
+# 不再引用这两份 JSON —— 自算的累计（44,724）比 npm 的（约 50,000）偏低，口径也容易和官方打架。
+# 定时任务因此**停掉**（保留手动触发与全部步骤，随时可回来跑），避免每天产出无人读取的提交。
 on:
-  schedule:
-    - cron: '17 3 * * *'
+  # schedule:
+  #   - cron: '17 3 * * *'
   workflow_dispatch:
 
 permissions:
