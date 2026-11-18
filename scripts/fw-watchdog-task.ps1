@@ -24,6 +24,12 @@ $ErrorActionPreference = 'Stop'
 $TaskName = 'DSH-FwWatchdog'
 $ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $Watchdog = Join-Path $ScriptDir 'fw-watchdog.mjs'
+# ★ 2026-11-18 改错：工作目录**绝不能**是插件包内部（$ScriptDir）。
+#   真机事故：任务以包内 scripts 为 cwd 拉起看门狗 → Windows 锁住包目录 →
+#   官方插件管理器更新时 pnpm rename 报 EPERM，插件永远装不上。
+$DshHome = if ($env:DSH_HOME) { $env:DSH_HOME } else { Join-Path $env:USERPROFILE '.dsh' }
+$StateDir = Join-Path $DshHome 'plugin-console'
+New-Item -ItemType Directory -Force -Path $StateDir | Out-Null
 
 if ($Status) {
   $t = Get-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue
@@ -34,6 +40,7 @@ if ($Status) {
   Write-Host "上次运行 : $($info.LastRunTime)   结果码: $($info.LastTaskResult)"
   Write-Host "下次运行 : $($info.NextRunTime)"
   Write-Host "动作     : $($t.Actions | ForEach-Object { "$($_.Execute) $($_.Arguments)" })"
+  Write-Host "工作目录 : $($t.Actions | ForEach-Object { $_.WorkingDirectory })"
   exit 0
 }
 
@@ -84,7 +91,7 @@ if ($existing) {
   Write-Host "已移除旧任务，准备重建"
 }
 
-$action = New-ScheduledTaskAction -Execute $node -Argument "`"$Watchdog`" --daemon" -WorkingDirectory $ScriptDir
+$action = New-ScheduledTaskAction -Execute $node -Argument "`"$Watchdog`" --daemon" -WorkingDirectory $StateDir
 $trigger = New-ScheduledTaskTrigger -AtLogOn -User $env:USERNAME
 $settings = New-ScheduledTaskSettingsSet `
   -AllowStartIfOnBatteries `

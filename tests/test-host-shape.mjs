@@ -32,7 +32,7 @@ const STANDALONE = { // 3080：node …\dsh\lib\bin.js web --no-open（pid 32464
   argv: ['C:\\nodejs\\node.exe', 'C:\\npx-cache\\_npx\\0123456789abcdef\\node_modules\\@deepseek-ai\\dsh\\lib\\bin.js', 'web', '--no-open'],
   env: { PATH: 'C:\\Windows' },
   versions: { node: '24.13.0' },
-  resourcesPath: undefined,
+  resourcesPath: null,
   ppid: 28660, // 真实父进程 = %TEMP%\…\DeepSeek Harness.exe（用户启动器）—— 刻意不参与判定
 }
 const DESKTOP_HOST = { // 19387：DeepSeek Harness.exe --expose-internals …\app.asar\dsh\node_modules\…\dsh-desktop-host\lib\index.js（pid 32252）

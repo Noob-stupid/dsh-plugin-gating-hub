@@ -227,6 +227,11 @@ if (import.meta.main !== true) {
   process.exit(0)
 }
 
+// 2026-11-18 改错：把 cwd 挪出插件包。计划任务若以包内 scripts 为 Start In，Windows 会锁住
+// 包目录，官方更新时 pnpm rename 报 EPERM（真机：dsh-plugin-console 一直装不上）。
+// 这里再兜一层：即使有人从包内目录手工启动，也在进入常驻循环前 chdir 到稳定目录。
+try { mkdirSync(LOG_DIR, { recursive: true }); process.chdir(LOG_DIR) } catch {}
+
 log(`看门狗启动：间隔=${INTERVAL_MS}ms 连续${STRIKES}轮 预检=${PREFLIGHT}`)
 log('判据：外壳在跑 + HOST 服务进程不在；只修框架闭包，不杀进程、不抢端口、不改官方文件')
 // 记下自己的 pid（`--daemon` 靠它防重复启动；退出时清掉）
