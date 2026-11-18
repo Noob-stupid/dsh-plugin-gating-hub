@@ -184,6 +184,24 @@ try {
     assert.equal(guard.status().tripped.some((x) => x.kind === 'polling-storm'), true)
   })
 
+  await checkAsync('⑦-b 400ms 短轮询：120 次即熔断（真机 ~80% CPU 的 400ms DOM 测量）', async () => {
+    guard.clear()
+    guard.setMode('observer')
+    fetchCalls.length = 0
+    const w = globalThis.window
+    const id = w.setInterval(() => {}, 400)
+    for (let i = 0; i < 120; i += 1) {
+      const current = w.__intervals.get(id)
+      if (current === undefined) break
+      current.fn()
+    }
+    assert.equal(w.__intervals.has(id), false, '400ms 短轮询到 120 次应 clearInterval')
+    const reports = fetchCalls.filter((c) => c.url.includes('/runtime-health')).map((c) => JSON.parse(c.options.body))
+    const hit = reports.find((b) => b.kind === 'polling-storm' && b.detail?.delayMs === 400)
+    assert.ok(hit !== undefined, JSON.stringify(reports))
+    assert.equal(hit.detail.threshold, 120)
+  })
+
   await checkAsync('⑧ 轮询空转：managed 下只记录、不清 interval', async () => {
     guard.clear()
     guard.setMode('managed')

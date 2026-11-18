@@ -137,4 +137,10 @@ check('⑩ 卡顿守护只在 observer 生效；managed 只记录不熔断', () 
     '守护的 active() 判据不见了或改成了无条件开启')
 })
 
+check('⑪ 门控里显示运行守护，且最多 10 条', () => {
+  assert.match(CLIENT, /gateRuntime\.incidents\.slice\(0, 10\)/u, '门控守护列表没有限制到 10 条')
+  assert.match(CLIENT, /"data-gate-runtime-guard": "true"/u, '门控里找不到运行守护分区')
+  assert.match(STATE, /runtimeHealthView\(\{ limit: 10 \}\)/u, '/state 没有下发最多 10 条守护记录')
+})
+
 console.log(passed > 0 && process.exitCode !== 1 ? `\n${passed} PASS / 全绿` : `\n${passed} PASS / 有失败`)
