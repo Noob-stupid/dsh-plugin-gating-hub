@@ -36,6 +36,9 @@ async function bootHost(tag, variant = 'full') {
   const profileDir = join(HOME, 'profiles', 'web')
   const cpDir = join(HOME, 'plugin-console')
   mkdirSync(cpDir, { recursive: true })
+  // 本套只测 scan-current；先声明"这个框架版本已经过版本门"，避免 /state 的版本自动拦截
+  // 抢先把 incompat 行禁用（那是另一个功能，单独由 test-version-gate 覆盖）。
+  writeFileSync(join(cpDir, 'compat-gate.json'), JSON.stringify({ autoDisable: true, version: '0.2.1-rc.2' }, null, 2), 'utf8')
   const write = (rel, obj) => {
     const file = join(profileDir, rel)
     mkdirSync(dirname(file), { recursive: true })
