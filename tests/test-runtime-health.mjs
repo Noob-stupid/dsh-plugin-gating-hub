@@ -118,6 +118,8 @@ const fakeRes = () => {
   check('⑥ 40ms 不记卡顿', a.stalls === 0 && a.samples === 1 && a.maxDriftMs === 0, JSON.stringify(a))
   const b = domain.sampleEventLoop(a, 600, 20)
   check('⑥ 600ms 记一次且 max=600', b.stalls === 1 && b.maxDriftMs === 600 && b.lastDriftAt === 20, JSON.stringify(b))
+  const jump = domain.sampleEventLoop(b, 740626, 30)
+  check('⑥ 超过 60s 的跳变记 clockJumps、不污染 maxDrift（睡眠/时钟跳变）', jump.clockJumps === 1 && jump.maxDriftMs === 600 && jump.stalls === 1, JSON.stringify(jump))
 }
 
 // ── ⑦ 路由 ──────────────────────────────────────────────────────────────────────

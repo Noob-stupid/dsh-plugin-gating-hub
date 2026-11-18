@@ -359,8 +359,9 @@ node scripts/safe-boot.mjs --mark-good            # 把某份快照标记为"良
   `3080` 一律直连。
 - **归因**：优先从调用栈取 `/plugins/<包>/` 或 `/node_modules/<包>/`；没有栈时只在已装包里
   只读搜索 URL/端口。官方与第三方插件走同一条路。
-- **事件循环采样**：1 秒心跳，漂移超过 50ms 记一笔；最新样本随 `GET /plugin-console/state`
-  的 `runtimeHealth` 下发。
+- **事件循环采样**：1 秒心跳，漂移超过 50ms 记一笔；超过 60s 的跳变按系统睡眠/时钟跳变记
+  `clockJumps`，不污染面板显示的最大漂移；最新样本随 `GET /plugin-console/state` 的
+  `runtimeHealth` 下发。
 - **门控面板**：门控模态里显示**最多 10 条**运行守护记录（类型、归属包、URL 或轮询间隔/次数、
   事件循环漂移），并给「清除守护记录」。记录落在
   `dshHome()/plugin-console/runtime-health.json`（上限 50 条）。

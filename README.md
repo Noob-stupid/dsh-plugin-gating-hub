@@ -435,8 +435,9 @@ records the same events but never blocks a connection.
 - **Attribution**: the calling script is taken from the stack (`/plugins/<pkg>/…` or
   `/node_modules/<pkg>/…`); when the stack is unavailable, installed packages are searched read-only
   for the URL/port. Official and third-party plugins use the same path.
-- **Event-loop sampling**: a 1s heartbeat records drift above 50ms. The latest sample is exposed as
-  `runtimeHealth` on `GET /plugin-console/state`.
+- **Event-loop sampling**: a 1s heartbeat records drift above 50ms. Jumps above 60s are treated
+  as system sleep / clock changes (`clockJumps`) and do not pollute the displayed max drift.
+  The latest sample is exposed as `runtimeHealth` on `GET /plugin-console/state`.
 - **Gate panel**: the gate modal shows **up to 10** runtime-guard records (kind, owning package,
   URL or polling interval/count, event-loop drift) plus a clear action. The records live in
   `dshHome()/plugin-console/runtime-health.json` (bounded to 50).
