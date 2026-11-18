@@ -73,6 +73,22 @@ const fakeRes = () => {
   check('③ 非 ws/wss 拒绝且不写盘', bad.ok === false && bad.incident === null)
 }
 
+// ── ③-b 轮询空转（无 url，按调用栈归因）────────────────────────────────────────
+{
+  const poll = domain.recordClientIncident({
+    kind: 'polling-storm',
+    source: 'https://x/plugins/@fake/demo/client.js:9',
+    count: 300,
+    windowMs: 60000,
+    detail: { delayMs: 50, ticks: 300 },
+    at: 3500,
+  }, { home: HOME })
+  check('③-b 轮询事件不需要 url，按栈归因', poll.ok === true && poll.incident?.url === null && poll.incident?.owner === '@fake/demo', JSON.stringify(poll.incident))
+  check('③-b 轮询 detail 落盘', poll.incident?.detail?.delayMs === 50 && poll.incident?.detail?.ticks === 300, JSON.stringify(poll.incident?.detail))
+  const bad = domain.recordClientIncident({ kind: 'polling-storm', count: 300 }, { home: HOME })
+  check('③-b 轮询缺 source 拒绝且不写盘', bad.ok === false && bad.incident === null, JSON.stringify(bad))
+}
+
 // ── ④ ring 上限与按 url 清 ──────────────────────────────────────────────────────
 {
   for (let i = 0; i < 60; i += 1) {
@@ -119,6 +135,12 @@ const fakeRes = () => {
   const clearRes = fakeRes()
   await routeRuntimeHealth({}, clearRes, { ctx: {}, body: { action: 'clear' }, deps: {} })
   check('⑦ clear 200 且 removed>0', clearRes.captured.status === 200 && (clearRes.captured.json?.removed ?? 0) > 0, JSON.stringify(clearRes.captured.json))
+  const pollRes = fakeRes()
+  await routeRuntimeHealth({}, pollRes, { ctx: {}, body: { kind: 'polling-storm', source: 'https://x/plugins/@fake/demo/client.js:3', count: 300, detail: { delayMs: 50 } }, deps: {} })
+  check('⑦ 轮询 report 200 且归因 owner', pollRes.captured.status === 200 && pollRes.captured.json?.incident?.owner === '@fake/demo' && pollRes.captured.json?.incident?.kind === 'polling-storm', JSON.stringify(pollRes.captured.json))
+  const pollBad = fakeRes()
+  await routeRuntimeHealth({}, pollBad, { ctx: {}, body: { kind: 'polling-storm', count: 300 }, deps: {} })
+  check('⑦ 轮询缺 source 400', pollBad.captured.status === 400, JSON.stringify(pollBad.captured.json))
 }
 
 console.log(failed === 0 ? '\nALL PASS' : `\n${failed} FAILED`)

@@ -58,6 +58,8 @@ function makeFetch() {
   }
 }
 function fakeWindow() {
+  const intervals = new Map()
+  let nextIntervalId = 1
   return {
     __ModuleLoader__: { load: ({ factory }) => { globalThis.__guardExports = factory((name) => { if (name === 'react') return fakeReact; throw new Error(`unexpected require: ${name}`) }) } },
     location: { href: 'http://127.0.0.1:3080/plugins/@noob-stupid/dsh-plugin-console/client.js', host: '127.0.0.1:3080', hostname: '127.0.0.1', port: '3080' },
@@ -65,6 +67,9 @@ function fakeWindow() {
     fetch: makeFetch(),
     setTimeout: () => 0,
     clearTimeout: () => {},
+    setInterval: (fn, delay, ...args) => { const id = nextIntervalId++; intervals.set(id, { fn, delay, args }); return id },
+    clearInterval: (id) => { intervals.delete(id) },
+    __intervals: intervals,
     dispatchEvent: () => true,
     addEventListener: () => {},
     removeEventListener: () => {},
@@ -157,6 +162,42 @@ try {
     const ws = new globalThis.window.WebSocket('ws://127.0.0.1:9230/ingest')
     assert.equal(ws instanceof FakeWS, true)
     assert.equal(FakeWS.instances.length, before + 1)
+  })
+
+  // ⑦ 轮询空转：observer 下跑到阈值清掉 interval；managed 下只记录
+  await checkAsync('⑦ 轮询空转：observer 下清掉 interval 并上报 polling-storm', async () => {
+    guard.clear()
+    guard.setMode('observer')
+    fetchCalls.length = 0
+    const w = globalThis.window
+    const id = w.setInterval(() => {}, 50)
+    const rec = w.__intervals.get(id)
+    assert.ok(rec !== undefined, 'setInterval 没有被 guard 记录')
+    for (let i = 0; i < 300; i += 1) {
+      const current = w.__intervals.get(id)
+      if (current === undefined) break
+      current.fn()
+    }
+    assert.equal(w.__intervals.has(id), false, 'observer 下到阈值应 clearInterval')
+    const reports = fetchCalls.filter((c) => c.url.includes('/runtime-health')).map((c) => JSON.parse(c.options.body))
+    assert.equal(reports.some((b) => b.kind === 'polling-storm' && b.detail?.delayMs === 50), true, JSON.stringify(reports))
+    assert.equal(guard.status().tripped.some((x) => x.kind === 'polling-storm'), true)
+  })
+
+  await checkAsync('⑧ 轮询空转：managed 下只记录、不清 interval', async () => {
+    guard.clear()
+    guard.setMode('managed')
+    fetchCalls.length = 0
+    const w = globalThis.window
+    const id = w.setInterval(() => {}, 40)
+    for (let i = 0; i < 300; i += 1) {
+      const current = w.__intervals.get(id)
+      assert.ok(current !== undefined, 'managed 不应清掉 interval')
+      current.fn()
+    }
+    const reports = fetchCalls.filter((c) => c.url.includes('/runtime-health')).map((c) => JSON.parse(c.options.body))
+    assert.equal(reports.some((b) => b.kind === 'polling-storm'), true, JSON.stringify(reports))
+    assert.equal(guard.status().tripped.some((x) => x.kind === 'polling-storm'), false)
   })
 
   // ⑥ 调试覆盖 enabled=true：managed 下也强制熔断（仅调试用；面板不提供这个开关）
