@@ -114,6 +114,7 @@ const ROUTES = [
   //   只对控制台自己生效；判据全在 domain/self-auto-update.js。
   '/self-auto-update',
   '/runtime-health',
+  '/runtime-guard',
 ]
 // 分层后路由可能写在 lib/server/routes/**（表项）或 index.js（内联分支）—— 两种写法都要认
 const walkSrc = (dir) => readdirSync(dir, { withFileTypes: true }).flatMap((e) => {

@@ -127,4 +127,14 @@ check('⑨ 主面板不得调用只属于 safety tab 的 fill()（0.5.59 空白�
   assert.deepEqual(bad, [], `主面板里出现了 fill()（会 ReferenceError）：${bad.join(', ')}`)
 })
 
+// ── ⑩ 运行期守护的两个契约（2026-11-18 真机事故）──────────────────────────
+check('⑩ 已安装搜索：搜索框收起时不许用 localStorage 里隐藏的 query 过滤（桌面端空列表事故）', () => {
+  assert.match(CLIENT, /const installedQueryNorm = installedSearchOpen \? installedQuery\.trim\(\)\.toLowerCase\(\) : "";/u,
+    'installedQueryNorm 又变成无条件过滤了：搜索框收起时会显示"没有匹配的插件"且无法清掉')
+})
+check('⑩ 卡顿守护只在 observer 生效；managed 只记录不熔断', () => {
+  assert.match(CLIENT, /const active = \(\) => debugEnabled === true \|\| mode === "observer";/u,
+    '守护的 active() 判据不见了或改成了无条件开启')
+})
+
 console.log(passed > 0 && process.exitCode !== 1 ? `\n${passed} PASS / 全绿` : `\n${passed} PASS / 有失败`)
