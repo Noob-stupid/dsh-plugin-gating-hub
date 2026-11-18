@@ -27,6 +27,8 @@ await writeFile(`${home}/profiles/web/cordis.patch.yml`, '- insert:\n    - id: x
 await writeFile(`${home}/profiles/web/package.json`, '{"name":"web","dsh":{"profile":{"bundles":["a"]}}}', 'utf8')
 // 模拟已记录版本（旧版 rc.5 → 现在 rc.6 = 升级）
 await mkdir(`${home}/plugin-console`, { recursive: true })
+// 0.5.111：备份是 managed 才做的事；observer 只读检测、不备份。本套测的是 managed 的备份行为。
+await writeFile(`${home}/plugin-console/compat-mode.json`, JSON.stringify({ mode: 'managed', source: 'manual' }), 'utf8')
 await writeFile(`${home}/plugin-console/framework-state.json`, JSON.stringify({ lastVersion: '0.1.0-rc.5', backupAt: 0 }), 'utf8')
 
 const require = createRequire(import.meta.url)
@@ -89,8 +91,10 @@ check('消息里不再混入 stage= 字段', typeof rs.json?.message === 'string
 // 5b. 旧格式（没有 stage）但框架本体已在目标版本 → 也要能判定「其实升上去了」
 const require2 = createRequire(join(realProfile, 'package.json'))
 const dshPkg = require2.resolve('@deepseek-ai/dsh/package.json')
-let fwRoot = dirname(dshPkg)
-while (fwRoot !== dirname(fwRoot) && !existsSync(join(fwRoot, '.pnpm'))) fwRoot = dirname(fwRoot)
+// 兼容两种安装布局：pnpm（有 .pnpm）与 hoisted/npx（没有 .pnpm，node_modules 直接含 @deepseek-ai/dsh）。
+// 目标都是“含 @deepseek-ai/dsh/package.json 的那层 node_modules”。
+let fwRoot = dirname(dirname(dirname(dshPkg)))
+while (fwRoot !== dirname(fwRoot) && !existsSync(join(fwRoot, '@deepseek-ai', 'dsh', 'package.json'))) fwRoot = dirname(fwRoot)
 const fwVersion = JSON.parse(await readFile(dshPkg, 'utf8')).version
 await writeFile(statusFile, 'failed|升级脚本异常终止：无法将参数绑定到参数"Path"，因为该参数是空值。', 'utf8')
 await writeFile(rollbackFile, JSON.stringify({ from: '0.1.5-rc.1', to: fwVersion, fwRoot, at: Date.now() }), 'utf8')
