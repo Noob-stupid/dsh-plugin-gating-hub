@@ -89,7 +89,7 @@ console.log('\n=== ③ 结论落点：面板能如实说"不可用"，不假装�
 {
   const stateSrc = readFileSync(join(REPO, 'lib', 'server', 'routes', 'state.js'), 'utf8')
   check('③ /state 下发 host.hosted（面板据此把回滚标成不可用，而不是给一个点了必 409 的按钮）',
-    /host = \{ hosted: shape\.hosted === true/u.test(stateSrc) && /notice: shape\.hosted === true/u.test(stateSrc))
+    /hosted: hostShape\.hosted === true/u.test(stateSrc) && /notice: hostShape\.hosted === true/u.test(stateSrc))
   const clientSrc = readFileSync(join(REPO, 'lib', 'client.js'), 'utf8')
   check('③ 客户端按同一份事实显示"不可用 + 原因"', /status\?\.host\?\.hosted === true/u.test(clientSrc) && /safetyRollbackNone/u.test(clientSrc))
   check('③ 复盘记录仍指向 npx 树这件事被写进了文档（版本漂移风险有据可查）',
