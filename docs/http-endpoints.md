@@ -22,3 +22,6 @@
 | `/plugin-console/self-update` | POST | Update the console itself (latest npm tarball into the profile) |
 | `/plugin-console/ai-empower/plan` / `status` / `run` / `cancel` | POST | AI Empower: plan (with framework compat pre-check) → status polling → confirmed run → cancel |
 | `/plugin-console/components` / `component/start` / `stop` / `status` | GET/POST | Server component registry and start/stop/status |
+| `/plugin-console/runtime-guard` | GET | Current run mode + runtime-guard thresholds (read by the client at boot) |
+| `/plugin-console/runtime-health` | POST | Client guard reports (`ws-fail` / `polling-storm`), config, and record clearing |
+| `/plugin-console/preset-contract` | GET | Daily read-only session-preset contract check (`?force=1` to recompute) |

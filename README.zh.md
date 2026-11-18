@@ -347,6 +347,49 @@ node scripts/safe-boot.mjs --mark-good            # 把某份快照标记为"良
 安全启动快照落在 `dshHome()/plugin-console/safe-boot/`（**不在** profile 目录里），保留最近 3 份 +
 永不删你标记为"良好"的那份。
 
+### 运行期卡顿守护（观察者模式）
+
+**「运行模式」开关是唯一总开关**：观察者下守护生效；托管下只记录、不拦连接。
+
+- **WebSocket 空转**：按 URL 统计失败。同一 URL **30 秒内失败 20 次** → 熔断 **120 秒**；
+  冷却期内调用方拿到的是不触网的占位 socket，失控端点不会再全速空转；冷却后放行一次真实重连。
+- **短轮询空转**：按调用点统计 `setInterval`。间隔 **≤500ms** 的，**60 秒 120 次**即熔断；
+  **≤1s** 的仍按 **60 秒 300 次**。观察者下清掉该 interval 并上报原因；托管下只记录。
+- **放行名单**：DSH 自己的连接永不误伤——同源 WebSocket、桌面宿主端口 `19387`、独立 web 端口
+  `3080` 一律直连。
+- **归因**：优先从调用栈取 `/plugins/<包>/` 或 `/node_modules/<包>/`；没有栈时只在已装包里
+  只读搜索 URL/端口。官方与第三方插件走同一条路。
+- **事件循环采样**：1 秒心跳，漂移超过 50ms 记一笔；最新样本随 `GET /plugin-console/state`
+  的 `runtimeHealth` 下发。
+- **门控面板**：门控模态里显示**最多 10 条**运行守护记录（类型、归属包、URL 或轮询间隔/次数、
+  事件循环漂移），并给「清除守护记录」。记录落在
+  `dshHome()/plugin-console/runtime-health.json`（上限 50 条）。
+- **接口**：`GET /plugin-console/runtime-guard` 返回当前模式与阈值；
+  `POST /plugin-console/runtime-health` 接受 `report` / `config` / `clear`。
+- 守护不改别的插件代码、不杀进程、不把异常抛给页面。
+
+### 版本变更自动拦截
+
+任何来源的框架版本变化（桌面端更新器、手动安装、npx 缓存变化）都会跑一次与升级前相同的
+兼容预检：判为 `fail` 的行写 `disabled: true`，并记入 `compat-pending` 的 `pending`；
+框架自带、受保护、核心行与控制台自己永不禁用。门控列表会自动刷新，被拦下的行以「待适配」
+出现，不会出现"拦截了但面板不显示"。
+
+上一次跑过的版本记在 `compat-gate.json` 的 `version` / `gatedAt`；只有成功扫描才推进，
+失败会在下一次状态查询重试。`autoDisable` 默认开；关掉后只记版本、不写补丁。
+扫描后门控为空是正常的：那表示当前行是 `pass` 或 `unknown`，不是 `fail`。
+
+### 会话预设契约
+
+`GET /plugin-console/preset-contract` 每天只读检查一次已装的
+`@deepseek-ai/dsh-agent-preset`：包版本 + 入口文件 sha、profile 补丁里的 `preset-*` 声明行数，
+以及既有的声明行 ↔ 磁盘预设对账（`stale` / `missing` / `orphan` / `targetMissing`）。
+结果缓存 24 小时，`?force=1` 强制重算。
+
+检查**不写 `.agent-presets/**`、不改 profile 补丁**。安全页显示契约版本、声明行数与漂移数，
+并给「检查」按钮。两次检查之间契约 sha 变化会标为 `contractChanged`——表示官方预设包变了，
+声明行值得复核。
+
 ### 服务打不开、且原因是**框架包被掏空**时
 
 上面那套恢复的是**配置层**（`cordis.patch.yml`）。另有一类事故坏的是**包实体**——
@@ -400,6 +443,12 @@ node scripts/fw-preflight.mjs --repair    # 按 lock 的 integrity 从**本地 n
 - 版本检测只对已发布到 npm 的包生效；技能类仓库没有版本概念；
 - 静态索引有上限（每次构建 500 插件 / 300 技能）；新仓库靠 star 爬升或等下一轮 6 小时 CI 进入索引；
 - 技能由 `dsh-skill-filesystem` 扫描发现——若当前 profile 未启用该插件，装好的技能会休眠，启用并重启后生效。
+- 运行守护只覆盖 **WebSocket 重试** 与 **短 `setInterval` 轮询**；1s 以上的长轮询、
+  `requestAnimationFrame` 循环、renderer 长任务、worker 内部的工作不在它的拦截范围；
+  事件循环采样只报服务端漂移，不会取消任意工作。
+- 版本变更门只能禁用"能解析到包且可开关"的行；受保护行与框架自带行保持启用，靠回滚兜底。
+  扫描结果 `0 fail` 时待适配列表为空是正确结果。
+- 会话预设契约检查的是**已安装**的官方包，不是 registry 最新版；它不会自动改写预设。
 
 ---
 

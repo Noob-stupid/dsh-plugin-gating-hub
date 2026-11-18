@@ -287,6 +287,12 @@ jobs:
           #    + **本机绝对路径与用户名 0 出现**的扫描断言（本轮 17 个文件，允许清单逐条写理由）；
           # ④ 路由契约（/safe-boot 白名单动作 + 新字段）另由 test-route-inventory 固化。
           node tests/test-auto-preflight.mjs
+          node tests/test-auto-preflight-child.mjs
+          node tests/test-runtime-health.mjs
+          node tests/test-runtime-guard-ui.mjs
+          node tests/test-version-gate.mjs
+          node tests/test-preset-contract.mjs
+          node tests/test-ui-contract.mjs
           node tests/test-safe-boot.mjs
           node tests/test-desktop-host-mode.mjs
 

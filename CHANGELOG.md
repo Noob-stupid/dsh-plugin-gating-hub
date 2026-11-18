@@ -2,6 +2,46 @@
 
 All notable changes to dsh-plugin-hub.
 
+## v0.5.111 — 运行期卡顿守护 + 版本自动拦截 + 会话预设契约（2026-11-18）
+
+### 运行期卡顿守护（观察者生效；托管只记录）
+
+- 客户端 WS 哨兵：同 URL 30s 内 20 次失败 → 熔断 120s，冷却期返回不触网的占位 socket；
+  同源 / 19387 / 3080 连接永远放行；按调用栈归因，推送到 `POST /plugin-console/runtime-health`。
+- 短轮询哨兵：`setInterval` ≤500ms 按 120 次/60s、≤1s 按 300 次/60s 熔断；
+  观察者清掉 interval，托管只记录。
+- 服务端 1s 心跳采样事件循环漂移；`/state.runtimeHealth` 下发；门控模态显示最多 10 条
+  （类型、归属包、URL 或轮询间隔/次数、漂移）并可清除记录。
+- 自动预检移入子进程（15s 硬超时），`/state` 框架备份按版本 + 补丁 mtime 缓存，
+  observer/hosted 跳过 managed-only 备份；adoptable 扫描去重。
+
+### 版本变更自动拦截（默认开）
+
+- 任意来源的框架版本变化触发一次 `preflightDisableIncompatible`：只禁 `fail` 行、写
+  `compat-pending`；成功后才写 `compat-gate.version`。
+- `/state` / `/compat-status` 下发 `versionGate.scheduled`；客户端自动刷新两次，
+  被拦下的行以「待适配」出现在门控里，不再出现"拦截了但不显示"。
+- `autoDisable` 默认 true；关掉后只记版本，不写补丁。
+
+### 会话预设契约（A 方案：只读）
+
+- `GET /plugin-console/preset-contract`：已装 `@deepseek-ai/dsh-agent-preset` 的版本 +
+  入口 sha，加声明行对账；24h 缓存，`?force=1` 重算；不改预设、不改补丁。
+- 安全页新增「会话预设契约」：版本 / 声明行 / 漂移 + 检查按钮。
+
+### 修复
+
+- 已安装列表的搜索框收起时不再用 localStorage 里残留的 query 过滤（桌面端空列表事故）。
+- 看门狗计划任务的 `Start In` 改为稳定目录（`~/.dsh/plugin-console`），
+  `fw-watchdog.mjs` 启动时 chdir 到稳定目录；不再锁住插件包目录导致 pnpm 更新 EPERM。
+
+### 测试
+
+新增 `test-runtime-health`、`test-runtime-guard-ui`、`test-auto-preflight-child`、
+`test-version-gate`、`test-preset-contract`；既有架构守卫、路由清单、UI 契约、框架升级、
+看门狗等套件通过。未纳入本次门槛的外部镜像用例 `test-real-preset-e2e` 仍受 ghproxy
+sparse clone 能力限制。
+
 ## v0.5.60 — 版本显示/更新基准翻转 + 被跳过的插件不再「消失」+ 提示可关闭（2026-10-18）
 
 ### 用户连续报的问题（原话）

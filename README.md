@@ -148,6 +148,9 @@ Requires: DSH ≥ 0.1.0-rc.6 (web profile, with `dsh-client-modules` / `dsh-host
 | 🔄 | **Version detection & one-click update** | Semver-based; installed entries match npm `dist-tags.latest` / `beta`; subpackage mismatch warnings prevent mixed-version breakage |
 | 🔀 | **Multi-source** | GitHub / Gitee (direct-repo mode) / custom search sources (URL template + header auth + private http); `⊞` merges GitHub + all custom sources in parallel |
 | 🔒 | **Safe by default** | Loopback-only routes; AI fallback behind an explicit cost-consent modal; infrastructure rows are toggle-protected |
+| 🧯 | **Runtime lag guard (observer)** | Trips runaway WebSocket retries and short-interval polling, records the owning package, and lists up to 10 incidents in the gate panel; the run-mode switch is the only enable |
+| 🧩 | **Version-change auto-block** | Any framework version change runs the same compat preflight as the upgrade path, disables `fail` rows, writes them to `pending`, and refreshes the gate list |
+| 📜 | **Session-preset contract check** | Daily read-only probe of the installed `dsh-agent-preset` version/entry hash plus declaration-row audit; cached for 24h, `force=1` to recheck |
 
 <details>
 <summary><b>📑 目录 / Table of Contents</b></summary>
@@ -157,6 +160,9 @@ Requires: DSH ≥ 0.1.0-rc.6 (web profile, with `dsh-client-modules` / `dsh-host
 - [One-click install](#one-click-install)
 - [Usage](#usage)
 - [Features](#features)
+- [Runtime lag guard](#runtime-lag-guard-observer-mode)
+- [Version-change auto-block](#version-change-auto-block)
+- [Session-preset contract](#session-preset-contract)
 - [How it works](#how-it-works)
 - [Compatibility](#compatibility)
 - [Project layout](#project-layout)
@@ -412,6 +418,32 @@ node scripts/safe-boot.mjs --mark-good            # mark a snapshot as good (nev
 Safe-boot snapshots live under `dshHome()/plugin-console/safe-boot/` (**not** in the profile directory),
 keeping the newest 3 plus the one you marked as good.
 
+### Runtime lag guard (observer mode)
+
+The **run mode** switch is the only enable. In **Observer** the guard is active; in **Managed** it
+records the same events but never blocks a connection.
+
+- **WebSocket retries**: a per-URL counter watches connection failures. A URL that fails **20 times
+  in 30s** is tripped for **120s**; during the cooldown the caller receives a non-network placeholder
+  socket, so a failed endpoint cannot spin at full speed. The next real attempt is allowed after the
+  cooldown.
+- **Short-interval polling**: `setInterval` with a delay ≤ 1s is counted per call site. **≤500ms**
+  intervals trip at **120 ticks/60s**; **≤1s** intervals trip at **300 ticks/60s**. In Observer the
+  interval is cleared and the reason is reported; in Managed it is only recorded.
+- **Allowlist**: DSH's own connections are never touched — same-origin WebSockets, the desktop host
+  port (`19387`), and the standalone web port (`3080`) always pass through.
+- **Attribution**: the calling script is taken from the stack (`/plugins/<pkg>/…` or
+  `/node_modules/<pkg>/…`); when the stack is unavailable, installed packages are searched read-only
+  for the URL/port. Official and third-party plugins use the same path.
+- **Event-loop sampling**: a 1s heartbeat records drift above 50ms. The latest sample is exposed as
+  `runtimeHealth` on `GET /plugin-console/state`.
+- **Gate panel**: the gate modal shows **up to 10** runtime-guard records (kind, owning package,
+  URL or polling interval/count, event-loop drift) plus a clear action. The records live in
+  `dshHome()/plugin-console/runtime-health.json` (bounded to 50).
+- **Endpoints**: `GET /plugin-console/runtime-guard` returns the current mode and thresholds;
+  `POST /plugin-console/runtime-health` accepts `report` / `config` / `clear`.
+- The guard never edits another plugin's code, never kills a process, and never throws into the page.
+
 ### When the service won't start because **framework packages were wiped**
 
 The rollback above restores the **config layer** (`cordis.patch.yml`). There is a second failure
@@ -450,6 +482,35 @@ Measured on isolated instances (fresh `DSH_HOME`, real HTTP probes) — **suppor
 So on an older framework the plugin is **the old UI with the full feature set** — the new entry simply has nowhere to live. It never white-screens and never throws.
 
 Verification matrix, raw logs and the one framework-side caveat (`0.1.2-rc.1` ships `patchReload: "live"` for a web tree without the HMR service → boot exits 1 after ~10s; unrelated to this plugin) are recorded in `.testdir/fw-old-matrix/report.md`.
+### Version-change auto-block
+
+Any framework version change — from the desktop updater, a manual install, or an npx cache change —
+runs the same compatibility preflight used before an upgrade. Rows judged `fail` are written with
+`disabled: true` and recorded in `compat-pending` as `pending`; framework-owned, protected, core, and
+the console's own row are never auto-disabled. The gate list is refreshed automatically so a blocked
+row appears as 「待适配」 instead of leaving an empty panel.
+
+The last gated version is stored in `compat-gate.json` (`version` / `gatedAt`). A successful scan is
+the only thing that advances it; a failed scan retries on the next status query. `autoDisable` is on
+by default and can be turned off with `POST /plugin-console/compat-gate`
+(`{"autoDisable":false}`), in which case the version is recorded but no patch is written.
+
+A panel that shows no pending rows after a scan is not necessarily broken: it means the current rows
+were `pass` or `unknown`, not `fail`.
+
+### Session-preset contract
+
+`GET /plugin-console/preset-contract` performs a read-only daily check of the installed
+`@deepseek-ai/dsh-agent-preset` package: its version and entry-file hash, the number of
+`preset-*` declaration rows in the profile patch, and the existing declaration-vs-disk audit
+(`stale` / `missing` / `orphan` / `targetMissing`). Results are cached for 24h;
+`?force=1` recomputes.
+
+The check never writes `.agent-presets/**` and never edits the profile patch. The safety panel shows
+the contract version, declaration count, and drift count, with a 「检查」 button. A contract-hash
+change between checks is reported as `contractChanged` — it means the official preset package
+changed and the declarations should be reviewed.
+
 ## Documentation
 
 - [AI Empower 与服务器组件控制](docs/ai-empower.md)
@@ -534,6 +595,15 @@ A row can be off for different reasons, and the panel distinguishes them:
   count or wait for the 6h CI cycle to enter the index;
 - Skills are discovered by `dsh-skill-filesystem` — if the current profile does not enable
   that plugin, installed skills stay dormant until it is enabled and DSH restarted.
+- The runtime guard covers **WebSocket retries** and **short `setInterval` polling** only.
+  Longer polling (1s+), `requestAnimationFrame` loops, renderer long tasks, and work inside
+  workers are outside its scope; the event-loop sampler reports server-side drift but does not
+  cancel arbitrary work.
+- The version-change gate can only disable rows it can resolve and that are toggleable; protected
+  and framework-owned rows stay enabled and rely on rollback. A scan with `0 fail` correctly
+  produces an empty pending list.
+- The preset-contract check reports the **installed** official package, not the registry's latest
+  version, and never rewrites presets automatically.
 
 ---
 
