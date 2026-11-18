@@ -115,6 +115,7 @@ const ROUTES = [
   '/self-auto-update',
   '/runtime-health',
   '/runtime-guard',
+  '/preset-contract',
 ]
 // 分层后路由可能写在 lib/server/routes/**（表项）或 index.js（内联分支）—— 两种写法都要认
 const walkSrc = (dir) => readdirSync(dir, { withFileTypes: true }).flatMap((e) => {
@@ -136,7 +137,7 @@ const SCHEMAS = [
   //   用户看到的是"插件静默消失"）。契约变化 ⇒ 这里必须同步，正是本套存在的意义。
   // 0.5.84：新增 lockAutofix（清单↔lock 口径不一致的后台自动对账状态：在跑/已修/失败原因/冷却）。
   //   同样是契约变化 ⇒ 清单同步。注意它**不阻塞** /state（派发后立即返回，见 domain/lock-autofix.js）。
-  ['GET', '/plugin-console/state', undefined, 200, ['compat', 'compatGate', 'compatPending', 'components', 'entries', 'framework', 'gating', 'github', 'health', 'host', 'installJobs', 'lockAutofix', 'ok', 'patch', 'patchHeal', 'patchPath', 'pendingRestart', 'recentFailures', 'rollback', 'runtimeHealth', 'selfAutoUpdate', 'selfVersion', 'skippedBundles']],
+  ['GET', '/plugin-console/state', undefined, 200, ['compat', 'compatGate', 'compatPending', 'components', 'entries', 'framework', 'gating', 'github', 'health', 'host', 'installJobs', 'lockAutofix', 'ok', 'patch', 'patchHeal', 'patchPath', 'pendingRestart', 'recentFailures', 'rollback', 'runtimeHealth', 'selfAutoUpdate', 'selfVersion', 'skippedBundles', 'versionGate']],
   ['GET', '/plugin-console/sources', undefined, 200, ['giteeStatus', 'ok', 'sources']],
   // link 开发式安装清单（0.5.54）：纯只读；items 每项含 target/ready/垫片/持久化
   ['GET', '/plugin-console/links', undefined, 200, ['count', 'error', 'items', 'ok', 'readyCount']],
