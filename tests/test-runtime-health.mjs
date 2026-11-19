@@ -89,6 +89,20 @@ const fakeRes = () => {
   check('③-b 轮询缺 source 拒绝且不写盘', bad.ok === false && bad.incident === null, JSON.stringify(bad))
 }
 
+// ── ③-c 渲染增长（无 url，按 source；同样只记录）──────────────────────────────
+{
+  const grow = domain.recordClientIncident({
+    kind: 'renderer-growth',
+    source: 'renderer',
+    count: 62000,
+    windowMs: 600000,
+    detail: { nodes: 62000, baseNodes: 41000, nodeDelta: 21000, heapMb: 980, animations: 14, paused: true },
+    at: 3600,
+  }, { home: HOME })
+  check('③-c 渲染增长不需要 url', grow.ok === true && grow.incident?.url === null && grow.incident?.kind === 'renderer-growth', JSON.stringify(grow.incident))
+  check('③-c 增长 detail 落盘', grow.incident?.detail?.nodeDelta === 21000 && grow.incident?.detail?.paused === true, JSON.stringify(grow.incident?.detail))
+}
+
 // ── ④ ring 上限与按 url 清 ──────────────────────────────────────────────────────
 {
   for (let i = 0; i < 60; i += 1) {

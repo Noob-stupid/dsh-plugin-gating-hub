@@ -2,6 +2,22 @@
 
 All notable changes to dsh-plugin-hub.
 
+## v0.5.113 — 增长采样 + host 外启动恢复（2026-11-19）
+
+### 增长采样
+
+- 客户端每 30s 采 DOM 节点、JS heap、活动动画数；10 分钟窗口内节点增长 ≥5000 且 ≥25%，
+  或 heap 到 1.2GB，记 `renderer-growth` 并在 observer 下暂停 CSS 动画；
+- 门控最多显示 10 条，含增长量 / heap / 动画数；不删消息、不刷新页面、不重启 host；
+- `/plugin-console/runtime-health` 接受 `renderer-growth`（无 URL、按 source 归因）。
+
+### host 外启动恢复
+
+- 新增 `scripts/boot-recover.mjs`：读最新 crash log，只禁用被点名的失败行；
+  不碰 `plugin-console`、框架自带/受保护/核心行，改前备份；
+- `--dry-run` 只打印计划，`--launch` 恢复后拉起桌面端；
+- 第一轮仍失败时继续用 `scripts/safe-boot.mjs --disable-suspects`，该路径同样跳过控制台自身。
+
 ## v0.5.112 — 事件循环假峰值修正（2026-11-18）
 
 系统睡眠 / 时钟跳变会让 1s 心跳算出十几分钟的“漂移”，面板会显示成假卡顿（真机 740s）。

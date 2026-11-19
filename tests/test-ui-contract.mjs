@@ -141,6 +141,8 @@ check('⑪ 门控里显示运行守护，且最多 10 条', () => {
   assert.match(CLIENT, /gateRuntime\.incidents\.slice\(0, 10\)/u, '门控守护列表没有限制到 10 条')
   assert.match(CLIENT, /"data-gate-runtime-guard": "true"/u, '门控里找不到运行守护分区')
   assert.match(STATE, /runtimeHealthView\(\{ limit: 10 \}\)/u, '/state 没有下发最多 10 条守护记录')
+  assert.match(CLIENT, /sampleGrowth/u, '客户端没有增长采样')
+  assert.match(CLIENT, /renderer-growth/u, '增长事件没有写进守护')
 })
 
 console.log(passed > 0 && process.exitCode !== 1 ? `\n${passed} PASS / 全绿` : `\n${passed} PASS / 有失败`)

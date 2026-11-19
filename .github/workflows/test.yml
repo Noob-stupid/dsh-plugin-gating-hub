@@ -288,6 +288,7 @@ jobs:
           # ④ 路由契约（/safe-boot 白名单动作 + 新字段）另由 test-route-inventory 固化。
           node tests/test-auto-preflight.mjs
           node tests/test-auto-preflight-child.mjs
+          node tests/test-boot-recover.mjs
           node tests/test-runtime-health.mjs
           node tests/test-runtime-guard-ui.mjs
           node tests/test-version-gate.mjs

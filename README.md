@@ -445,6 +445,46 @@ records the same events but never blocks a connection.
   `POST /plugin-console/runtime-health` accepts `report` / `config` / `clear`.
 - The guard never edits another plugin's code, never kills a process, and never throws into the page.
 
+### Growth sampling
+
+A 30s sampler records DOM node count, JS heap (when the browser exposes
+`performance.memory`), and active animation count. Samples are kept for 10 minutes; if the
+node count grows by at least 5,000 and 25% within that window, or the heap reaches 1.2GB,
+the guard:
+
+1. records a `renderer-growth` incident (the gate lists it with the delta, heap, and animation count);
+2. pauses CSS animations (only in Observer) so the page can catch up.
+
+It does **not** delete messages, reload the page, or restart the host. A long session still needs
+`/compact`, archiving, or a fresh session; this sampler makes the growth visible instead of
+guessing which plugin is responsible.
+
+To clear the growth samples and resume animations, use the gate's clear action or switch to Managed.
+
+### Boot recovery (outside the host)
+
+A plugin cannot gate a host that never started. For that case the package ships
+`scripts/boot-recover.mjs`, which runs outside DSH:
+
+```bash
+node scripts/boot-recover.mjs --profile <profile-dir> --dry-run
+node scripts/boot-recover.mjs --profile <profile-dir> --launch
+```
+
+It reads the newest host crash log, names the failed rows (for example `tool-executor-ptc`,
+`pwsh-sandbox`, `tool-workflow`), and appends `disabled: true` only to those rows. It never
+touches `plugin-console`, framework-owned, protected, or core rows; the previous patch is backed up
+as `cordis.patch.yml.bak-safe-boot-*`. `--dry-run` only prints the plan.
+
+If the first recovery still cannot boot, use the existing full safe-boot path:
+
+```bash
+node scripts/safe-boot.mjs --disable-suspects
+```
+
+That path also skips `plugin-console` itself. The intended sequence is **normal start → named-row
+recovery → safe boot with the console preserved**, with the reason recorded rather than looping.
+
 ### When the service won't start because **framework packages were wiped**
 
 The rollback above restores the **config layer** (`cordis.patch.yml`). There is a second failure

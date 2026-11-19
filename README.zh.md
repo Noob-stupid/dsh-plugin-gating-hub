@@ -369,6 +369,41 @@ node scripts/safe-boot.mjs --mark-good            # 把某份快照标记为"良
   `POST /plugin-console/runtime-health` 接受 `report` / `config` / `clear`。
 - 守护不改别的插件代码、不杀进程、不把异常抛给页面。
 
+### 增长采样（增长型卡顿）
+
+每 30 秒采一次 DOM 节点数、JS heap（浏览器暴露 `performance.memory` 时）和活动动画数；
+样本保留 10 分钟。节点数在窗口内增长 ≥5000 且 ≥25%，或 heap 到 1.2GB，就：
+
+1. 记一条 `renderer-growth`（门控显示增长量 / heap / 动画数）；
+2. 观察者下暂停 CSS 动画，让页面先缓过来。
+
+它**不删消息、不刷新页面、不重启 host**。大会话仍需要 `/compact`、归档或新会话；采样只是把
+“越来越卡”变成可归因的数据，而不是继续猜插件。清除记录或切到托管模式会清空增长样本并恢复动画。
+
+### 启动恢复（host 外）
+
+host 起不来时门控没有运行机会，所以包内提供 host 外的 `scripts/boot-recover.mjs`：
+
+```bash
+node scripts/boot-recover.mjs --profile <profile-dir> --dry-run
+node scripts/boot-recover.mjs --profile <profile-dir> --launch
+```
+
+它读最新 crash log，点名失败行（如 `tool-executor-ptc`、`pwsh-sandbox`、`tool-workflow`），
+只给这些行追加 `disabled: true`；**不碰 `plugin-console`、框架自带、受保护与核心行**，改前备份为
+`cordis.patch.yml.bak-safe-boot-*`。`--dry-run` 只打印计划。
+
+第一轮仍起不来，再走完整安全启动：
+
+```bash
+node scripts/safe-boot.mjs --disable-suspects
+```
+
+这条也会跳过 `plugin-console` 自身。目标是 **正常启动 → 点名行恢复 → 保留控制台的安全启动**，
+并把原因记录下来，而不是无限循环。
+
+### 服务打不开、且原因是**框架包被掏空**时
+
 ### 版本变更自动拦截
 
 任何来源的框架版本变化（桌面端更新器、手动安装、npx 缓存变化）都会跑一次与升级前相同的
