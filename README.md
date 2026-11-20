@@ -622,6 +622,9 @@ A row can be off for different reasons, and the panel distinguishes them:
 
 ## Known limitations
 
+- Startup no longer scans the system `TEMP` directory for `.trash-*` leftovers (issue #29). Only the
+  profile `node_modules`, repos, and skills roots are scanned; a hand-made `.trash-*` under `%TEMP%`
+  is not auto-cleaned.
 - Host code changes require a **service restart**; client changes only need a page refresh.
   - On a **desktop-hosted** instance the console **refuses** to restart and says so: the official path is to
     fully quit and reopen the client. It never kills or spawns a process there — a manual relaunch would

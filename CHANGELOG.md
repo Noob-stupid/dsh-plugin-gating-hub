@@ -2,6 +2,13 @@
 
 All notable changes to dsh-plugin-hub.
 
+## v0.5.114 — 启动不再同步遍历系统 tmpdir（issue #29，2026-11-19）
+
+`trashScanRoots()` 不再把 `os.tmpdir()` 作为默认扫描根；`%TEMP%` 数万条一级条目会让
+`apply()` 在第一个 `await` 前同步遍历数秒（真机实测约 3.1 秒），而 `.trash-*` 只会落在
+插件自己操作的 profile / repos / skills 目录。profile `node_modules` 和显式 `extra` 根保留，
+清理能力不变。
+
 ## v0.5.113 — 增长采样 + host 外启动恢复（2026-11-19）
 
 ### 增长采样

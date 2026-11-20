@@ -472,6 +472,8 @@ node scripts/fw-preflight.mjs --repair    # 按 lock 的 integrity 从**本地 n
 
 ## 已知限制
 
+- 启动不再遍历系统 `TEMP` 目录找 `.trash-*` 残留（issue #29）；只扫 profile `node_modules`、
+  repos、skills 根。手动放在 `%TEMP%` 下的 `.trash-*` 不会被自动清理。
 - 宿主代码变更需要**重启服务**：面板的重启按钮只指向**官方路径**（在桌面端客户端里重启；
   控制台绝不 kill / 拉起任何进程——手动拉起会与宿主争端口，并产生
   「应用无法启动或已意外停止」）；客户端变更只需刷新页面；
