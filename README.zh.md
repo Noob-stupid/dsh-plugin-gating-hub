@@ -402,6 +402,22 @@ node scripts/safe-boot.mjs --disable-suspects
 这条也会跳过 `plugin-console` 自身。目标是 **正常启动 → 点名行恢复 → 保留控制台的安全启动**，
 并把原因记录下来，而不是无限循环。
 
+### 核心行被版本闸禁用的诊断（issue #28）
+
+桌面端官方更新器绕过本插件升级、而 profile 里 `@deepseek-ai/*` 还指向本地 `file:`/`link:`
+补丁包时，DSH 自己的版本闸可能禁用这条核心行：host 还活着，但 `sessionController` 等服务
+消失，UI 白屏。
+
+`/state.frameworkDiagnosis` 只读报告这个形态：
+
+- 版本与当前框架不一致、且 disabled/failed/pending 的核心行；
+- `file:`/`link:` 的 `@deepseek-ai/*` 依赖及其 peer 版本；
+- 落 `plugin-console/diagnosis-<ts>.json`，并给出“换到当前框架版本 / 回滚框架”两条命令。
+
+它不会自动重启用核心行、不改 profile、不执行命令。`safe-boot.mjs --diagnosis` 可离线打印
+最新诊断。一键换包没有做成自动执行：诊断只给准确的 `dsh plugin … add` 命令，保留现有的
+两段式安装/确认路径。
+
 ### 服务打不开、且原因是**框架包被掏空**时
 
 ### 版本变更自动拦截

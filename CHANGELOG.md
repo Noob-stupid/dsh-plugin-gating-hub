@@ -9,6 +9,14 @@ All notable changes to dsh-plugin-hub.
 插件自己操作的 profile / repos / skills 目录。profile `node_modules` 和显式 `extra` 根保留，
 清理能力不变。
 
+### issue #28：核心行被 DSH 版本闸禁用的诊断
+
+- `/state` 新增 `frameworkDiagnosis`：检测“核心行版本 ≠ 当前框架版本且 disabled/failed/pending”
+  以及 profile 里 `file:`/`link:` 的 `@deepseek-ai/*` vendored 依赖；
+- 命中时写 `plugin-console/diagnosis-<ts>.json`，门控面板显示被禁核心行与“换包 / 回滚框架”命令；
+- `safe-boot.mjs --diagnosis` 可离线打印最新诊断；
+- 只读：不自动启用核心行、不改 profile、不执行恢复命令。
+
 ## v0.5.113 — 增长采样 + host 外启动恢复（2026-11-19）
 
 ### 增长采样

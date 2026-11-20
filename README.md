@@ -485,6 +485,25 @@ node scripts/safe-boot.mjs --disable-suspects
 That path also skips `plugin-console` itself. The intended sequence is **normal start → named-row
 recovery → safe boot with the console preserved**, with the reason recorded rather than looping.
 
+### Framework core-row diagnosis
+
+When the desktop updater upgrades the framework outside this console, a profile that still points
+`@deepseek-ai/*` at a local `file:`/`link:` package can end up with the official version gate
+disabling that core row. The host stays alive, but services such as `sessionController` disappear
+and the UI white-screens.
+
+`/state.frameworkDiagnosis` reports that shape read-only:
+
+- core rows whose version differs from the running framework and are disabled/failed/pending;
+- `file:`/`link:` `@deepseek-ai/*` dependencies and their pinned peer versions;
+- a `plugin-console/diagnosis-<ts>.json` record plus the two recovery commands (pin the package to
+  the running framework version, or roll the framework back).
+
+It never re-enables a core row and never edits the profile. `safe-boot.mjs --diagnosis` prints the
+latest record offline. A one-click “replace the package” action is intentionally not automatic; the
+diagnosis hands you the exact `dsh plugin … add` command so the two-phase install/confirmation path
+is preserved.
+
 ### When the service won't start because **framework packages were wiped**
 
 The rollback above restores the **config layer** (`cordis.patch.yml`). There is a second failure

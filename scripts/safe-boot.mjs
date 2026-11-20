@@ -28,6 +28,7 @@ import { readCompatMode } from '../lib/server/domain/compat-state.js'
 import { CORE_PATCH_ROW_IDS } from '../lib/server/domain/patch.js'
 import { validatePatchYaml } from '../lib/server/domain/patch-yaml-check.js'
 import { applyRetention, disableSuspects, listSnapshots, markSnapshotGood, readSafeBootState, restoreLastGood, safeBootDir } from '../lib/server/domain/safe-boot.js'
+import { latestDiagnosis } from '../lib/server/domain/framework-diagnosis.js'
 
 const PLUGIN_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const COMMANDS = {
@@ -118,7 +119,7 @@ const zh = (pair) => (pair === null || pair === undefined ? '' : pair.zh)
 function main() {
   const args = parseArgs(process.argv.slice(2))
   if (args.flags.has('help') || args.flags.size === 0) { process.stdout.write(HELP); return 0 }
-  const ACTIONS = ['list', 'restore-last-good', 'disable-suspects', 'mark-good']
+  const ACTIONS = ['list', 'diagnosis', 'restore-last-good', 'disable-suspects', 'mark-good']
   const picked = ACTIONS.filter((a) => args.flags.has(a))
   if (picked.length === 0) { process.stdout.write(HELP); line(`\n没有可执行的动作（可选：${ACTIONS.join(' / ')}）`); return 1 }
   if (picked.length > 1) { line(`一次只能做一个动作（收到：${picked.join(' + ')}）`); return 1 }
@@ -130,6 +131,32 @@ function main() {
   const patchPath = join(profileDir, 'cordis.patch.yml')
   const asJson = args.flags.has('json')
   const dryRun = args.flags.has('dry-run')
+
+  if (args.flags.has('diagnosis')) {
+    const diagnosis = latestDiagnosis({ home })
+    if (asJson) { line(JSON.stringify({ ok: true, action: 'diagnosis', diagnosis }, null, 2)); return 0 }
+    if (diagnosis === null) {
+      line('还没有框架诊断文件（diagnosis-*.json）。')
+      line('它会在 /state 检测到“核心行版本与当前框架不一致 + 非 registry 核心依赖未跟上”时生成。')
+      return 0
+    }
+    line(`诊断时间：${diagnosis.at ?? '?'}`)
+    line(`框架：${diagnosis.previousVersion ?? '?'} → ${diagnosis.currentVersion ?? '?'}`)
+    line(diagnosis.summary ?? '')
+    if ((diagnosis.blockedCoreRows ?? []).length > 0) {
+      line('\n被版本闸禁用的核心行：')
+      for (const row of diagnosis.blockedCoreRows) line(`  ${row.rowId ?? '?'} · ${row.moduleName} · 版本 ${row.version} · ${row.fiberPhase ?? 'disabled'}`)
+    }
+    if ((diagnosis.vendoredCoreDeps ?? []).length > 0) {
+      line('\n未跟上的非 registry 核心依赖：')
+      for (const dep of diagnosis.vendoredCoreDeps) line(`  ${dep.name} · ${dep.version ?? '?'} · ${dep.spec}`)
+    }
+    if ((diagnosis.recovery ?? []).length > 0) {
+      line('\n恢复命令（只打印，不执行）：')
+      for (const item of diagnosis.recovery) line(`  ${item.command}`)
+    }
+    return 0
+  }
 
   if (args.flags.has('list')) {
     const snapshots = listSnapshots({ home })
