@@ -44,5 +44,15 @@ const clean = diagnoseFrameworkCoreRows({
   framework: { version: '0.2.2-rc.3-retain5', from: '0.2.2-rc.3-retain5', upgraded: false }, profileDir: profile, home: HOME, now: 1700000000001,
 })
 check('⑧ 版本一致时不误报', clean.critical === false && clean.blockedCoreRows.length === 0 && clean.vendoredCoreDeps.length === 0, JSON.stringify(clean))
+const noise = diagnoseFrameworkCoreRows({
+  entries: [
+    { rowId: 'agent', moduleName: '@deepseek-ai/dsh-agent', version: '0.2.2-rc.3-retain5', enabled: true, fiberPhase: 'active' },
+    { rowId: 'schedule', moduleName: '@deepseek-ai/dsh-schedule', version: '0.2.0-rc.2', enabled: false, fiberPhase: null, disableSource: 'patch' },
+    { rowId: 'auto-review', moduleName: '@deepseek-ai/dsh-experimental-auto-review', version: '0.2.1-rc.2', enabled: false, fiberPhase: null, disableSource: 'bundle' },
+    { rowId: 'speech', moduleName: '@deepseek-ai/dsh-experimental-speech-to-text', version: '0.2.1-rc.2', enabled: false, fiberPhase: null, disableSource: 'bundle' },
+  ],
+  framework: { version: '0.2.2-rc.3-retain5', from: '0.2.2-rc.3', upgraded: true }, profileDir: profile, home: HOME, now: 1700000000002,
+})
+check('⑨ 旧版本但被 bundle 默认禁用 / 主动 patch 禁用的行不算 critical', noise.critical === false && noise.blockedCoreRows.length === 0, JSON.stringify(noise.blockedCoreRows))
 console.log(failed === 0 ? '\nALL PASS' : `\n${failed} FAILED`)
 process.exitCode = failed === 0 ? 0 : 1

@@ -2,6 +2,16 @@
 
 All notable changes to dsh-plugin-hub.
 
+## v0.5.115 — 核心行诊断去掉误报（2026-11-20）
+
+v0.5.114 的 `frameworkDiagnosis` 把“bundle 默认禁用的实验插件”和“用户主动 patch 禁用的旧行”
+也算成了 critical。现在只有两类会报：
+
+- 核心行 `fiberPhase` 为 `failed` / `pending`（真的加载失败/等不到服务）；
+- 核心行被 `patch` 禁用、且版本正好来自上一版框架（外部升级后被版本闸点名的形态）。
+
+bundle 默认禁用不再误报。
+
 ## v0.5.114 — 启动不再同步遍历系统 tmpdir（issue #29，2026-11-19）
 
 `trashScanRoots()` 不再把 `os.tmpdir()` 作为默认扫描根；`%TEMP%` 数万条一级条目会让
