@@ -166,8 +166,10 @@ try {
       logged !== null && typeof logged === 'object' && logs.length === 1 && /\[trash\] 扫描 1 个/u.test(logs[0]), logs[0])
     check('startTrashCleanup：连 find 抛错也不 reject（返回带 error 的统计）',
       typeof (await startTrashCleanup({ roots: [stuckRoot], find: () => { throw new Error('x') } }))?.error === 'string')
-    check('trashScanRoots：默认含系统 tmpdir；传 profileDir 与 extra 时一并纳入（去重前如实罗列）',
-      trashScanRoots({}).includes(tmpdir()) && trashScanRoots({ profileDir: 'C:/p', extra: ['C:/repos'] }).join('|').includes(join('C:/p', 'node_modules'))
+    check('trashScanRoots：默认不再含系统 tmpdir（issue #29）；profileDir 与 extra 仍纳入',
+      !trashScanRoots({}).includes(tmpdir())
+      && !trashScanRoots({ profileDir: 'C:/p', extra: ['C:/repos'] }).includes(tmpdir())
+      && trashScanRoots({ profileDir: 'C:/p', extra: ['C:/repos'] }).join('|').includes(join('C:/p', 'node_modules'))
       && trashScanRoots({ profileDir: 'C:/p', extra: ['C:/repos'] }).includes('C:/repos'),
       trashScanRoots({ profileDir: 'C:/p', extra: ['C:/repos'] }).join(' | '))
     for (const d of [scanRoot, bigRoot, stuckRoot, slowRoot]) { try { rmSync(d, { recursive: true, force: true }) } catch {} }
