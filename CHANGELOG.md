@@ -2,6 +2,13 @@
 
 All notable changes to dsh-plugin-hub.
 
+## v0.5.116 — 增长降载只暂停无限循环动画（issue #30，2026-11-25）
+
+旧实现注入 `html.dsh-pc-growth * { animation-play-state: paused }`，把搜索/菜单这种
+`opacity: 0` 起步的有限入场动画也停在第 0 帧，导致卡片透明、点不开。现在改为遍历
+`document.getAnimations()`，只暂停 `iterations === Infinity` 且正在播放的动画；恢复时逐个
+`play()`，有限入场/退场完全不碰。不再注入全局 CSS 规则、不再加 `dsh-pc-growth` 类。
+
 ## v0.5.115 — 核心行诊断去掉误报（2026-11-20）
 
 v0.5.114 的 `frameworkDiagnosis` 把“bundle 默认禁用的实验插件”和“用户主动 patch 禁用的旧行”

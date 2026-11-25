@@ -143,6 +143,9 @@ check('⑪ 门控里显示运行守护，且最多 10 条', () => {
   assert.match(STATE, /runtimeHealthView\(\{ limit: 10 \}\)/u, '/state 没有下发最多 10 条守护记录')
   assert.match(CLIENT, /sampleGrowth/u, '客户端没有增长采样')
   assert.match(CLIENT, /renderer-growth/u, '增长事件没有写进守护')
+  assert.match(CLIENT, /pausedAnimations/u, '增长降载没有按动画对象跟踪')
+  assert.match(CLIENT, /iterations !== Infinity/u, '增长降载必须只暂停无限循环动画')
+  assert.doesNotMatch(CLIENT, /dsh-pc-growth \*/u, '不能再注入全局暂停规则（issue #30）')
 })
 
 console.log(passed > 0 && process.exitCode !== 1 ? `\n${passed} PASS / 全绿` : `\n${passed} PASS / 有失败`)

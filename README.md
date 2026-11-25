@@ -453,7 +453,8 @@ node count grows by at least 5,000 and 25% within that window, or the heap reach
 the guard:
 
 1. records a `renderer-growth` incident (the gate lists it with the delta, heap, and animation count);
-2. pauses CSS animations (only in Observer) so the page can catch up.
+2. pauses **infinite looping** CSS animations only (Observer); finite entrance/exit animations are
+   left alone, so search panels and menus still open normally.
 
 It does **not** delete messages, reload the page, or restart the host. A long session still needs
 `/compact`, archiving, or a fresh session; this sampler makes the growth visible instead of
