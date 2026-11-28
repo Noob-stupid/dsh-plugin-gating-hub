@@ -116,6 +116,10 @@ const ROUTES = [
   '/runtime-health',
   '/runtime-guard',
   '/preset-contract',
+  '/tool-governance/state',
+  '/tool-governance/config',
+  '/tool-governance/schema-report',
+  '/tool-governance/schema-preview',
 ]
 // 分层后路由可能写在 lib/server/routes/**（表项）或 index.js（内联分支）—— 两种写法都要认
 const walkSrc = (dir) => readdirSync(dir, { withFileTypes: true }).flatMap((e) => {
@@ -189,6 +193,10 @@ const SCHEMAS = [
   // ★ 加法（用户 2026-11-04 第 2 项）：[自更新] 的写入口。**不认识的 action ⇒ 400 + 可读原因**
   //   （绝不 200 假装做过什么）；顺便钉住"入参校验先于任何副作用"这条契约。
   ['POST', '/plugin-console/self-auto-update', { action: 'not-an-action' }, 400, ['error', 'ok']],
+  ['GET', '/plugin-console/tool-governance/state', undefined, 200, ['ok', 'enabled', 'status', 'error', 'lastError', 'conflicts', 'conflictCount', 'config', 'catalogCount', 'compositeCount', 'compositeConflicts', 'capEnforced', 'descriptionOverridesCodeModeUnsupported', 'warnings', 'summary', 'agents']],
+  ['POST', '/plugin-console/tool-governance/config', { maxActiveTools: 8 }, 200, ['ok', 'enabled', 'status', 'error', 'lastError', 'conflicts', 'conflictCount', 'config', 'catalogCount', 'compositeCount', 'compositeConflicts', 'capEnforced', 'descriptionOverridesCodeModeUnsupported', 'warnings', 'summary', 'agents']],
+  ['GET', '/plugin-console/tool-governance/schema-report', undefined, 200, ['ok', 'status', 'items', 'summary']],
+  ['POST', '/plugin-console/tool-governance/schema-preview', { descriptions: {} }, 200, ['ok', 'items', 'unknown']],
 ]
 for (const [method, path, body, wantStatus, wantKeys] of SCHEMAS) {
   const r = await call(method, path, body)

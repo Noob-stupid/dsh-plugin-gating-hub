@@ -66,6 +66,8 @@ function strictCtx({ inject = [], services = {}, own = {} } = {}) {
   const target = {
     // Context 核心成员：cordis 里在实例/原型上，属性访问不需要 inject（effect 返回 disposer）
     effect: (fn) => { const disposer = fn(); return typeof disposer === 'function' ? disposer : () => {} },
+    // 事件订阅同样是 Context 核心方法（不是可注入服务）；返回 disposer 即可。
+    on: () => () => {},
     ...own,
     // 可选读取的正规入口：不校验 inject，未提供返回 undefined（cordis ReflectService.get）
     get: (name) => (hasOwn(services, name) ? services[name] : undefined),

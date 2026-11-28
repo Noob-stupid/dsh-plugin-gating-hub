@@ -2,6 +2,23 @@
 
 All notable changes to dsh-plugin-hub.
 
+## Unreleased — 工具治理 [tool govern] 生产化补强
+
+- 小目录自动跳过：`minCatalogTools` 默认 10，工具数低于阈值不加 restriction；
+- `selectActiveTools` 不再用零分工具按字母序填满上限，只收任务正分工具；
+- CI 接入 `test-tool-governance` / `-scale` / `-bench` / `-composite` / `-ui`；
+- 新增 80 工具 Schema 成本基准：35,440B → 2,658B（-92.5%，确定性代理指标，非模型 A/B）；
+- 真实 host 80 工具测试在 Electron 下对 rc.5 asar 复跑通过。
+
+- “功能包”新增默认开启的 `[tool govern]` 开关；停用后恢复宿主原始工具视图。
+- 按 Agent 动态限制可见工具，支持 `plugin_console_tool_search` 搜索与 `plugin_console_tool_activate` 下一步激活。
+- 治理工具统一 `plugin_console_` 命名空间，注册前检测重名，冲突时不覆盖、不限制。
+- 官方插件详情原生配置卡展示工具数、活跃数、Schema 大小、失败调用与策略设置。
+- 新增工具目录、冲突检测、遥测摘要、硬性活跃工具上限和服务未就绪等待机制。
+- 遥测事件以脱敏 JSONL 落盘，支持大小上限、轮转和写入失败隔离。
+- M2 Schema 优化工作室：问题报告、描述预览、差异对比和已批准描述覆盖。
+- M2 声明式组合工具：`plugin_console_` 命名空间、输入校验、参数映射、确认点、并行分组、嵌套原生执行和失败停止。
+
 ## v0.5.116 — 增长降载只暂停无限循环动画（issue #30，2026-11-25）
 
 旧实现注入 `html.dsh-pc-growth * { animation-play-state: paused }`，把搜索/菜单这种

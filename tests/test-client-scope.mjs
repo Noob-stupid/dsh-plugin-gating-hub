@@ -31,14 +31,15 @@ const check = (name, fn) => {
 }
 
 const mainStart = lineOf(/^\s*function PluginConsoleTab\(/)
+const toolGovernStart = lineOf(/^\s*function ToolGovernanceSection\(/)
 const safetyStart = lineOf(/^\s*function PluginSafetyTab\(/)
 const applyStart = lineOf(/^\s*function apply\(ctx\)/)
 
-check('两个组件与 apply 都还在（防整段误删）', () => {
+check('组件与 apply 都还在（防整段误删）', () => {
   assert.ok(mainStart > 0, 'PluginConsoleTab 未找到')
-  assert.ok(safetyStart > 0, 'PluginSafetyTab 未找到')
-  assert.ok(applyStart > safetyStart, `apply 应在两个组件之后，实际 L${applyStart}`)
-  assert.ok(safetyStart > mainStart, 'PluginSafetyTab 应在 PluginConsoleTab 之后')
+  assert.ok(toolGovernStart > mainStart, 'ToolGovernanceSection 应在 PluginConsoleTab 之后')
+  assert.ok(safetyStart > toolGovernStart, 'PluginSafetyTab 应在 ToolGovernanceSection 之后')
+  assert.ok(applyStart > safetyStart, `apply 应在组件之后，实际 L${applyStart}`)
 })
 
 check('★ fill 只定义一次', () => {
@@ -48,7 +49,7 @@ check('★ fill 只定义一次', () => {
 
 check('★★ 主面板（PluginConsoleTab）区间内**不许**出现 fill( —— 本次真机事故的根因', () => {
   const bad = []
-  for (let n = mainStart; n < safetyStart; n += 1) {
+  for (let n = mainStart; n < toolGovernStart; n += 1) {
     const line = lines[n - 1]
     if (/^\s*\/\//.test(line)) continue // 注释里提到不算
     if (/\bfill\(/.test(line)) bad.push(`L${n}: ${line.trim().slice(0, 90)}`)
@@ -63,14 +64,14 @@ check('fill 的定义确实落在 PluginSafetyTab 区间内（与上一条互补
 
 check('主面板里出现的重渲染触发函数（refresh）确有定义（同类越界的最小钉子）', () => {
   const useInMain = []
-  for (let n = mainStart; n < safetyStart; n += 1) {
+  for (let n = mainStart; n < toolGovernStart; n += 1) {
     const line = lines[n - 1]
     if (/^\s*\/\//.test(line)) continue
     if (/\brefresh\(\)/.test(line)) useInMain.push(n)
   }
   if (useInMain.length > 0) {
     const def = lineOf(/const refresh = react\.useCallback/)
-    assert.ok(def > 0 && def < safetyStart, `主面板用了 refresh() 但定义不在主面板内（定义 L${def}）`)
+    assert.ok(def > 0 && def < toolGovernStart, `主面板用了 refresh() 但定义不在主面板内（定义 L${def}）`)
   }
 })
 

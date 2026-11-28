@@ -139,6 +139,7 @@ Requires: DSH ≥ 0.1.0-rc.6 (web profile, with `dsh-client-modules` / `dsh-host
 | | Benefit | Detail |
 |---|---|---|
 | 🤖 | **AI Empower ** | Give the console a package name or GitHub repo — the local AI reads docs, drafts a **deployment plan** (install / write config / start service / health check) and executes it safely after your confirmation; server-type components get an automatic control card |
+| 🧠 | **Tool governance [tool govern]** | Enabled by default in the **Feature pack** menu: exposes task-relevant tools, supports search/activation of hidden tools, and shows Schema/call statistics; disable it to restore the host's original tool view |
 | 🛡️ | **Framework upgrade safety & adapt gate ** | Force-disables plugins incompatible with the new framework (enable locked; 「Check update → Update & adapt」auto-verifies and unlocks); full-tree checkpoint before upgrade, automatic rollback on relaunch failure, one-click rollback to the previous version |
 | 🏠 | **Family-bundle cards & safety ** | Same-root subpath exports group into one family card (collapse/expand, batch check-update, one-click unlock-adapted, known-check preview); never-crash safety (pre-enable import probe + patch auto-heal + exports fallback); adapt-gate source-scan hard criterion & migrate detection; deleting a bundle sub-row disables only that row |
 | 🚀 | **Server component cards** | Left-side floating card auto-aligned to the main panel: start / stop / status / **open Web UI** buttons, multi-server dropdown, collapsible |
@@ -157,6 +158,7 @@ Requires: DSH ≥ 0.1.0-rc.6 (web profile, with `dsh-client-modules` / `dsh-host
 
 - [Highlights](#highlights)
 - [AI 赋能与服务器组件控制](#ai-赋能与服务器组件控制)
+- [Tool governance [tool govern]](#tool-governance-tool-govern)
 - [One-click install](#one-click-install)
 - [Usage](#usage)
 - [Features](#features)
@@ -216,6 +218,19 @@ Requires: DSH ≥ 0.1.0-rc.6 (web profile, with `dsh-client-modules` / `dsh-host
 ---
 
 ## Features
+
+### Tool governance [tool govern]
+
+- Adds a **`[tool govern]`** switch to the **Feature pack** menu, enabled by default;
+- Dynamically limits model-visible tools to the current task to reduce Schema/context bloat;
+- Skips the restriction entirely when the catalog has fewer than 10 tools (the extra search/activate round-trip is not worth it at that size);
+- Models can search the full catalog with `plugin_console_tool_search` and activate hidden tools on the next step with `plugin_console_tool_activate`;
+- Governance tools use the `plugin_console_` namespace and check for name conflicts before registration, never replacing an existing tool;
+- The official plugin-details configuration card shows tool counts, active tools, Schema size, failed calls, and policy settings;
+- Disabling releases governance restrictions and restores the host's original tool view without uninstalling packages or modifying third-party tools.
+- Telemetry is redacted, persisted as JSONL, and rotated without storing raw arguments or outputs.
+- The Schema studio reports issues, previews descriptions, and applies approved description overrides.
+- Declarative composites support input validation, placeholder mapping, confirmation, parallel groups, nested native execution, and fail-fast behavior.
 
 ### Installed plugins (one-click toggle + details)
 

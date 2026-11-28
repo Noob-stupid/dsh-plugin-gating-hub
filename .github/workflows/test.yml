@@ -291,6 +291,11 @@ jobs:
           node tests/test-boot-recover.mjs
           node tests/test-trash-roots.mjs
           node tests/test-framework-diagnosis.mjs
+          node tests/test-tool-governance.mjs
+          node tests/test-tool-governance-scale.mjs
+          node tests/test-tool-governance-bench.mjs
+          node tests/test-tool-governance-composite.mjs
+          node tests/test-tool-governance-ui.mjs
           node tests/test-runtime-health.mjs
           node tests/test-runtime-guard-ui.mjs
           node tests/test-version-gate.mjs
