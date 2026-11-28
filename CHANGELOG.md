@@ -2,6 +2,12 @@
 
 All notable changes to dsh-plugin-hub.
 
+## Unreleased — issue #28 诊断增强
+
+- `frameworkDiagnosis` 增加 safe-boot 快照 diff：上次快照里启用过、现在被禁用的 `@deepseek-ai/*` 核心行会被点名（`previouslyEnabledNowDisabled`），仍只读、不自动改行。
+- `fw-watchdog` 增加只读 UI 探针：HOST 进程活着但根页面命中 `Failed to load plugins` 时，写 `watchdog-ui-failure.json` + 日志；不杀进程、不 spawn、不改官方文件。
+- 门控诊断区显示“上次快照启用、现已禁用”的核心行。
+
 ## Unreleased — 工具治理 [tool govern] 生产化补强
 
 - 小目录自动跳过：`minCatalogTools` 默认 10，工具数低于阈值不加 restriction；

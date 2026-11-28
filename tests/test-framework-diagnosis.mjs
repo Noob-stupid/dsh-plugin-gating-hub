@@ -18,6 +18,11 @@ writeFileSync(join(profile, 'vendor', 'controller', 'package.json'), JSON.string
 }, null, 2), 'utf8')
 const patch = '- id: session-controller\n  disabled: true\n'
 writeFileSync(join(profile, 'cordis.patch.yml'), patch, 'utf8')
+const snapDir = join(HOME, 'plugin-console', 'safe-boot', 'snapshots')
+mkdirSync(snapDir, { recursive: true })
+writeFileSync(join(snapDir, 'snap-test.json'), JSON.stringify({
+  id: 'snap-test', at: 1699999999999, rows: { enabled: ['session-controller'] },
+}, null, 2), 'utf8')
 
 const { diagnoseFrameworkCoreRows, latestDiagnosis, vendoredCoreDeps } = await import('../lib/server/domain/framework-diagnosis.js')
 const entries = [
@@ -35,6 +40,7 @@ const result = diagnoseFrameworkCoreRows({
 })
 check('② 判定 critical', result.ok === true && result.critical === true, JSON.stringify(result))
 check('③ 点名版本不一致的核心行', result.blockedCoreRows.some((r) => r.rowId === 'session-controller'), JSON.stringify(result.blockedCoreRows))
+check('③b 快照里启用过、现在被禁用的核心行也被点名', result.previouslyEnabledNowDisabled.some((r) => r.rowId === 'session-controller'), JSON.stringify(result.previouslyEnabledNowDisabled))
 check('④ 给出换到当前框架版本的恢复命令', result.recovery.some((r) => r.command.includes('@deepseek-ai/dsh-api-session-controller@0.2.2-rc.5')), JSON.stringify(result.recovery))
 check('⑤ 写 diagnosis 文件', typeof result.diagnosisPath === 'string' && existsSync(result.diagnosisPath), result.diagnosisPath)
 check('⑥ 只读：补丁内容不变', readFileSync(join(profile, 'cordis.patch.yml'), 'utf8') === patch)

@@ -117,6 +117,61 @@ const preflight = (mode) => {
   return { ok: r.status === 0, stdout: String(r.stdout ?? '') + String(r.stderr ?? ''), missing: false }
 }
 
+/** HOST 活着但 UI 白屏的只读探针（issue #28）。
+ *  只取 HOST 进程的监听端口，GET /，在响应体里找「Failed to load plugins」。
+ *  命中只写诊断文件 + 日志；不杀进程、不 spawn、不改官方文件。 */
+async function probeHostUi() {
+  if (EXE === null || process.env.DSH_WATCHDOG_FAKE_PROCS) return null
+  const ps = [
+    `$all = @(Get-CimInstance Win32_Process -Filter "Name='${EXE}'" -ErrorAction SilentlyContinue)`,
+    `$pids = @($all | Where-Object { $_.CommandLine -match 'dsh-desktop-host[\\\\/]lib[\\\\/]index\\.js' } | ForEach-Object { $_.ProcessId })`,
+    `$conn = @(Get-NetTCPConnection -State Listen -ErrorAction SilentlyContinue | Where-Object { $pids -contains $_.OwningProcess } | Select-Object -First 1)`,
+    `if ($conn.Count -gt 0) { Write-Output $conn[0].LocalPort }`,
+  ].join('; ')
+  const r = spawnSync('powershell', ['-NoProfile', '-Command', ps], { encoding: 'utf8', timeout: 20000, windowsHide: true })
+  const port = Number(String(r.stdout ?? '').trim())
+  if (!Number.isInteger(port) || port <= 0) return { port: null, failed: false, snippet: null }
+  try {
+    const http = await import('node:http')
+    const body = await new Promise((resolve) => {
+      const req = http.get({ host: '127.0.0.1', port, path: '/', timeout: 5000 }, (res) => {
+        let data = ''
+        res.setEncoding('utf8')
+        res.on('data', (chunk) => { if (data.length < 200000) data += chunk })
+        res.on('end', () => resolve(data))
+      })
+      req.on('timeout', () => { req.destroy(); resolve('') })
+      req.on('error', () => resolve(''))
+    })
+    const failed = /Failed to load plugins?|plugin[s]? failed to (?:load|import)|插件加载失败/iu.test(body)
+    return { port, failed, snippet: failed ? body.replace(/\s+/gu, ' ').slice(0, 500) : null }
+  } catch {
+    return { port, failed: false, snippet: null }
+  }
+}
+
+function reportUiFailure(probe) {
+  if (probe?.failed !== true) return
+  const at = new Date().toISOString()
+  const file = join(LOG_DIR, 'watchdog-ui-failure.json')
+  const payload = {
+    at,
+    port: probe.port,
+    url: `http://127.0.0.1:${probe.port}/`,
+    symptom: 'HOST process is alive but the root page contains a plugin load failure.',
+    snippet: probe.snippet,
+    note: 'Read-only diagnosis only. The watchdog did not kill, spawn, rewrite plugins, or edit official files.',
+    recovery: ['Open the page and check the failed plugin row', 'Use Safe boot / disable the failed plugin', 'If a core row was disabled by the version gate, roll the framework back'],
+  }
+  try {
+    mkdirSync(LOG_DIR, { recursive: true })
+    writeFileSync(file, `${JSON.stringify(payload, null, 2)}\n`, 'utf8')
+  } catch {}
+  log(`★ HOST 活着但根页面命中插件加载失败（port ${probe.port}）⇒ 已写 ${file}（只诊断，不动作）`)
+}
+
+let lastUiReportAt = 0
+
 /** 闭包是否坏。判据取自 fw-preflight 自己那行结论：「走了 N 个包，M 个解析不了」，M>0 即坏。
  *  认不出格式时按"坏"处理 —— 宁可多查一次，也不放过真事故。 */
 function closureBroken(out) {
@@ -137,6 +192,12 @@ async function tick() {
     if (p.host > 0) {                                // HOST 在 = 服务活着 = 正常
       if (strikes !== 0) log('HOST 服务进程已回来 —— 恢复正常，看门狗回待命')
       strikes = 0
+      // 服务活着但 UI 可能因插件加载失败白屏（issue #28）：低频只读探一次，命中只写诊断。
+      if (Date.now() - lastUiReportAt > 600000) {
+        lastUiReportAt = Date.now()
+        const ui = await probeHostUi()
+        reportUiFailure(ui)
+      }
       return
     }
     strikes += 1
@@ -215,6 +276,11 @@ if (HAS('--status') || HAS('--once')) {
     if (!check.missing) {
       log(check.stdout.trim().split('\n').map((l) => '    ' + l).join('\n'))
       log(`闭包判定：${closureBroken(check.stdout) ? '★ 坏' : '好'}`)
+    }
+    const ui = await probeHostUi()
+    if (ui !== null) {
+      log(`UI 探针：port=${ui.port ?? '未知'} 插件加载失败=${ui.failed ? '是' : '否'}`)
+      if (ui.failed) reportUiFailure(ui)
     }
   }
   process.exit(0)
