@@ -498,7 +498,25 @@ L1 只修改模型可见描述，不修改 `ToolDefinition.parameters`，因此�
 7. composite 子步骤失败时正确停止；
 8. 治理停用后恢复原工具视图。
 
-### 10.5 成功指标
+### 10.5 反馈驱动的描述更新（P1，未实现）
+
+已有 `buildSchemaReport` + `descriptionOverrides` + schema workshop，但只支持**人工预览/应用**。
+后续补闭环：
+
+```text
+telemetry 的误选/失败/参数错误
+  → 聚合到具体工具
+  → 生成“原文 vs 建议”的描述修改提案
+  → 用户在 workshop 预览
+  → 确认后写入版本化 descriptionOverrides
+  → golden task / 真实模型 A/B 验证
+  → 无改善则一键回滚
+```
+
+安全边界：只改治理层有效描述，不改第三方包；不改参数 Schema 语义；不自动应用；证据不足不提示。
+接口预留：`GET/POST /tool-governance/description-proposals`；数据结构包含 `tool/current/proposed/evidence/status/version`。
+
+### 10.6 成功指标
 
 目标值，不是当前实测：
 
@@ -672,6 +690,18 @@ M1 的签名效果必须是：
 - 本地 embedding 路由；
 - 子 Agent 治理策略；
 - 从会话推荐 composite。
+
+### M4：能力契约与插件调度（未实现，方向已确认）
+
+用户目标不是“少暴露工具”，而是插件能力之间的调度/交接。M4 需要：
+
+- 能力契约：`inputs/outputs/sideEffects/cost/requires/produces`；
+- 任务 DAG：节点是能力，不是工具名；
+- 调度：并行、预算、超时、重试、降级；
+- 交接：artifact 或 peer session，不靠模型猜输出；
+- 多插件端到端评测：成功率、墙钟、轮数、handoff 失败率。
+
+在 M4 之前，M1/M2 的 catalog/restriction/composite 只作为底座，不作为最终卖点。
 
 ## 15. 测试计划
 
