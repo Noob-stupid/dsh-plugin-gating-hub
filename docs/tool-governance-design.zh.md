@@ -24,6 +24,24 @@
   这是“发送给模型的 Schema 字节”代理指标，不是模型准确率/A-B 结论。
 - **仍未完成**：模型端到端 A/B、rc.5 真实 Agent 复测、原生配置卡的 live UI 验收。
 
+### 0.2 真实模型工具选择 A/B（2026-11-28，首轮）
+
+用真实 DeepSeek 模型 + 6 个小任务（硬件沙盒 / OpenViking 记忆 / 仓库搜索 / Web 搜索）对比“全部 24 个工具”与“治理后 active 集合 + search/activate”：
+
+| 指标 | baseline | governed |
+|---|---:|---:|
+| 任务成功 | 6/6 | 5/6 |
+| prompt tokens | 10,359 | 5,354（-48.3%） |
+
+结论：
+
+- 首轮真实模型评测**没有显示能力上升**，反而少成功 1 个；这与预期一致，治理首先省的是 Schema/token，不是自动变聪明；
+- 唯一失败是 `hw-run`：baseline 4 步完成，governed 需要 search/activate，5 步内没到 `hw_run_simulation`，属于**多步开销**；
+- 已做的迭代：补中文意图别名、把 `read/write/edit/glob/grep/bash/web_search/web_fetch` 等原生工具设为 protected（始终可见，不占第三方 active 名额）；
+- 下一步应增加步预算/更主动的初始选择/结果反馈排序，再重跑同一组任务；不能拿这轮 5/6 宣称“更智能”。
+
+评测脚本：`scripts/eval-tool-governance-model.mjs`；结果：`docs/tool-governance-model-eval.json`。
+
 ### 0.1 M3 检索层评测（2026-11-28）
 
 - `agent/evaluator.js`：10 条 golden task，比较“全部工具（baseline）”与“治理后的 active 集合”；

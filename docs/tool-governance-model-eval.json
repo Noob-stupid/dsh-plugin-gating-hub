@@ -1,0 +1,394 @@
+{
+  "at": "2026-11-28T08:28:29.023Z",
+  "model": "deepseek-chat",
+  "tasks": 6,
+  "summary": {
+    "baseline": {
+      "mode": "baseline",
+      "tasks": 6,
+      "success": 6,
+      "successRate": 1,
+      "promptTokens": 10359,
+      "completionTokens": 370
+    },
+    "governed": {
+      "mode": "governed",
+      "tasks": 6,
+      "success": 5,
+      "successRate": 0.833,
+      "promptTokens": 5354,
+      "completionTokens": 296
+    }
+  },
+  "results": [
+    {
+      "id": "hw-list",
+      "prompt": "先看看本机硬件沙盒里有哪些项目，并告诉我哪个项目是智座、当前是否连通。",
+      "expected": "hw_list_projects",
+      "mode": "baseline",
+      "success": true,
+      "called": "hw_list_projects",
+      "calls": [
+        {
+          "step": 0,
+          "tool": "hw_list_projects",
+          "latencyMs": 717
+        }
+      ],
+      "visible": 24,
+      "usage": {
+        "prompt_tokens": 1687,
+        "completion_tokens": 31,
+        "total_tokens": 1718,
+        "prompt_tokens_details": {
+          "cached_tokens": 0
+        },
+        "prompt_cache_hit_tokens": 0,
+        "prompt_cache_miss_tokens": 1687
+      },
+      "reason": "expected tool called"
+    },
+    {
+      "id": "hw-list",
+      "prompt": "先看看本机硬件沙盒里有哪些项目，并告诉我哪个项目是智座、当前是否连通。",
+      "expected": "hw_list_projects",
+      "mode": "governed",
+      "success": true,
+      "called": "hw_list_projects",
+      "calls": [
+        {
+          "step": 0,
+          "tool": "hw_list_projects",
+          "latencyMs": 422
+        }
+      ],
+      "visible": 15,
+      "usage": {
+        "prompt_tokens": 1169,
+        "completion_tokens": 30,
+        "total_tokens": 1199,
+        "prompt_tokens_details": {
+          "cached_tokens": 0
+        },
+        "prompt_cache_hit_tokens": 0,
+        "prompt_cache_miss_tokens": 1169
+      },
+      "reason": "expected tool called"
+    },
+    {
+      "id": "hw-run",
+      "prompt": "把智座项目放进硬件沙盒，然后运行一次仿真，确认双红外读数能被系统收到。",
+      "expected": "hw_run_simulation",
+      "mode": "baseline",
+      "success": true,
+      "called": "hw_run_simulation",
+      "calls": [
+        {
+          "step": 0,
+          "tool": "hw_list_projects",
+          "latencyMs": 706
+        },
+        {
+          "step": 1,
+          "tool": "hw_get_assembly",
+          "latencyMs": 556
+        },
+        {
+          "step": 2,
+          "tool": "hw_import_project",
+          "latencyMs": 410
+        },
+        {
+          "step": 3,
+          "tool": "hw_run_simulation",
+          "latencyMs": 556
+        }
+      ],
+      "visible": 24,
+      "usage": {
+        "prompt_tokens": 1884,
+        "completion_tokens": 57,
+        "total_tokens": 1941,
+        "prompt_tokens_details": {
+          "cached_tokens": 1664
+        },
+        "prompt_cache_hit_tokens": 1664,
+        "prompt_cache_miss_tokens": 220
+      },
+      "reason": "expected tool called"
+    },
+    {
+      "id": "hw-run",
+      "prompt": "把智座项目放进硬件沙盒，然后运行一次仿真，确认双红外读数能被系统收到。",
+      "expected": "hw_run_simulation",
+      "mode": "governed",
+      "success": false,
+      "calls": [
+        {
+          "step": 0,
+          "tool": "hw_list_projects",
+          "latencyMs": 482
+        },
+        {
+          "step": 1,
+          "tool": "plugin_console_tool_search",
+          "latencyMs": 871
+        },
+        {
+          "step": 2,
+          "tool": "plugin_console_tool_activate",
+          "latencyMs": 383
+        },
+        {
+          "step": 3,
+          "tool": "hw_list_projects",
+          "latencyMs": 987
+        },
+        {
+          "step": 4,
+          "tool": "plugin_console_tool_search",
+          "latencyMs": 761
+        }
+      ],
+      "visible": 15,
+      "reason": "step limit"
+    },
+    {
+      "id": "memory-find",
+      "prompt": "查一下我们之前关于 issue #28 核心包诊断的结论。",
+      "expected": [
+        "mcp__openviking__find",
+        "mcp__openviking__search"
+      ],
+      "mode": "baseline",
+      "success": true,
+      "called": "mcp__openviking__find",
+      "calls": [
+        {
+          "step": 0,
+          "tool": "mcp__openviking__find",
+          "latencyMs": 1000
+        }
+      ],
+      "visible": 24,
+      "usage": {
+        "prompt_tokens": 1679,
+        "completion_tokens": 102,
+        "total_tokens": 1781,
+        "prompt_tokens_details": {
+          "cached_tokens": 1408
+        },
+        "prompt_cache_hit_tokens": 1408,
+        "prompt_cache_miss_tokens": 271
+      },
+      "reason": "expected tool called"
+    },
+    {
+      "id": "memory-find",
+      "prompt": "查一下我们之前关于 issue #28 核心包诊断的结论。",
+      "expected": [
+        "mcp__openviking__find",
+        "mcp__openviking__search"
+      ],
+      "mode": "governed",
+      "success": true,
+      "called": "mcp__openviking__search",
+      "calls": [
+        {
+          "step": 0,
+          "tool": "plugin_console_tool_search",
+          "latencyMs": 916
+        },
+        {
+          "step": 1,
+          "tool": "plugin_console_tool_activate",
+          "latencyMs": 1100
+        },
+        {
+          "step": 2,
+          "tool": "mcp__openviking__search",
+          "latencyMs": 1002
+        }
+      ],
+      "visible": 10,
+      "usage": {
+        "prompt_tokens": 1142,
+        "completion_tokens": 51,
+        "total_tokens": 1193,
+        "prompt_tokens_details": {
+          "cached_tokens": 768
+        },
+        "prompt_cache_hit_tokens": 768,
+        "prompt_cache_miss_tokens": 374
+      },
+      "reason": "expected tool called"
+    },
+    {
+      "id": "memory-store",
+      "prompt": "记住我的偏好：插件界面尽量使用 DSH 原生风格，不要自建设计语言。",
+      "expected": "mcp__openviking__remember",
+      "mode": "baseline",
+      "success": true,
+      "called": "mcp__openviking__remember",
+      "calls": [
+        {
+          "step": 0,
+          "tool": "mcp__openviking__remember",
+          "latencyMs": 698
+        }
+      ],
+      "visible": 24,
+      "usage": {
+        "prompt_tokens": 1684,
+        "completion_tokens": 72,
+        "total_tokens": 1756,
+        "prompt_tokens_details": {
+          "cached_tokens": 1408
+        },
+        "prompt_cache_hit_tokens": 1408,
+        "prompt_cache_miss_tokens": 276
+      },
+      "reason": "expected tool called"
+    },
+    {
+      "id": "memory-store",
+      "prompt": "记住我的偏好：插件界面尽量使用 DSH 原生风格，不要自建设计语言。",
+      "expected": "mcp__openviking__remember",
+      "mode": "governed",
+      "success": true,
+      "called": "mcp__openviking__remember",
+      "calls": [
+        {
+          "step": 0,
+          "tool": "mcp__openviking__remember",
+          "latencyMs": 602
+        }
+      ],
+      "visible": 16,
+      "usage": {
+        "prompt_tokens": 1225,
+        "completion_tokens": 72,
+        "total_tokens": 1297,
+        "prompt_tokens_details": {
+          "cached_tokens": 768
+        },
+        "prompt_cache_hit_tokens": 768,
+        "prompt_cache_miss_tokens": 457
+      },
+      "reason": "expected tool called"
+    },
+    {
+      "id": "repo-search",
+      "prompt": "在 README 里找一下 tool govern 相关的内容。",
+      "expected": "grep",
+      "mode": "baseline",
+      "success": true,
+      "called": "grep",
+      "calls": [
+        {
+          "step": 0,
+          "tool": "glob",
+          "latencyMs": 636
+        },
+        {
+          "step": 1,
+          "tool": "grep",
+          "latencyMs": 992
+        }
+      ],
+      "visible": 24,
+      "usage": {
+        "prompt_tokens": 1749,
+        "completion_tokens": 38,
+        "total_tokens": 1787,
+        "prompt_tokens_details": {
+          "cached_tokens": 1536
+        },
+        "prompt_cache_hit_tokens": 1536,
+        "prompt_cache_miss_tokens": 213
+      },
+      "reason": "expected tool called"
+    },
+    {
+      "id": "repo-search",
+      "prompt": "在 README 里找一下 tool govern 相关的内容。",
+      "expected": "grep",
+      "mode": "governed",
+      "success": true,
+      "called": "grep",
+      "calls": [
+        {
+          "step": 0,
+          "tool": "grep",
+          "latencyMs": 1009
+        }
+      ],
+      "visible": 10,
+      "usage": {
+        "prompt_tokens": 851,
+        "completion_tokens": 73,
+        "total_tokens": 924,
+        "prompt_tokens_details": {
+          "cached_tokens": 640
+        },
+        "prompt_cache_hit_tokens": 640,
+        "prompt_cache_miss_tokens": 211
+      },
+      "reason": "expected tool called"
+    },
+    {
+      "id": "web-search",
+      "prompt": "查一下 DeepSeek Harness 最近的发布信息。",
+      "expected": "web_search",
+      "mode": "baseline",
+      "success": true,
+      "called": "web_search",
+      "calls": [
+        {
+          "step": 0,
+          "tool": "web_search",
+          "latencyMs": 810
+        }
+      ],
+      "visible": 24,
+      "usage": {
+        "prompt_tokens": 1676,
+        "completion_tokens": 70,
+        "total_tokens": 1746,
+        "prompt_tokens_details": {
+          "cached_tokens": 1536
+        },
+        "prompt_cache_hit_tokens": 1536,
+        "prompt_cache_miss_tokens": 140
+      },
+      "reason": "expected tool called"
+    },
+    {
+      "id": "web-search",
+      "prompt": "查一下 DeepSeek Harness 最近的发布信息。",
+      "expected": "web_search",
+      "mode": "governed",
+      "success": true,
+      "called": "web_search",
+      "calls": [
+        {
+          "step": 0,
+          "tool": "web_search",
+          "latencyMs": 541
+        }
+      ],
+      "visible": 12,
+      "usage": {
+        "prompt_tokens": 967,
+        "completion_tokens": 70,
+        "total_tokens": 1037,
+        "prompt_tokens_details": {
+          "cached_tokens": 768
+        },
+        "prompt_cache_hit_tokens": 768,
+        "prompt_cache_miss_tokens": 199
+      },
+      "reason": "expected tool called"
+    }
+  ]
+}

@@ -133,7 +133,8 @@
   <rect x="48" y="810" width="560" height="150" rx="10" fill="#f8fafc" stroke="#cbd5e1"/>
   <text x="64" y="836" class="lane">已证实的收益</text>
   <text x="64" y="878" class="metric">80 → ≤12</text>
-  <text x="64" y="896" class="metricLabel">可见工具上限（cap 12）</text>
+  <text x="64" y="896" class="metricLabel">第三方 active 上限</text>
+  <text x="64" y="912" class="tiny">原生 read/search 始终可见</text>
   <text x="250" y="878" class="metric">-92.5%</text>
   <text x="250" y="896" class="metricLabel">Schema 字节（确定性基准）</text>
   <text x="440" y="878" class="metric">0</text>
@@ -210,21 +211,21 @@
 
   <rect x="1202" y="744" width="350" height="110" rx="10" class="boxGreen"/>
   <text x="1218" y="769" class="name">已实现的验收线</text>
-  <text x="1218" y="791" class="small">80 工具 → ≤12；隐藏工具拒绝执行</text>
+  <text x="1218" y="791" class="small">80 工具 → 第三方 ≤12；原生 protected</text>
   <text x="1218" y="809" class="small">search/activate/composite 真机通过</text>
   <text x="1218" y="831" class="tiny">rc.5 host 测试通过；CI 绿</text>
 
   <!-- metrics right -->
   <rect x="852" y="878" width="700" height="86" rx="10" fill="#ecfdf5" stroke="#10b981"/>
-  <text x="868" y="902" class="lane">M3 检索层结果</text>
+  <text x="868" y="902" class="lane">M3 证据（检索 + 真实模型）</text>
   <text x="868" y="936" class="metric">1.000</text>
   <text x="868" y="952" class="metricLabel">recall（10/10 命中期望工具）</text>
   <text x="1055" y="936" class="metric">8.4</text>
   <text x="1055" y="952" class="metricLabel">平均 active 工具</text>
   <text x="1240" y="936" class="metric">-89.5%</text>
   <text x="1240" y="952" class="metricLabel">Schema（35,440 → 3,721B）</text>
-  <text x="1420" y="936" class="metric">?</text>
-  <text x="1420" y="952" class="metricLabel">模型成功率：待真实 A/B</text>
+  <text x="1420" y="936" class="metric">6 / 5</text>
+  <text x="1420" y="952" class="metricLabel">真实模型成功（6 任务）</text>
 
   <!-- bottom legend -->
   <rect x="24" y="1024" width="1552" height="72" rx="12" fill="#ffffff" stroke="#cbd5e1"/>

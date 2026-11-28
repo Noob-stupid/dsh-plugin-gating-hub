@@ -182,6 +182,7 @@ git clone https://github.com/Noob-stupid/dsh-plugin-gating-hub /tmp/dsh-plugin-c
 - 治理工具统一使用 `plugin_console_` 命名空间，注册前检测重名，绝不覆盖已有工具；
 - 在官方插件详情页的原生配置卡中查看工具数、活跃工具数、Schema 大小、失败调用和策略设置；
 - 内置**检索层 golden task 评测**（10 条任务，baseline vs 治理后），显示 recall、precision、活跃数和 Schema 降幅；这不是模型端到端 A/B；
+- 内置可复现的**真实模型工具选择 A/B**（`scripts/eval-tool-governance-model.mjs`）：首轮 baseline 6/6、governed 5/6，prompt tokens 10,359 → 5,354（-48.3%）；如实报告该轮治理没有提升能力；
 - 停用只释放治理限制并恢复宿主原始工具视图，不卸载包、不修改第三方工具。
 - 遥测事件脱敏落盘并自动轮转，不记录原始参数和输出。
 - Schema 优化工作室提供问题报告、描述预览和已批准的描述覆盖。

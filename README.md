@@ -228,6 +228,7 @@ Requires: DSH ≥ 0.1.0-rc.6 (web profile, with `dsh-client-modules` / `dsh-host
 - Governance tools use the `plugin_console_` namespace and check for name conflicts before registration, never replacing an existing tool;
 - The official plugin-details configuration card shows tool counts, active tools, Schema size, failed calls, and policy settings;
 - Includes a **retrieval-level golden-task evaluation** (10 tasks, baseline vs governed) showing recall, precision, active count and Schema reduction; this is not a model end-to-end A/B;
+- Includes a reproducible **real-model tool-selection A/B** (`scripts/eval-tool-governance-model.mjs`): first round baseline 6/6 vs governed 5/6, with prompt tokens 10,359 → 5,354 (-48.3%); it explicitly reports that governance did not improve capability in that round;
 - Disabling releases governance restrictions and restores the host's original tool view without uninstalling packages or modifying third-party tools.
 - Telemetry is redacted, persisted as JSONL, and rotated without storing raw arguments or outputs.
 - The Schema studio reports issues, previews descriptions, and applies approved description overrides.

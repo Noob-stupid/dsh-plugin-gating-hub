@@ -41,8 +41,20 @@ const noTask = selectActiveTools({
 })
 assert.deepEqual(noTask.sort(), ['plugin_console_tool_activate', 'plugin_console_tool_search', ...base].sort())
 
+const protectedOnly = selectActiveTools({
+  available: items,
+  governanceTools: ['plugin_console_tool_search', 'plugin_console_tool_activate'],
+  baselineTools: [],
+  protectedTools: ['tool_0', 'tool_1'],
+  maxActiveTools: 4,
+  taskText: '',
+})
+assert.ok(protectedOnly.includes('tool_0') && protectedOnly.includes('tool_1'), protectedOnly.join(','))
+assert.ok(protectedOnly.length <= 6, `protected cap=${protectedOnly.length}`)
+
 console.log('PASS ① 80 工具下 active ≤ 12')
 console.log('PASS ② 任务相关工具（database）被选中')
 console.log('PASS ③ 零分工具不再按字母序塞满上限')
 console.log('PASS ④ 无任务文本时只保留 baseline + 治理工具')
+console.log('PASS ⑤ 原生 protected 工具始终保留，不占第三方 active 名额')
 console.log('\nALL PASS')
