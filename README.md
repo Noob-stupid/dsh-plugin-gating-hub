@@ -227,6 +227,7 @@ Requires: DSH ≥ 0.1.0-rc.6 (web profile, with `dsh-client-modules` / `dsh-host
 - Models can search the full catalog with `plugin_console_tool_search` and activate hidden tools on the next step with `plugin_console_tool_activate`;
 - Governance tools use the `plugin_console_` namespace and check for name conflicts before registration, never replacing an existing tool;
 - The official plugin-details configuration card shows tool counts, active tools, Schema size, failed calls, and policy settings;
+- Includes a **retrieval-level golden-task evaluation** (10 tasks, baseline vs governed) showing recall, precision, active count and Schema reduction; this is not a model end-to-end A/B;
 - Disabling releases governance restrictions and restores the host's original tool view without uninstalling packages or modifying third-party tools.
 - Telemetry is redacted, persisted as JSONL, and rotated without storing raw arguments or outputs.
 - The Schema studio reports issues, previews descriptions, and applies approved description overrides.

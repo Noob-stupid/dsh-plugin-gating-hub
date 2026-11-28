@@ -120,6 +120,7 @@ const ROUTES = [
   '/tool-governance/config',
   '/tool-governance/schema-report',
   '/tool-governance/schema-preview',
+  '/tool-governance/evaluation',
 ]
 // 分层后路由可能写在 lib/server/routes/**（表项）或 index.js（内联分支）—— 两种写法都要认
 const walkSrc = (dir) => readdirSync(dir, { withFileTypes: true }).flatMap((e) => {
@@ -197,6 +198,8 @@ const SCHEMAS = [
   ['POST', '/plugin-console/tool-governance/config', { maxActiveTools: 8 }, 200, ['ok', 'enabled', 'status', 'error', 'lastError', 'conflicts', 'conflictCount', 'config', 'catalogCount', 'compositeCount', 'compositeConflicts', 'capEnforced', 'descriptionOverridesCodeModeUnsupported', 'warnings', 'summary', 'agents']],
   ['GET', '/plugin-console/tool-governance/schema-report', undefined, 200, ['ok', 'status', 'items', 'summary']],
   ['POST', '/plugin-console/tool-governance/schema-preview', { descriptions: {} }, 200, ['ok', 'items', 'unknown']],
+  ['GET', '/plugin-console/tool-governance/evaluation', undefined, 200, ['ok', 'evaluation']],
+  ['POST', '/plugin-console/tool-governance/evaluation', {}, 200, ['ok', 'evaluation']],
 ]
 for (const [method, path, body, wantStatus, wantKeys] of SCHEMAS) {
   const r = await call(method, path, body)

@@ -1,6 +1,6 @@
 # 工具治理与组合优化设计
 
-> 状态：M1/M2 已实现，生产化补强完成，待用户批准上线
+> 状态：M1/M2 生产化补强完成；M3 检索层 golden task A/B 已实现；待模型端到端 A/B 与用户批准上线
 >
 > 目标插件：`@noob-stupid/dsh-plugin-console`
 >
@@ -22,7 +22,16 @@
   - active 6 tools 2,658B；
   - 降幅 **92.5%**。
   这是“发送给模型的 Schema 字节”代理指标，不是模型准确率/A-B 结论。
-- **仍未完成**：M3 evaluator/golden task、rc.5 真实 Agent 复测、原生配置卡的 live UI 验收。
+- **仍未完成**：模型端到端 A/B、rc.5 真实 Agent 复测、原生配置卡的 live UI 验收。
+
+### 0.1 M3 检索层评测（2026-11-28）
+
+- `agent/evaluator.js`：10 条 golden task，比较“全部工具（baseline）”与“治理后的 active 集合”；
+- 指标：recall@active、precision、平均 active 数、Schema 字节降幅；
+- 结果：recall **1.000**、平均 active **8.4**、Schema **35,440B → 3,721B（-89.5%）**；
+- 路由：`GET/POST /plugin-console/tool-governance/evaluation`；
+- UI：`[tool govern]` 里的“运行评测”按钮；
+- **边界**：这是检索层评测，不调用模型；模型端到端成功率仍需真实会话 A/B，因此不能宣称“更聪明”已证。
 
 ## 1. 产品目标
 

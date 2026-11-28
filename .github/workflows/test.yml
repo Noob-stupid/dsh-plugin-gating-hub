@@ -294,6 +294,7 @@ jobs:
           node tests/test-tool-governance.mjs
           node tests/test-tool-governance-scale.mjs
           node tests/test-tool-governance-bench.mjs
+          node tests/test-tool-governance-m3.mjs
           node tests/test-tool-governance-composite.mjs
           node tests/test-tool-governance-ui.mjs
           node tests/test-runtime-health.mjs

@@ -1,0 +1,241 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="1120" viewBox="0 0 1600 1120" font-family="Segoe UI, Microsoft YaHei, sans-serif">
+  <defs>
+    <marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto" markerUnits="strokeWidth">
+      <path d="M0,0 L0,6 L9,3 z" fill="#64748b"/>
+    </marker>
+    <marker id="arrowBlue" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto" markerUnits="strokeWidth">
+      <path d="M0,0 L0,6 L9,3 z" fill="#2563eb"/>
+    </marker>
+    <marker id="arrowGreen" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto" markerUnits="strokeWidth">
+      <path d="M0,0 L0,6 L9,3 z" fill="#059669"/>
+    </marker>
+    <filter id="shadow" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="4" stdDeviation="8" flood-color="#0f172a" flood-opacity="0.10"/>
+    </filter>
+    <linearGradient id="header" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#0f172a"/>
+      <stop offset="1" stop-color="#1e3a8a"/>
+    </linearGradient>
+    <linearGradient id="m3header" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#065f46"/>
+      <stop offset="1" stop-color="#047857"/>
+    </linearGradient>
+    <style>
+      .title { font-size: 28px; font-weight: 700; fill: #ffffff; }
+      .subtitle { font-size: 14px; fill: #cbd5e1; }
+      .panel { fill: #ffffff; stroke: #cbd5e1; stroke-width: 1.2; }
+      .box { fill: #f8fafc; stroke: #94a3b8; stroke-width: 1.1; rx: 10; }
+      .boxBlue { fill: #eff6ff; stroke: #3b82f6; stroke-width: 1.2; }
+      .boxGreen { fill: #ecfdf5; stroke: #10b981; stroke-width: 1.2; }
+      .boxAmber { fill: #fffbeb; stroke: #f59e0b; stroke-width: 1.1; stroke-dasharray: 6 4; }
+      .boxRed { fill: #fef2f2; stroke: #ef4444; stroke-width: 1.1; stroke-dasharray: 6 4; }
+      .boxPurple { fill: #f5f3ff; stroke: #8b5cf6; stroke-width: 1.2; }
+      .name { font-size: 15px; font-weight: 700; fill: #0f172a; }
+      .small { font-size: 12px; fill: #475569; }
+      .tiny { font-size: 11px; fill: #64748b; }
+      .code { font-size: 11px; fill: #1e293b; font-family: Consolas, monospace; }
+      .metric { font-size: 20px; font-weight: 800; fill: #0f172a; }
+      .metricLabel { font-size: 11px; fill: #64748b; }
+      .lane { font-size: 13px; font-weight: 700; fill: #334155; letter-spacing: .3px; }
+      .arrow { stroke: #64748b; stroke-width: 1.6; fill: none; marker-end: url(#arrow); }
+      .arrowBlue { stroke: #2563eb; stroke-width: 1.8; fill: none; marker-end: url(#arrowBlue); }
+      .arrowGreen { stroke: #059669; stroke-width: 1.8; fill: none; marker-end: url(#arrowGreen); }
+      .dashArrow { stroke: #f59e0b; stroke-width: 1.6; fill: none; stroke-dasharray: 6 5; marker-end: url(#arrow); }
+      .legend { font-size: 12px; fill: #334155; }
+    </style>
+  </defs>
+
+  <!-- page background -->
+  <rect x="0" y="0" width="1600" height="1120" fill="#eef2f7"/>
+
+  <!-- title bar -->
+  <rect x="24" y="20" width="1552" height="84" rx="16" fill="url(#header)" filter="url(#shadow)"/>
+  <text x="52" y="55" class="title">工具治理 · 架构演进</text>
+  <text x="52" y="80" class="subtitle">设计文档 v1 的 M1/M2 已落地；M3 在“可观测/可评测”上补齐，但模型端到端 A/B 仍是下一步</text>
+  <text x="1516" y="80" text-anchor="end" class="subtitle">2026-11-28 · 未发版</text>
+
+  <!-- LEFT PANEL -->
+  <rect x="24" y="124" width="748" height="878" rx="16" class="panel" filter="url(#shadow)"/>
+  <rect x="24" y="124" width="748" height="54" rx="16" fill="#1e293b"/>
+  <text x="48" y="158" class="title" font-size="20">当前设计 · M1/M2（已实现）</text>
+  <text x="746" y="158" text-anchor="end" class="subtitle">规则 + 词法相关性</text>
+
+  <!-- lane labels left -->
+  <text x="48" y="208" class="lane">① 控制台 UI</text>
+  <text x="48" y="330" class="lane">② 服务端模块</text>
+  <text x="48" y="600" class="lane">③ 宿主边界</text>
+  <text x="48" y="700" class="lane">④ 执行与观测</text>
+
+  <!-- UI -->
+  <rect x="48" y="222" width="300" height="76" rx="10" class="boxBlue"/>
+  <text x="64" y="247" class="name">[tool govern] 面板</text>
+  <text x="64" y="268" class="small">开关 / 活跃数 / Schema / 失败调用</text>
+  <text x="64" y="286" class="tiny">schema workshop · composite 编辑</text>
+
+  <rect x="368" y="222" width="240" height="76" rx="10" class="box"/>
+  <text x="384" y="247" class="name">官方插件详情</text>
+  <text x="384" y="268" class="small">原生配置区展示</text>
+  <text x="384" y="286" class="tiny">状态 / 策略 / 冲突</text>
+
+  <!-- routes -->
+  <rect x="48" y="342" width="560" height="64" rx="10" class="box"/>
+  <text x="64" y="367" class="name">HTTP 路由 · /plugin-console/tool-governance/*</text>
+  <text x="64" y="388" class="tiny">state · config · schema-report · schema-preview</text>
+
+  <!-- modules -->
+  <rect x="48" y="432" width="132" height="76" rx="10" class="boxBlue"/>
+  <text x="62" y="456" class="name">Catalog</text>
+  <text x="62" y="476" class="tiny">工具目录 / 冲突</text>
+  <text x="62" y="492" class="tiny">来源 / 字节数</text>
+
+  <rect x="194" y="432" width="132" height="76" rx="10" class="boxBlue"/>
+  <text x="208" y="456" class="name">Policy</text>
+  <text x="208" y="476" class="tiny">baseline / recent</text>
+  <text x="208" y="492" class="tiny">任务词法评分</text>
+
+  <rect x="340" y="432" width="132" height="76" rx="10" class="boxBlue"/>
+  <text x="354" y="456" class="name">Runtime</text>
+  <text x="354" y="476" class="tiny">restrict / 生命周期</text>
+  <text x="354" y="492" class="tiny">tools/change</text>
+
+  <rect x="486" y="432" width="122" height="76" rx="10" class="box"/>
+  <text x="500" y="456" class="name">Composite</text>
+  <text x="500" y="476" class="tiny">声明式宏工具</text>
+  <text x="500" y="492" class="tiny">嵌套执行</text>
+
+  <!-- modules lower row -->
+  <rect x="48" y="524" width="270" height="62" rx="10" class="box"/>
+  <text x="64" y="548" class="name">Telemetry</text>
+  <text x="64" y="568" class="tiny">events.jsonl · 轮转 · summary</text>
+
+  <rect x="338" y="524" width="270" height="62" rx="10" class="box"/>
+  <text x="354" y="548" class="name">Store</text>
+  <text x="354" y="568" class="tiny">config / audit / 原子写</text>
+
+  <!-- host boundary -->
+  <rect x="48" y="612" width="560" height="66" rx="10" class="boxPurple"/>
+  <text x="64" y="636" class="name">DSH ToolRuntime · Agent scoped ctx</text>
+  <text x="64" y="656" class="tiny">ctx.tools.restrict / schemas / register / execute</text>
+  <text x="64" y="672" class="tiny">只收窄，不放宽；隐藏工具直接调用被拒绝</text>
+
+  <!-- execution -->
+  <rect x="48" y="712" width="270" height="68" rx="10" class="boxGreen"/>
+  <text x="64" y="736" class="name">Agent Loop</text>
+  <text x="64" y="756" class="tiny">模型只看到 active 集合</text>
+  <text x="64" y="772" class="tiny">找不到 → search → activate</text>
+
+  <rect x="338" y="712" width="270" height="68" rx="10" class="boxGreen"/>
+  <text x="354" y="736" class="name">工具执行流水线</text>
+  <text x="354" y="756" class="tiny">审批 / 沙箱 / 结果日志</text>
+  <text x="354" y="772" class="tiny">不绕过宿主安全边界</text>
+
+  <!-- metrics left -->
+  <rect x="48" y="810" width="560" height="150" rx="10" fill="#f8fafc" stroke="#cbd5e1"/>
+  <text x="64" y="836" class="lane">已证实的收益</text>
+  <text x="64" y="878" class="metric">80 → ≤12</text>
+  <text x="64" y="896" class="metricLabel">可见工具上限（cap 12）</text>
+  <text x="250" y="878" class="metric">-92.5%</text>
+  <text x="250" y="896" class="metricLabel">Schema 字节（确定性基准）</text>
+  <text x="440" y="878" class="metric">0</text>
+  <text x="440" y="896" class="metricLabel">隐藏工具可执行路径</text>
+  <text x="64" y="928" class="tiny">真机：rc.5 host 80 工具测试通过；CI 绿；仍未发版。</text>
+
+  <!-- middle iteration arrow -->
+  <path d="M 792 470 C 812 470, 812 470, 832 470" class="arrowGreen" stroke-width="2.4"/>
+  <text x="812" y="452" text-anchor="middle" font-size="12" font-weight="700" fill="#047857">M3</text>
+
+  <!-- RIGHT PANEL -->
+  <rect x="828" y="124" width="748" height="878" rx="16" class="panel" filter="url(#shadow)"/>
+  <rect x="828" y="124" width="748" height="54" rx="16" fill="url(#m3header)"/>
+  <text x="852" y="158" class="title" font-size="20">M3 增强 · 评测与反馈闭环</text>
+  <text x="1552" y="158" text-anchor="end" class="subtitle">“更智能”要先可度量</text>
+
+  <!-- lane labels right -->
+  <text x="852" y="208" class="lane">① 评测入口</text>
+  <text x="852" y="342" class="lane">② 评测与反馈</text>
+  <text x="852" y="560" class="lane">③ 下一层智能（计划）</text>
+  <text x="852" y="730" class="lane">④ 发布与回滚</text>
+
+  <!-- eval UI -->
+  <rect x="852" y="222" width="320" height="76" rx="10" class="boxGreen"/>
+  <text x="868" y="247" class="name">[tool govern] · 运行评测</text>
+  <text x="868" y="268" class="small">10 条 golden task · 一键运行</text>
+  <text x="868" y="286" class="tiny">显示 recall / precision / active / Schema</text>
+
+  <rect x="1192" y="222" width="360" height="76" rx="10" class="box"/>
+  <text x="1208" y="247" class="name">GET/POST .../evaluation</text>
+  <text x="1208" y="268" class="small">评测结果持久化</text>
+  <text x="1208" y="286" class="tiny">tool-governance-eval.json</text>
+
+  <!-- evaluator core -->
+  <rect x="852" y="354" width="300" height="86" rx="10" class="boxGreen"/>
+  <text x="868" y="379" class="name">Evaluator</text>
+  <text x="868" y="400" class="small">baseline vs governed</text>
+  <text x="868" y="418" class="tiny">retrieval-level A/B（无模型调用）</text>
+  <text x="868" y="434" class="tiny">recall@active · precision · bytes</text>
+
+  <rect x="1172" y="354" width="380" height="86" rx="10" class="boxGreen"/>
+  <text x="1188" y="379" class="name">Golden tasks · 10 条</text>
+  <text x="1188" y="400" class="small">docs / issue / db / web / files</text>
+  <text x="1188" y="418" class="small">office / calendar / mail / image / shell</text>
+  <text x="1188" y="434" class="tiny">expected tool 名称作为判据</text>
+
+  <!-- feedback loop -->
+  <rect x="852" y="470" width="700" height="66" rx="10" class="boxBlue"/>
+  <text x="868" y="494" class="name">反馈闭环（下一步）</text>
+  <text x="868" y="514" class="tiny">telemetry 的 selected / succeeded / failed → 时间衰减排序；只影响后续请求，可回滚</text>
+  <text x="868" y="530" class="tiny">不是“自动改工具”，而是“调整下一次暴露优先级”</text>
+
+  <!-- planned layer -->
+  <rect x="852" y="574" width="330" height="126" rx="10" class="boxAmber"/>
+  <text x="868" y="599" class="name">混合检索（计划）</text>
+  <text x="868" y="621" class="small">词法 + 同义词/别名</text>
+  <text x="868" y="639" class="small">可选 BM25 / 本地 embedding</text>
+  <text x="868" y="661" class="tiny">目标：同义表达不漏；不每轮调 LLM</text>
+  <text x="868" y="679" class="tiny">未实现，不能宣称已“语义理解”</text>
+
+  <rect x="1202" y="574" width="350" height="126" rx="10" class="boxAmber"/>
+  <text x="1218" y="599" class="name">歧义 rerank（计划）</text>
+  <text x="1218" y="621" class="small">top-k 分数接近才调用一次 LLM</text>
+  <text x="1218" y="639" class="small">缓存 + 超时 + 可关闭</text>
+  <text x="1218" y="661" class="tiny">目标：少而准；代价是延迟/费用</text>
+  <text x="1218" y="679" class="tiny">未实现，默认不启用</text>
+
+  <!-- rollout -->
+  <rect x="852" y="744" width="330" height="110" rx="10" class="boxRed"/>
+  <text x="868" y="769" class="name">灰度 / 回滚（部分已有）</text>
+  <text x="868" y="791" class="small">开关停用 → 释放 restriction</text>
+  <text x="868" y="809" class="small">恢复宿主原始工具视图</text>
+  <text x="868" y="831" class="tiny">灰度发布、自动回滚仍待补</text>
+
+  <rect x="1202" y="744" width="350" height="110" rx="10" class="boxGreen"/>
+  <text x="1218" y="769" class="name">已实现的验收线</text>
+  <text x="1218" y="791" class="small">80 工具 → ≤12；隐藏工具拒绝执行</text>
+  <text x="1218" y="809" class="small">search/activate/composite 真机通过</text>
+  <text x="1218" y="831" class="tiny">rc.5 host 测试通过；CI 绿</text>
+
+  <!-- metrics right -->
+  <rect x="852" y="878" width="700" height="86" rx="10" fill="#ecfdf5" stroke="#10b981"/>
+  <text x="868" y="902" class="lane">M3 检索层结果</text>
+  <text x="868" y="936" class="metric">1.000</text>
+  <text x="868" y="952" class="metricLabel">recall（10/10 命中期望工具）</text>
+  <text x="1055" y="936" class="metric">8.4</text>
+  <text x="1055" y="952" class="metricLabel">平均 active 工具</text>
+  <text x="1240" y="936" class="metric">-89.5%</text>
+  <text x="1240" y="952" class="metricLabel">Schema（35,440 → 3,721B）</text>
+  <text x="1420" y="936" class="metric">?</text>
+  <text x="1420" y="952" class="metricLabel">模型成功率：待真实 A/B</text>
+
+  <!-- bottom legend -->
+  <rect x="24" y="1024" width="1552" height="72" rx="12" fill="#ffffff" stroke="#cbd5e1"/>
+  <rect x="44" y="1046" width="18" height="12" rx="3" fill="#eff6ff" stroke="#3b82f6"/>
+  <text x="70" y="1058" class="legend">已实现（M1/M2）</text>
+  <rect x="210" y="1046" width="18" height="12" rx="3" fill="#ecfdf5" stroke="#10b981"/>
+  <text x="236" y="1058" class="legend">已实现（M3 评测）</text>
+  <rect x="390" y="1046" width="18" height="12" rx="3" fill="#fffbeb" stroke="#f59e0b" stroke-dasharray="4 3"/>
+  <text x="416" y="1058" class="legend">计划中（未实现，不能宣称已具备）</text>
+  <rect x="690" y="1046" width="18" height="12" rx="3" fill="#fef2f2" stroke="#ef4444" stroke-dasharray="4 3"/>
+  <text x="716" y="1058" class="legend">边界/风险：不改核心包、不绕过审批</text>
+  <text x="1050" y="1058" class="tiny">对比结论：M1/M2 解决“Schema 膨胀与工具太多”；M3 解决“有没有变好、能否度量”；语义路由仍未落地。</text>
+  <text x="44" y="1082" class="tiny">来源：docs/tool-governance-design.zh.md（设计文档 v1）· 当前提交 396e0bc / M3 本地改动 · 评测为检索层，不是模型端到端结论</text>
+</svg>

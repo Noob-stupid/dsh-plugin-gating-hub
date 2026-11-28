@@ -15,6 +15,7 @@ All notable changes to dsh-plugin-hub.
 - CI 接入 `test-tool-governance` / `-scale` / `-bench` / `-composite` / `-ui`；
 - 新增 80 工具 Schema 成本基准：35,440B → 2,658B（-92.5%，确定性代理指标，非模型 A/B）；
 - 真实 host 80 工具测试在 Electron 下对 rc.5 asar 复跑通过。
+- **M3 检索层评测**：`agent/evaluator.js` + 10 条 golden task + `GET/POST /tool-governance/evaluation` + UI“运行评测”；recall 1.000、平均 active 8.4、Schema 35,440B → 3,721B（-89.5%）。这是检索层结果，不是模型端到端 A/B。
 
 - “功能包”新增默认开启的 `[tool govern]` 开关；停用后恢复宿主原始工具视图。
 - 按 Agent 动态限制可见工具，支持 `plugin_console_tool_search` 搜索与 `plugin_console_tool_activate` 下一步激活。
